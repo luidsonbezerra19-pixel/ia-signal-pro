@@ -11,37 +11,84 @@ class MockCore:
     def analyze_symbols(symbols, sims=1000, only_adx=None):
         print(f"🔍 Analisando: {symbols}")
         
-        # Dados de exemplo - REMOVA depois quando colocar seu código real
         mock_results = []
         symbols_list = [s.strip() for s in symbols if s.strip()]
         
         for i, symbol in enumerate(symbols_list):
+            # Tendência base mais realista (menos aleatória)
+            base_trend = random.uniform(0.4, 0.8)  # Menos extremos
+            
             for horizon in [1, 2, 3]:
-                # ✅ CORREÇÃO: Gera probabilidades primeiro
-                p_buy = round(0.3 + (random.random() * 0.5), 3)
+                # Probabilidades mais consistentes
+                trend_influence = base_trend + random.uniform(-0.15, 0.15)
+                p_buy = max(0.3, min(0.9, trend_influence))
                 p_sell = round(1 - p_buy, 3)
                 
-                # ✅ CORREÇÃO: Direção SEMPRE baseada nas probabilidades
-                direction = "buy" if p_buy > p_sell else "sell"
-                confidence = round(0.5 + (random.random() * 0.4), 3)  # 50% a 90%
+                # 🎯 LÓGICA HÍBRIDA INTELIGENTE
+                base_direction = "buy" if p_buy > p_sell else "sell"
+                
+                # Indicadores mais realistas
+                adx = round(15 + (random.random() * 30), 1)  # 15-45
+                rsi = round(25 + (random.random() * 50), 1)  # 25-75
+                
+                # 🚨 DECISÃO TÉCNICA INTELIGENTE
+                technical_override = False
+                final_direction = base_direction
+                
+                # REGRAS DE INVERSÃO MAIS CONSERVADORAS:
+                # 1. RSI extremo + ADX forte = reversão provável
+                if (rsi > 75 and adx > 30 and base_direction == "buy"):
+                    final_direction = "sell"
+                    technical_override = True
+                    print(f"   ⚡ {symbol} T+{horizon}: VENDA (RSI {rsi} sobrecomprado)")
+                    
+                elif (rsi < 25 and adx > 30 and base_direction == "sell"):
+                    final_direction = "buy"
+                    technical_override = True
+                    print(f"   ⚡ {symbol} T+{horizon}: COMPRA (RSI {rsi} sobrevendido)")
+                
+                # 2. ADX muito baixo = tendência fraca, confiança menor
+                elif (adx < 20 and base_direction == "buy" and p_buy < 0.6):
+                    final_direction = "sell"  # Inverte se tendência fraca + probabilidade baixa
+                    technical_override = True
+                    print(f"   ⚡ {symbol} T+{horizon}: VENDA (ADX {adx} baixo + prob {p_buy:.1%})")
+                
+                # Confiança mais realista baseada na decisão
+                if technical_override:
+                    # Overrides técnicos têm confiança mais conservadora
+                    confidence = round(0.55 + (random.random() * 0.3), 3)  # 55-85%
+                else:
+                    # Decisões normais têm confiança baseada nas probabilidades
+                    prob_strength = abs(p_buy - p_sell)  # Força da probabilidade
+                    confidence = round(0.5 + (prob_strength * 0.4), 3)  # 50-90%
+                
+                # Ajuste final de confiança baseado em indicadores
+                if adx > 35: confidence = min(confidence + 0.1, 0.95)  # +10% se tendência forte
+                if 30 <= rsi <= 70: confidence = min(confidence + 0.05, 0.95)  # +5% se RSI neutro
                 
                 class Row:
                     def __init__(self):
                         self.symbol = symbol
                         self.h = horizon
-                        self.direction = direction  # Agora coerente com as probabilidades
+                        self.direction = final_direction
+                        self.original_direction = base_direction
+                        self.technical_override = technical_override
                         self.p_buy = p_buy
                         self.p_sell = p_sell
                         self.conf = confidence
-                        self.adx = round(20 + (random.random() * 20), 1)
-                        self.rsi = round(30 + (random.random() * 40), 1)
+                        self.adx = adx
+                        self.rsi = rsi
                         self.price = round(100 + (random.random() * 100), 6)
                         self.ts = datetime.now().strftime("%H:%M:%S")
                 
                 mock_results.append(Row())
         
-        best = max(mock_results, key=lambda x: x.conf) if mock_results else None
-        return mock_results, best
+        # Filtrar apenas oportunidades com confiança decente
+        quality_results = [r for r in mock_results if r.conf >= 0.6]
+        best = max(quality_results, key=lambda x: x.conf) if quality_results else None
+        
+        print(f"   📊 Resultados: {len(quality_results)}/{len(mock_results)} com confiança ≥60%")
+        return quality_results, best
 
 # TODO: Quando quiser usar seu código real, DESCOMENTE a linha abaixo:
 # from core import analyze_symbols
@@ -89,6 +136,7 @@ class AnalysisManager:
                     'rsi': round(getattr(row, 'rsi', 0), 1),
                     'price': round(row.price, 6),
                     'timestamp': getattr(row, 'ts', ''),
+                    'technical_override': getattr(row, 'technical_override', False),
                     'assertiveness': self.calculate_assertiveness(row)
                 }
                 self.current_results.append(result)
@@ -106,6 +154,7 @@ class AnalysisManager:
                     'adx': round(getattr(best_overall, 'adx', 0), 1),
                     'rsi': round(getattr(best_overall, 'rsi', 0), 1),
                     'price': round(best_overall.price, 6),
+                    'technical_override': getattr(best_overall, 'technical_override', False),
                     'assertiveness': self.calculate_assertiveness(best_overall),
                     'entry_time': self.calculate_entry_time(best_overall.h)
                 }
@@ -294,15 +343,23 @@ def index():
                 // Melhor oportunidade
                 if (data.best) {
                     const best = data.best;
+                    const overrideIcon = best.technical_override ? ' ⚠ ' : '';
+                    const overrideText = best.technical_override ? 
+                        '<br><small style="color: #f39c12;">⚠ Decisão Técnica</small>' : '';
+                    
                     document.getElementById('bestResult').innerHTML = `
                         <div class="results" style="border-left: 4px solid ${best.direction === 'buy' ? '#2ecc71' : '#e74c3c'}">
-                            <strong>${best.symbol} T+${best.horizon}</strong><br>
-                            Ação: <span class="${best.direction}">${best.direction === 'buy' ? '🟢 COMPRAR' : '🔴 VENDER'}</span><br>
+                            <strong>${best.symbol} T+${best.horizon}</strong>
+                            <span class="${best.direction}">
+                                ${best.direction === 'buy' ? '🟢 COMPRAR' : '🔴 VENDER'} ${overrideIcon}
+                            </span>
+                            <br>
                             Compra: <strong>${best.p_buy}%</strong> | Venda: <strong>${best.p_sell}%</strong><br>
                             Confiança: <strong>${best.confidence}%</strong><br>
                             ADX: ${best.adx} | RSI: ${best.rsi}<br>
-                            Entrada: ${best.entry_time}<br>
-                            <em>Análise: ${data.analysis_time}</em>
+                            Entrada: ${best.entry_time}
+                            ${overrideText}
+                            <br><em>Análise: ${data.analysis_time}</em>
                         </div>
                     `;
                 }
@@ -313,15 +370,21 @@ def index():
                     data.results.sort((a, b) => b.confidence - a.confidence);
                     
                     data.results.forEach(result => {
+                        const overrideIcon = result.technical_override ? ' ⚠ ' : '';
+                        const overrideText = result.technical_override ?
+                            `<br><small style="color: #f39c12;">⚠ Decisão Técnica</small>` : '';
+
                         html += `
-                            <div class="results">
-                                <strong>${result.symbol} T+${result.horizon}</strong> | 
-                                <span class="${result.direction}">${result.direction === 'buy' ? '🟢 COMPRAR' : '🔴 VENDER'}</span> | 
-                                Compra: ${result.p_buy}% | Venda: ${result.p_sell}% | 
-                                Conf: ${result.confidence}% | 
-                                ADX: ${result.adx}
-                            </div>
-                        `;
+                        <div class="results">
+                            <strong>${result.symbol} T+${result.horizon}</strong>
+                            <span class="${result.direction}">
+                                ${result.direction == 'buy' ? '🟢 COMPRAR' : '🔴 VENDER'} ${overrideIcon}
+                            </span>
+                            Compra: ${result.p_buy} | Venda: ${result.p_sell} |
+                            Conf: ${result.confidence} |
+                            ADX: ${result.adx} | RSI: ${result.rsi}
+                            ${overrideText}
+                        </div>`;
                     });
                     
                     document.getElementById('allResults').innerHTML = html;
