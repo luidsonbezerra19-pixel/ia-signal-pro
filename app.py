@@ -57,56 +57,64 @@ class AnalysisManager:
         self.is_analyzing = False
     
     def analyze_symbols_thread(self, symbols, sims, only_adx):
-        try:
-            self.is_analyzing = True
-            print(f"🔍 Iniciando análise: {symbols}")
-            
-            # USA a função de análise (mock ou real)
-            all_rows, best = analyze_symbols_real(symbols, sims=sims, only_adx=only_adx)
-            
-            # Converter resultados
-            self.current_results = []
-            for row in all_rows:
-                result = {
-                    'symbol': row.symbol,
-                    'horizon': row.h,
-                    'direction': row.direction,
-                    'p_buy': round(row.p_buy * 100, 1),
-                    'p_sell': round(row.p_sell * 100, 1),
-                    'confidence': round(row.conf * 100, 1),
-                    'adx': round(getattr(row, 'adx', 0), 1),
-                    'rsi': round(getattr(row, 'rsi', 0), 1),
-                    'price': round(row.price, 6),
-                    'timestamp': getattr(row, 'ts', ''),
-                    'assertiveness': self.calculate_assertiveness(row)
-                }
-                self.current_results.append(result)
-            
-            # Melhor oportunidade
-            if best:
-                self.best_opportunity = {
-                    'symbol': best.symbol,
-                    'horizon': best.h,
-                    'direction': best.direction,
-                    'confidence': round(best.conf * 100, 1),
-                    'p_buy': round(best.p_buy * 100, 1),
-                    'p_sell': round(best.p_sell * 100, 1),
-                    'adx': round(getattr(best, 'adx', 0), 1),
-                    'rsi': round(getattr(best, 'rsi', 0), 1),
-                    'price': round(best.price, 6),
-                    'assertiveness': self.calculate_assertiveness(best),
-                    'entry_time': self.calculate_entry_time(best.h)
-                }
-            
-            self.analysis_time = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-            print(f"✅ Análise concluída: {len(self.current_results)} sinais")
-            
-        except Exception as e:
-            print(f"❌ Erro na análise: {str(e)}")
-            self.current_results = []
-            self.best_opportunity = None
-        finally:
-            self.is_analyzing = False
+    try:
+        self.is_analyzing = True
+        print(f"🔍 Iniciando análise: {symbols}")
+        
+        # USA a função de análise (mock ou real)
+        all_rows, best = analyze_symbols_real(symbols, sims=sims, only_adx=only_adx)
+        
+        # 🎯 **APENAS MELHOR T+ DE CADA ATIVO** (maior confiança)
+        best_per_symbol = {}
+        for row in all_rows:
+            symbol = row.symbol
+            if symbol not in best_per_symbol or row.conf > best_per_symbol[symbol].conf:
+                best_per_symbol[symbol] = row
+        
+        # Converter resultados (apenas os melhores)
+        self.current_results = []
+        for symbol, row in best_per_symbol.items():
+            result = {
+                'symbol': row.symbol,
+                'horizon': row.h,
+                'direction': row.direction,
+                'p_buy': round(row.p_buy * 100, 1),
+                'p_sell': round(row.p_sell * 100, 1),
+                'confidence': round(row.conf * 100, 1),
+                'adx': round(getattr(row, 'adx', 0), 1),
+                'rsi': round(getattr(row, 'rsi', 0), 1),
+                'price': round(row.price, 6),
+                'timestamp': getattr(row, 'ts', ''),
+                'assertiveness': self.calculate_assertiveness(row)
+            }
+            self.current_results.append(result)
+        
+        # Melhor oportunidade global
+        if best_per_symbol:
+            best_overall = max(best_per_symbol.values(), key=lambda x: x.conf)
+            self.best_opportunity = {
+                'symbol': best_overall.symbol,
+                'horizon': best_overall.h,
+                'direction': best_overall.direction,
+                'confidence': round(best_overall.conf * 100, 1),
+                'p_buy': round(best_overall.p_buy * 100, 1),
+                'p_sell': round(best_overall.p_sell * 100, 1),
+                'adx': round(getattr(best_overall, 'adx', 0), 1),
+                'rsi': round(getattr(best_overall, 'rsi', 0), 1),
+                'price': round(best_overall.price, 6),
+                'assertiveness': self.calculate_assertiveness(best_overall),
+                'entry_time': self.calculate_entry_time(best_overall.h)
+            }
+        
+        self.analysis_time = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        print(f"✅ Análise concluída: {len(self.current_results)} sinais (melhor de cada ativo)")
+        
+    except Exception as e:
+        print(f"❌ Erro na análise: {str(e)}")
+        self.current_results = []
+        self.best_opportunity = None
+    finally:
+        self.is_analyzing = False
     
     def calculate_assertiveness(self, row):
         score = row.conf * 100
@@ -279,41 +287,43 @@ def index():
             }
 
             function updateResults(data) {
-                // Melhor oportunidade
-                if (data.best) {
-                    const best = data.best;
-                    document.getElementById('bestResult').innerHTML = `
-                        <div class="results" style="border-left: 4px solid ${best.direction === 'buy' ? '#2ecc71' : '#e74c3c'}">
-                            <strong>${best.symbol} T+${best.horizon}</strong><br>
-                            Ação: <span class="${best.direction}">${best.direction === 'buy' ? '🟢 COMPRAR' : '🔴 VENDER'}</span><br>
-                            Confiança: <strong>${best.confidence}%</strong><br>
-                            ADX: ${best.adx} | RSI: ${best.rsi}<br>
-                            Entrada: ${best.entry_time}<br>
-                            <em>Análise: ${data.analysis_time}</em>
-                        </div>
-                    `;
-                }
+    // Melhor oportunidade
+    if (data.best) {
+        const best = data.best;
+        document.getElementById('bestResult').innerHTML = `
+            <div class="results" style="border-left: 4px solid ${best.direction === 'buy' ? '#2ecc71' : '#e74c3c'}">
+                <strong>${best.symbol} T+${best.horizon}</strong><br>
+                Ação: <span class="${best.direction}">${best.direction === 'buy' ? '🟢 COMPRAR' : '🔴 VENDER'}</span><br>
+                Compra: <strong>${best.p_buy}%</strong> | Venda: <strong>${best.p_sell}%</strong><br>
+                Confiança: <strong>${best.confidence}%</strong><br>
+                ADX: ${best.adx} | RSI: ${best.rsi}<br>
+                Entrada: ${best.entry_time}<br>
+                <em>Análise: ${data.analysis_time}</em>
+            </div>
+        `;
+    }
 
-                // Todos os sinais
-                if (data.results.length > 0) {
-                    let html = '';
-                    data.results.sort((a, b) => b.confidence - a.confidence);
-                    
-                    data.results.forEach(result => {
-                        html += `
-                            <div class="results">
-                                <strong>${result.symbol} T+${result.horizon}</strong> | 
-                                <span class="${result.direction}">${result.direction === 'buy' ? '🟢 COMPRAR' : '🔴 VENDER'}</span> | 
-                                Conf: ${result.confidence}% | 
-                                ADX: ${result.adx}
-                            </div>
-                        `;
-                    });
-                    
-                    document.getElementById('allResults').innerHTML = html;
-                    document.getElementById('status').textContent = `✅ ${data.results.length} sinais encontrados`;
-                }
-            }
+    // Todos os sinais (APENAS MELHOR DE CADA ATIVO)
+    if (data.results.length > 0) {
+        let html = '';
+        data.results.sort((a, b) => b.confidence - a.confidence);
+        
+        data.results.forEach(result => {
+            html += `
+                <div class="results">
+                    <strong>${result.symbol} T+${result.horizon}</strong> | 
+                    <span class="${result.direction}">${result.direction === 'buy' ? '🟢 COMPRAR' : '🔴 VENDER'}</span> | 
+                    Compra: ${result.p_buy}% | Venda: ${result.p_sell}% | 
+                    Conf: ${result.confidence}% | 
+                    ADX: ${result.adx}
+                </div>
+            `;
+        });
+        
+        document.getElementById('allResults').innerHTML = html;
+        document.getElementById('status').textContent = `✅ ${data.results.length} ativos analisados`;
+    }
+}
 
             // Verificar status inicial
             checkResults();
