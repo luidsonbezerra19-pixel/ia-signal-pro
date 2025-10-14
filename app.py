@@ -17,17 +17,21 @@ class MockCore:
         
         for i, symbol in enumerate(symbols_list):
             for horizon in [1, 2, 3]:
-                # Gera dados aleatórios para teste
-                direction = "buy" if random.random() > 0.5 else "sell"
+                # ✅ CORREÇÃO: Gera probabilidades primeiro
+                p_buy = round(0.3 + (random.random() * 0.5), 3)
+                p_sell = round(1 - p_buy, 3)
+                
+                # ✅ CORREÇÃO: Direção SEMPRE baseada nas probabilidades
+                direction = "buy" if p_buy > p_sell else "sell"
                 confidence = round(0.5 + (random.random() * 0.4), 3)  # 50% a 90%
                 
                 class Row:
                     def __init__(self):
                         self.symbol = symbol
                         self.h = horizon
-                        self.direction = direction
-                        self.p_buy = round(0.3 + (random.random() * 0.5), 3)
-                        self.p_sell = round(1 - self.p_buy, 3)
+                        self.direction = direction  # Agora coerente com as probabilidades
+                        self.p_buy = p_buy
+                        self.p_sell = p_sell
                         self.conf = confidence
                         self.adx = round(20 + (random.random() * 20), 1)
                         self.rsi = round(30 + (random.random() * 40), 1)
