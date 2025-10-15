@@ -829,14 +829,14 @@ class AnalysisManager:
 
             analysis_time = self.get_brazil_time().strftime("%d/%m/%Y %H:%M:%S")
             processing_time = (datetime.now() - start_time).total_seconds()
-                        with self._lock:
-                            self.current_results = formatted
-                            self.best_opportunity = best
-                            self.analysis_time = analysis_time
+            with self._lock:
+                self.current_results = formatted
+                self.best_opportunity = best
+                self.analysis_time = analysis_time
 
-                        if best:
-                            log.info(f"🏆 MELHOR OPORTUNIDADE: {best['symbol']} T+{best['horizon']} ({best['confidence']}%)")
-                        log.info(f"✅ ANÁLISE CONCLUÍDA em {processing_time:.1f}s | {len(formatted)} sinais")
+            if best:
+                log.info(f"🏆 MELHOR OPORTUNIDADE: {best['symbol']} T+{best['horizon']} ({best['confidence']}%)")
+            log.info(f"✅ ANÁLISE CONCLUÍDA em {processing_time:.1f}s | {len(formatted)} sinais")
 
         except Exception as e:
             log.exception(f"❌ ERRO na análise: {e}")
