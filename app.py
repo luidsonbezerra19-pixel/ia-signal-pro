@@ -468,11 +468,19 @@ def index():
 
         <script>
             let isChecking = false;
+            let checkTimeout = null;
             
             async function analyze() {
                 const btn = document.getElementById('analyzeBtn');
                 btn.disabled = true;
                 btn.textContent = '⏳ ANALISANDO...';
+
+                // ⚠️ CORREÇÃO: Parar qualquer verificação anterior
+                if (checkTimeout) {
+                    clearTimeout(checkTimeout);
+                    checkTimeout = null;
+                }
+                isChecking = false;
 
                 const symbols = document.getElementById('symbols').value;
                 const sims = document.getElementById('sims').value;
@@ -506,13 +514,22 @@ def index():
             }
 
             function resetAnalyzeButton() {
-                document.getElementById('analyzeBtn').disabled = false;
-                document.getElementById('analyzeBtn').textContent = '🎯 ANALISAR AGORA';
+                const btn = document.getElementById('analyzeBtn');
+                btn.disabled = false;
+                btn.textContent = '🎯 ANALISAR AGORA';
                 isChecking = false;
+                
+                // ⚠️ CORREÇÃO: Limpar timeout
+                if (checkTimeout) {
+                    clearTimeout(checkTimeout);
+                    checkTimeout = null;
+                }
             }
 
             async function checkResults() {
-                if (!isChecking) return;
+                if (!isChecking) {
+                    return; // ⚠️ CORREÇÃO: Saída mais segura
+                }
                 
                 try {
                     const response = await fetch('/api/results');
@@ -521,23 +538,33 @@ def index():
                     if (data.success) {
                         updateResults(data);
                         
-                        if (data.is_analyzing) {
-                            // Continua verificando se ainda está analisando
-                            setTimeout(checkResults, 2000);
+                        if (data.is_analyzing && isChecking) {
+                            // ⚠️ CORREÇÃO: Usar variável para controle do timeout
+                            checkTimeout = setTimeout(checkResults, 2000);
                         } else {
-                            // ⚠️ CORREÇÃO CRÍTICA: Para completamente quando análise terminar
-                            isChecking = false;
-                            resetAnalyzeButton();
+                            // ⚠️ CORREÇÃO: Parar completamente
+                            stopChecking();
                             document.getElementById('status').textContent = '✅ Análise concluída - Pronto para nova análise';
                         }
+                    } else {
+                        // Se houve erro, para de verificar
+                        stopChecking();
                     }
                 } catch (error) {
                     console.error('Erro:', error);
-                    // Em caso de erro, tenta mais algumas vezes depois para
-                    if (isChecking) {
-                        setTimeout(checkResults, 3000);
-                    }
+                    // Em caso de erro, para de verificar após algumas tentativas
+                    stopChecking();
                 }
+            }
+
+            // ⚠️ CORREÇÃO NOVA: Função para parar completamente
+            function stopChecking() {
+                isChecking = false;
+                if (checkTimeout) {
+                    clearTimeout(checkTimeout);
+                    checkTimeout = null;
+                }
+                resetAnalyzeButton();
             }
 
             function updateResults(data) {
@@ -602,13 +629,32 @@ def index():
                 }
             }
 
-            // ⚠️ CORREÇÃO: Resetar isChecking quando a página carregar
+            // ⚠️ CORREÇÃO: Resetar quando a página carregar
             document.addEventListener('DOMContentLoaded', function() {
                 isChecking = false;
+                if (checkTimeout) {
+                    clearTimeout(checkTimeout);
+                    checkTimeout = null;
+                }
             });
 
-            // Verificar status inicial
-            checkResults();
+            // Verificar status inicial (apenas uma vez)
+            setTimeout(() => {
+                if (!isChecking) {
+                    fetch('/api/results')
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.success && (data.results.length > 0 || data.is_analyzing)) {
+                                updateResults(data);
+                                if (data.is_analyzing) {
+                                    isChecking = true;
+                                    checkResults();
+                                }
+                            }
+                        })
+                        .catch(console.error);
+                }
+            }, 1000);
         </script>
     </body>
     </html>
