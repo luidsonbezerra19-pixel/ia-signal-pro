@@ -614,6 +614,65 @@ class MonteCarloSimulator:
         return {'probability_buy': p_buy, 'probability_sell': p_sell, 'quality': quality}
 
 # ========== FLASK APP ==========
+
+
+class EnhancedTradingSystem:
+    def __init__(self) -> None:
+        # Importante: NENHUMA referência a "paths" aqui.
+        self.mc = MonteCarloSimulator()
+        self.ind = TechnicalIndicators()
+        self.last_prices: Dict[str, List[float]] = {}
+
+    def _fake_prices(self, symbol: str, n: int = 60) -> List[float]:
+        # Gerador seguro para testar sem exchange externa
+        seed = hash((symbol, datetime.utcnow().strftime("%Y%m%d%H%M"))) & 0xffffffff
+        rnd = random.Random(seed)
+        base = {
+            'BTC/USDT': 45000, 'ETH/USDT': 2500, 'SOL/USDT': 120,
+            'ADA/USDT': 0.45, 'XRP/USDT': 0.55, 'BNB/USDT': 320
+        }.get(symbol, 100.0)
+        prices = [base]
+        cur = base
+        for _ in range(n-1):
+            change = rnd.gauss(0, 0.004)
+            cur = max(base*0.7, cur * (1 + change))
+            prices.append(cur)
+        return prices
+
+    def analyze(self, symbol: str, horizon: int = 2, sims: int = 1200) -> Dict[str, Any]:
+        prices = self._fake_prices(symbol)
+        vol = 0.0
+        for i in range(1, len(prices)):
+            if prices[i-1] != 0:
+                vol += abs((prices[i] - prices[i-1]) / prices[i-1])
+        vol = (vol / max(1, len(prices)-1)) or 0.01
+
+        steps = max(2, horizon + 1)
+        paths = self.mc.generate_price_paths(prices[-1], vol, num_paths=sims, steps=steps)
+        dist = self.mc.calculate_probability_distribution(paths)
+
+        rsi = self.ind.rsi(prices)
+        adx = self.ind.adx(prices)
+
+        direction = 'buy' if dist['probability_buy'] > dist['probability_sell'] else 'sell'
+        confidence = min(0.95, max(0.45, 0.50 + (dist['probability_buy'] - 0.5) * 0.8))
+
+        return {
+            'symbol': symbol,
+            'horizon': horizon,
+            'direction': direction,
+            'probability_buy': dist['probability_buy'],
+            'probability_sell': dist['probability_sell'],
+            'monte_carlo_quality': dist['quality'],
+            'confidence': confidence,
+            'rsi': rsi,
+            'adx': adx,
+            'price': prices[-1],
+            'timestamp': datetime.now(timezone(timedelta(hours=-3))).strftime("%d/%m/%Y %H:%M:%S")
+        }
+
+
+
 app = Flask(__name__)
 CORS(app)
 
@@ -631,6 +690,13 @@ def format_best_signal_card(best: dict, analysis_time: str) -> str:
         f"Entrada {best.get('entry_time','--')} • Preço {best['price']:.6f}"
         f" • Última análise {analysis_time or '--'}"
     )
+
+
+    def analyze_symbol(self, symbol: str, horizon: int) -> dict:
+
+        """Adapter para manter compatibilidade com o restante do app."""
+
+        return self.analyze(symbol, horizon=horizon, sims=1200)
 
 class AnalysisManager:
     def __init__(self):
