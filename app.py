@@ -675,10 +675,11 @@ class EnhancedTradingSystem:
 
 app = Flask(__name__)
 
-def _br_time_str(dt=None):
-    tz = datetime.timezone(datetime.timedelta(hours=-3))
-    dt = dt or datetime.datetime.now(tz)
-    return dt.strftime('%d/%m/%Y %H:%M:%S')
+def _br_time_str(dt_value=None):
+    from datetime import datetime, timezone, timedelta
+    tz = timezone(timedelta(hours=-3))
+    now_brt = dt_value or datetime.now(tz)
+    return now_brt.strftime('%d/%m/%Y %H:%M:%S')
 CORS(app)
 
 trading_system = EnhancedTradingSystem()
