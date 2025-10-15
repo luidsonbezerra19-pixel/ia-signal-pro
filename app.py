@@ -4,10 +4,10 @@ import threading
 from datetime import datetime, timezone, timedelta
 import os
 import random
-import numpy as np
+import math
 from typing import List, Dict, Tuple
 
-# SIMULAÇÃO APRIMORADA com todas as melhorias
+# SIMULAÇÃO APRIMORADA sem numpy
 class EnhancedCore:
     @staticmethod
     def generate_realistic_candles(base_price: float, trend_strength: float, volatility: float, num_candles: int = 21) -> List[float]:
@@ -42,10 +42,19 @@ class EnhancedCore:
         return prices
 
     @staticmethod
+    def calculate_std_dev(data: List[float]) -> float:
+        """Calcula desvio padrão sem numpy"""
+        if len(data) < 2:
+            return 0.0
+        mean = sum(data) / len(data)
+        variance = sum((x - mean) ** 2 for x in data) / len(data)
+        return math.sqrt(variance)
+
+    @staticmethod
     def calculate_technical_indicators(prices: List[float]) -> Dict:
         """Calcula indicadores técnicos realistas a partir dos preços"""
         if len(prices) < 14:
-            return {'adx': 25, 'rsi': 50, 'trend_strength': 0.5}
+            return {'adx': 25, 'rsi': 50, 'trend_strength': 0.5, 'volatility': 0.01}
         
         # Cálculo do RSI
         gains = []
@@ -59,8 +68,9 @@ class EnhancedCore:
                 gains.append(0)
                 losses.append(abs(change))
         
-        avg_gain = np.mean(gains[-14:]) if gains else 0
-        avg_loss = np.mean(losses[-14:]) if losses else 0
+        # Médias simples para RSI
+        avg_gain = sum(gains[-14:]) / 14 if gains else 0
+        avg_loss = sum(losses[-14:]) / 14 if losses else 0
         
         if avg_loss == 0:
             rsi = 100
@@ -70,8 +80,13 @@ class EnhancedCore:
         
         # Cálculo simplificado do ADX (força da tendência)
         price_changes = [prices[i] - prices[i-1] for i in range(1, len(prices))]
-        volatility = np.std(price_changes) if price_changes else 0
-        trend_direction = np.mean(price_changes[-5:]) if len(price_changes) >= 5 else 0
+        volatility = EnhancedCore.calculate_std_dev(price_changes) if price_changes else 0
+        
+        # Tendência baseada nas últimas 5 velas
+        if len(prices) >= 5:
+            trend_direction = sum(price_changes[-5:]) / 5
+        else:
+            trend_direction = sum(price_changes) / len(price_changes) if price_changes else 0
         
         # ADX baseado na volatilidade e direção da tendência
         base_adx = min(60, volatility * 1000 / (prices[0] if prices[0] > 0 else 1))
@@ -778,4 +793,5 @@ if __name__ == '__main__':
     print("   - Decisão multi-fatorial")
     print("   - Frontend aprimorado")
     print("   - Cálculos mais precisos")
+    print("   - SEM dependência do numpy")
     app.run(host='0.0.0.0', port=port, debug=False)
