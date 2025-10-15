@@ -517,14 +517,11 @@ def health():
 
 # ========== Execução ==========
 if __name__ == "__main__":
-    # NÃO força porta. Se PORT existir (Railway/Heroku), usa. Senão, usa padrão do Flask.
+    # Usa PORT se existir; senão 5000. (Sem mudar sua política de porta.)
     try:
-        env_port = os.getenv("PORT",5000))
-        port = int(env_port) if env_port else None
+        port_str = os.getenv("PORT", "5000")
+        port = int(port_str)
     except Exception:
-        port = None
+        port = 5000
 
-    if port:
-        app.run(host="0.0.0.0", port=port, threaded=True)
-    else:
-        app.run(threaded=True)
+    app.run(host="0.0.0.0", port=port, threaded=True, debug=False)
