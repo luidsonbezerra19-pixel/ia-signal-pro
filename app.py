@@ -789,97 +789,97 @@ class AnalysisManager:
                     all_horizons_results.append(result)
                     log.info(f"   ✅ T+{horizon} - {result['direction'].upper()} | Conf: {result['confidence']:.1%} | Real Data: {result['real_data']}")
 
-# === SELECIONAR MELHOR OPORTUNIDADE GLOBAL CORRETAMENTE ===
-# 1) Junta tudo e calcula assertividade “base”
-all_results_combined = []
-for r in all_horizons_results:
-    r['assertiveness'] = self.calculate_assertiveness(r)
-    all_results_combined.append(r)
+        # === SELECIONAR MELHOR OPORTUNIDADE GLOBAL CORRETAMENTE ===
+        # 1) Junta tudo e calcula assertividade “base”
+        all_results_combined = []
+        for r in all_horizons_results:
+            r['assertiveness'] = self.calculate_assertiveness(r)
+            all_results_combined.append(r)
 
-# 2) Melhor por símbolo (pré-correlação) — base da correlação
-best_by_symbol_pre = {}
-for r in all_results_combined:
-    sym = r['symbol']
-    if sym not in best_by_symbol_pre or r['assertiveness'] > best_by_symbol_pre[sym]['assertiveness']:
-        best_by_symbol_pre[sym] = r
+        # 2) Melhor por símbolo (pré-correlação) — base da correlação
+        best_by_symbol_pre = {}
+        for r in all_results_combined:
+            sym = r['symbol']
+            if sym not in best_by_symbol_pre or r['assertiveness'] > best_by_symbol_pre[sym]['assertiveness']:
+                best_by_symbol_pre[sym] = r
 
-# 3) Cache correlação (direção + confidence base do melhor de cada símbolo)
-cache_for_corr = {sym: {'direction': r['direction'], 'confidence': r['confidence']} for sym, r in best_by_symbol_pre.items()}
+        # 3) Cache correlação (direção + confidence base do melhor de cada símbolo)
+        cache_for_corr = {sym: {'direction': r['direction'], 'confidence': r['confidence']} for sym, r in best_by_symbol_pre.items()}
 
-# 4) Aplica correlação com limite e normaliza
-formatted = []
-for r in all_results_combined:
-    raw_corr = trading_system.corr.get_correlation_adjustment(r['symbol'], cache_for_corr)
-    corr = max(0.93, min(1.07, raw_corr))  # ±7%
-    adjusted_confidence = min(0.95, max(0.40, r['confidence'] * corr))
+        # 4) Aplica correlação com limite e normaliza
+        formatted = []
+        for r in all_results_combined:
+            raw_corr = trading_system.corr.get_correlation_adjustment(r['symbol'], cache_for_corr)
+            corr = max(0.93, min(1.07, raw_corr))  # ±7%
+            adjusted_confidence = min(0.95, max(0.40, r['confidence'] * corr))
 
-    prob_buy  = float(r['probability_buy'])
-    prob_sell = float(r['probability_sell'])
-    total = prob_buy + prob_sell
-    if total > 0:
-        prob_buy  /= total
-        prob_sell /= total
+            prob_buy  = float(r['probability_buy'])
+            prob_sell = float(r['probability_sell'])
+            total = prob_buy + prob_sell
+            if total > 0:
+                prob_buy  /= total
+                prob_sell /= total
 
-    formatted.append({
-        'symbol': r['symbol'],
-        'horizon': r['horizon'],
-        'direction': r['direction'],
-        'p_buy': round(prob_buy * 100, 1),
-        'p_sell': round(prob_sell * 100, 1),
-        'edge': round(abs(prob_buy - 0.5) * 100, 1),
-        'confidence': round(adjusted_confidence * 100, 1),
-        'confidence_base': round(r['confidence'] * 100, 1),
-        'adx': round(r['adx'], 1),
-        'rsi': round(r['rsi'], 1),
-        'price': round(r['price'], 6),
-        'timestamp': r['timestamp'],
-        'technical_override': len(r.get('winning_indicators', [])) >= 4,
-        'multi_timeframe': r.get('multi_timeframe', 'neutral'),
-        'monte_carlo_quality': r.get('monte_carlo_quality', 'MEDIUM'),
-        'winning_indicators': r.get('winning_indicators', []),
-        'score_factors': r.get('score_factors', []),
-        'liquidity_score': r.get('liquidity_score', 0.7),
-        'volatility_regime': r.get('volatility_regime', 'MEDIUM'),
-        'market_regime': r.get('market_regime', 'NORMAL'),
-        'volatility_multiplier': r.get('volatility_multiplier', 1.0),
-        'real_data': r.get('real_data', True),
-        'entry_time': self.calculate_entry_time_brazil(r['horizon']),
-    })
+            formatted.append({
+                'symbol': r['symbol'],
+                'horizon': r['horizon'],
+                'direction': r['direction'],
+                'p_buy': round(prob_buy * 100, 1),
+                'p_sell': round(prob_sell * 100, 1),
+                'edge': round(abs(prob_buy - 0.5) * 100, 1),
+                'confidence': round(adjusted_confidence * 100, 1),
+                'confidence_base': round(r['confidence'] * 100, 1),
+                'adx': round(r['adx'], 1),
+                'rsi': round(r['rsi'], 1),
+                'price': round(r['price'], 6),
+                'timestamp': r['timestamp'],
+                'technical_override': len(r.get('winning_indicators', [])) >= 4,
+                'multi_timeframe': r.get('multi_timeframe', 'neutral'),
+                'monte_carlo_quality': r.get('monte_carlo_quality', 'MEDIUM'),
+                'winning_indicators': r.get('winning_indicators', []),
+                'score_factors': r.get('score_factors', []),
+                'liquidity_score': r.get('liquidity_score', 0.7),
+                'volatility_regime': r.get('volatility_regime', 'MEDIUM'),
+                'market_regime': r.get('market_regime', 'NORMAL'),
+                'volatility_multiplier': r.get('volatility_multiplier', 1.0),
+                'real_data': r.get('real_data', True),
+                'entry_time': self.calculate_entry_time_brazil(r['horizon']),
+            })
 
-# 5) Recalcula assertividade após correlação
-for F in formatted:
-    tmp = dict(F)
-    tmp['confidence'] = (tmp['confidence']/100.0) if tmp['confidence']>1 else tmp['confidence']
-    # reconcilia com API da assertiveness original
-    F['assertiveness'] = self.calculate_assertiveness({
-        'confidence': tmp['confidence'],
-        'winning_indicators': F['winning_indicators'],
-        'monte_carlo_quality': F['monte_carlo_quality'],
-        'multi_timeframe': F['multi_timeframe'],
-        'direction': F['direction'],
-        'probability_buy': F['p_buy']/100.0,
-        'probability_sell': F['p_sell']/100.0,
-        'volatility_regime': F['volatility_regime']
-    })
+        # 5) Recalcula assertividade após correlação
+        for F in formatted:
+            tmp = dict(F)
+            tmp['confidence'] = (tmp['confidence']/100.0) if tmp['confidence']>1 else tmp['confidence']
+            # reconcilia com API da assertiveness original
+            F['assertiveness'] = self.calculate_assertiveness({
+                'confidence': tmp['confidence'],
+                'winning_indicators': F['winning_indicators'],
+                'monte_carlo_quality': F['monte_carlo_quality'],
+                'multi_timeframe': F['multi_timeframe'],
+                'direction': F['direction'],
+                'probability_buy': F['p_buy']/100.0,
+                'probability_sell': F['p_sell']/100.0,
+                'volatility_regime': F['volatility_regime']
+            })
 
-# 6) Marca melhor de cada símbolo (após correlação)
-for sym in {x['symbol'] for x in formatted}:
-    group = [x for x in formatted if x['symbol'] == sym]
-    group.sort(key=lambda z: z['assertiveness'], reverse=True)
-    best_of_symbol = group[0]
-    for g in group: g['is_best_of_symbol'] = (g is best_of_symbol)
+        # 6) Marca melhor de cada símbolo (após correlação)
+        for sym in {x['symbol'] for x in formatted}:
+            group = [x for x in formatted if x['symbol'] == sym]
+            group.sort(key=lambda z: z['assertiveness'], reverse=True)
+            best_of_symbol = group[0]
+            for g in group: g['is_best_of_symbol'] = (g is best_of_symbol)
 
-# 7) Escolhe o melhor global (após correlação) com score robusto
-def mc_bonus(q): return 3.0 if q == 'HIGH' else (1.0 if q == 'MEDIUM' else 0.0)
-for F in formatted:
-    F['global_score'] = F['assertiveness'] + (0.25 * F.get('edge', 0.0)) + mc_bonus(F['monte_carlo_quality'])
-best = max(formatted, key=lambda z: z['global_score']) if formatted else None
-if best:
-    best['is_best_global'] = True
-    best['entry_time'] = self.calculate_entry_time_brazil(best['horizon'])
+        # 7) Escolhe o melhor global (após correlação) com score robusto
+        def mc_bonus(q): return 3.0 if q == 'HIGH' else (1.0 if q == 'MEDIUM' else 0.0)
+        for F in formatted:
+            F['global_score'] = F['assertiveness'] + (0.25 * F.get('edge', 0.0)) + mc_bonus(F['monte_carlo_quality'])
+        best = max(formatted, key=lambda z: z['global_score']) if formatted else None
+        if best:
+            best['is_best_global'] = True
+            best['entry_time'] = self.calculate_entry_time_brazil(best['horizon'])
 
-            analysis_time = self.get_brazil_time().strftime("%d/%m/%Y %H:%M:%S")
-            processing_time = (datetime.now() - start_time).total_seconds()
+                    analysis_time = self.get_brazil_time().strftime("%d/%m/%Y %H:%M:%S")
+                    processing_time = (datetime.now() - start_time).total_seconds()
             
             with self._lock:
                 self.current_results = formatted
