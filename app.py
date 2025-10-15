@@ -8,10 +8,12 @@ import math
 import json
 from typing import List, Dict, Tuple, Any
 
-# ========== SISTEMA DE MEMÓRIA ==========
+# ========== SISTEMA DE MEMÓRIA APRIMORADO ==========
 class MemorySystem:
     def __init__(self):
         self.symbol_memory = {}
+        self.market_regime = "NORMAL"  # NORMAL, VOLATILE, TRENDING
+        self.regime_memory = []
     
     def get_symbol_weights(self, symbol: str) -> Dict:
         """Pesos dinâmicos baseados no histórico do símbolo"""
@@ -22,15 +24,257 @@ class MemorySystem:
             'multi_tf': 0.02
         }
         
-        # Ajuste sutil baseado no símbolo (mantendo essência)
+        # Ajuste baseado no regime de mercado
+        if self.market_regime == "VOLATILE":
+            base_weights['monte_carlo'] = 0.60  # Reduz confiança em alta volatilidade
+            base_weights['bollinger'] = 0.08    # Aumenta importância de Bollinger
+            base_weights['adx'] = 0.09          # ADX mais importante em tendências
+        elif self.market_regime == "TRENDING":
+            base_weights['adx'] = 0.10
+            base_weights['multi_tf'] = 0.04
+        
+        # Ajuste sutil baseado no símbolo
         if "BTC" in symbol or "ETH" in symbol:
-            base_weights['monte_carlo'] = 0.68  # Major coins mais previsíveis
+            base_weights['monte_carlo'] = 0.68
             base_weights['volume'] = 0.05
         elif "ADA" in symbol or "XRP" in symbol:
-            base_weights['rsi'] = 0.10  # Altcoins mais voláteis
+            base_weights['rsi'] = 0.10
             base_weights['bollinger'] = 0.07
             
         return base_weights
+    
+    def update_market_regime(self, volatility: float, adx_values: List[float]):
+        """Atualiza regime de mercado baseado na volatilidade e ADX"""
+        avg_adx = sum(adx_values) / len(adx_values) if adx_values else 25
+        
+        if volatility > 0.015 or avg_adx < 20:
+            self.market_regime = "VOLATILE"
+        elif avg_adx > 35:
+            self.market_regime = "TRENDING"
+        else:
+            self.market_regime = "NORMAL"
+        
+        self.regime_memory.append({
+            'timestamp': datetime.now(),
+            'regime': self.market_regime,
+            'volatility': volatility,
+            'avg_adx': avg_adx
+        })
+        
+        # Mantém apenas últimas 100 leituras
+        if len(self.regime_memory) > 100:
+            self.regime_memory.pop(0)
+
+# ========== SISTEMA DE LIQUIDEZ ==========
+class LiquiditySystem:
+    def __init__(self):
+        self.symbol_liquidity = {}
+        self.volume_profile = {}
+    
+    def calculate_liquidity_score(self, symbol: str, prices: List[float]) -> float:
+        """Calcula score de liquidez baseado na volatilidade e volume implícito"""
+        if len(prices) < 10:
+            return 0.7  # Valor padrão
+        
+        # Calcula volatilidade relativa (proxy para liquidez)
+        returns = []
+        for i in range(1, len(prices)):
+            if prices[i-1] != 0:
+                ret = (prices[i] - prices[i-1]) / prices[i-1]
+                returns.append(abs(ret))
+        
+        if not returns:
+            return 0.7
+            
+        volatility = sum(returns) / len(returns)
+        
+        # Ativos com menor volatilidade têm maior liquidez implícita
+        if volatility < 0.005:
+            liquidity_score = 0.9
+        elif volatility < 0.01:
+            liquidity_score = 0.8
+        elif volatility < 0.02:
+            liquidity_score = 0.7
+        else:
+            liquidity_score = 0.6
+            
+        # Ajusta para símbolos específicos
+        if symbol in ['BTC/USDT', 'ETH/USDT']:
+            liquidity_score = min(0.95, liquidity_score + 0.1)
+        elif symbol in ['ADA/USDT', 'XRP/USDT']:
+            liquidity_score = max(0.5, liquidity_score - 0.1)
+            
+        self.symbol_liquidity[symbol] = liquidity_score
+        return liquidity_score
+    
+    def get_spread_impact(self, symbol: str) -> float:
+        """Estima impacto do spread baseado na liquidez"""
+        liquidity = self.symbol_liquidity.get(symbol, 0.7)
+        # Spread menor para alta liquidez
+        return 0.001 * (1 - liquidity)  # 0.1% a 0.03% de impacto
+
+# ========== SISTEMA DE CORRELAÇÕES ==========
+class CorrelationSystem:
+    def __init__(self):
+        self.correlation_matrix = self._initialize_correlations()
+    
+    def _initialize_correlations(self) -> Dict:
+        """Inicializa matriz de correlações baseada em grupos de ativos"""
+        return {
+            'BTC/USDT': {
+                'ETH/USDT': 0.85, 'BNB/USDT': 0.65, 'SOL/USDT': 0.70,
+                'ADA/USDT': 0.55, 'XRP/USDT': 0.50
+            },
+            'ETH/USDT': {
+                'BTC/USDT': 0.85, 'BNB/USDT': 0.70, 'SOL/USDT': 0.75,
+                'ADA/USDT': 0.60, 'XRP/USDT': 0.55
+            },
+            'SOL/USDT': {
+                'BTC/USDT': 0.70, 'ETH/USDT': 0.75, 'ADA/USDT': 0.65
+            },
+            'ADA/USDT': {
+                'BTC/USDT': 0.55, 'ETH/USDT': 0.60, 'SOL/USDT': 0.65
+            },
+            'XRP/USDT': {
+                'BTC/USDT': 0.50, 'ETH/USDT': 0.55
+            }
+        }
+    
+    def get_correlation_adjustment(self, symbol: str, other_signals: Dict) -> float:
+        """Ajusta confiança baseado em correlações com outros sinais"""
+        if symbol not in self.correlation_matrix:
+            return 1.0
+            
+        adjustments = []
+        for other_symbol, signal_data in other_signals.items():
+            if other_symbol != symbol and other_symbol in self.correlation_matrix[symbol]:
+                correlation = self.correlation_matrix[symbol][other_symbol]
+                # Se sinais estão alinhados com correlação positiva, aumenta confiança
+                if (signal_data['direction'] == other_signals.get(symbol, {}).get('direction', '')):
+                    adjustment = 1.0 + (correlation * 0.1)  # +10% no máximo
+                else:
+                    adjustment = 1.0 - (correlation * 0.05)  # -5% no máximo
+                adjustments.append(adjustment)
+        
+        if not adjustments:
+            return 1.0
+            
+        return sum(adjustments) / len(adjustments)
+
+# ========== SISTEMA DE EVENTOS DE NOTÍCIAS ==========
+class NewsEventSystem:
+    def __init__(self):
+        self.active_events = []
+        self.volatility_multiplier = 1.0
+    
+    def generate_market_events(self):
+        """Gera eventos de mercado aleatórios (simulação)"""
+        events = [
+            {'type': 'FED_MEETING', 'impact': 'HIGH', 'volatility_multiplier': 2.0},
+            {'type': 'CPI_RELEASE', 'impact': 'MEDIUM', 'volatility_multiplier': 1.5},
+            {'type': 'REGULATION_NEWS', 'impact': 'MEDIUM', 'volatility_multiplier': 1.8},
+            {'type': 'WHALE_MOVEMENT', 'impact': 'LOW', 'volatility_multiplier': 1.3},
+            {'type': 'EXCHANGE_ISSUE', 'impact': 'HIGH', 'volatility_multiplier': 2.2}
+        ]
+        
+        # 15% de chance de evento a cada análise
+        if random.random() < 0.15:
+            event = random.choice(events)
+            event['start_time'] = datetime.now()
+            event['duration_hours'] = random.randint(2, 12)
+            self.active_events.append(event)
+            print(f"📢 EVENTO DE MERCADO: {event['type']} (Impacto: {event['impact']})")
+    
+    def get_volatility_multiplier(self):
+        """Retorna multiplicador de volatilidade baseado em eventos ativos"""
+        if not self.active_events:
+            return 1.0
+        
+        max_multiplier = 1.0
+        current_time = datetime.now()
+        
+        # Remove eventos expirados e encontra maior multiplicador
+        self.active_events = [
+            event for event in self.active_events 
+            if current_time - event['start_time'] < timedelta(hours=event['duration_hours'])
+        ]
+        
+        for event in self.active_events:
+            max_multiplier = max(max_multiplier, event['volatility_multiplier'])
+        
+        return max_multiplier
+    
+    def adjust_confidence_for_events(self, confidence: float) -> float:
+        """Ajusta confiança baseado em eventos ativos"""
+        multiplier = self.get_volatility_multiplier()
+        # Reduz confiança durante eventos de alta volatilidade
+        if multiplier > 1.5:
+            return confidence * 0.85
+        elif multiplier > 1.2:
+            return confidence * 0.92
+        return confidence
+
+# ========== CLUSTERIZAÇÃO DE VOLATILIDADE ==========
+class VolatilityClustering:
+    def __init__(self):
+        self.volatility_regimes = {}
+        self.historical_volatility = []
+    
+    def detect_volatility_clusters(self, prices: List[float], symbol: str) -> str:
+        """Detecta clusters de volatilidade usando método simplificado"""
+        if len(prices) < 20:
+            return "MEDIUM"
+        
+        # Calcula retornos
+        returns = []
+        for i in range(1, len(prices)):
+            if prices[i-1] != 0:
+                ret = (prices[i] - prices[i-1]) / prices[i-1]
+                returns.append(abs(ret))
+        
+        if not returns:
+            return "MEDIUM"
+        
+        # Volatilidade histórica
+        volatility = sum(returns) / len(returns)
+        self.historical_volatility.append(volatility)
+        
+        # Mantém histórico limitado
+        if len(self.historical_volatility) > 50:
+            self.historical_volatility.pop(0)
+        
+        # Classifica volatilidade
+        if len(self.historical_volatility) > 10:
+            avg_vol = sum(self.historical_volatility) / len(self.historical_volatility)
+            
+            if volatility > avg_vol * 1.5:
+                regime = "HIGH"
+            elif volatility < avg_vol * 0.7:
+                regime = "LOW"
+            else:
+                regime = "MEDIUM"
+        else:
+            # Classificação inicial
+            if volatility > 0.015:
+                regime = "HIGH"
+            elif volatility < 0.008:
+                regime = "LOW"
+            else:
+                regime = "MEDIUM"
+        
+        self.volatility_regimes[symbol] = regime
+        return regime
+    
+    def get_regime_adjustment(self, symbol: str) -> float:
+        """Retorna ajuste baseado no regime de volatilidade"""
+        regime = self.volatility_regimes.get(symbol, "MEDIUM")
+        
+        if regime == "HIGH":
+            return 0.85  # Reduz confiança em alta volatilidade
+        elif regime == "LOW":
+            return 1.05  # Aumenta confiança em baixa volatilidade
+        else:
+            return 1.0
 
 # ========== SIMULAÇÃO MONTE CARLO 3000 ==========
 class MonteCarloSimulator:
@@ -286,54 +530,55 @@ class MultiTimeframeAnalyzer:
             return 'sell'
         return 'neutral'
 
-# ========== SISTEMA PRINCIPAL OTIMIZADO ==========
+# ========== SISTEMA PRINCIPAL ATUALIZADO ==========
 class EnhancedTradingSystem:
     def __init__(self):
         self.memory = MemorySystem()
         self.monte_carlo = MonteCarloSimulator()
         self.indicators = TechnicalIndicators()
         self.multi_tf = MultiTimeframeAnalyzer()
+        self.liquidity = LiquiditySystem()
+        self.correlation = CorrelationSystem()
+        self.news_events = NewsEventSystem()
+        self.volatility_clustering = VolatilityClustering()
+        
+        # Cache para análise entre símbolos
+        self.current_analysis_cache = {}
     
     def analyze_symbol(self, symbol: str, horizon: int) -> Dict:
-        """Analisa um símbolo com 3000 simulações em tempo otimizado"""
+        """Analisa um símbolo com todos os sistemas integrados"""
         
-        # Preço base baseado no símbolo (mantendo random mas mais realista)
+        # Geração de preços base
         symbol_bases = {
-            'BTC/USDT': (30000, 60000),
-            'ETH/USDT': (1800, 3500), 
-            'SOL/USDT': (80, 200),
-            'ADA/USDT': (0.3, 0.6),
-            'XRP/USDT': (0.4, 0.8),
-            'BNB/USDT': (200, 400)
+            'BTC/USDT': (30000, 60000), 'ETH/USDT': (1800, 3500), 
+            'SOL/USDT': (80, 200), 'ADA/USDT': (0.3, 0.6),
+            'XRP/USDT': (0.4, 0.8), 'BNB/USDT': (200, 400)
         }
         
         base_range = symbol_bases.get(symbol, (50, 400))
         base_price = random.uniform(base_range[0], base_range[1])
         
-        # Geração de histórico com volatilidade realista
+        # Geração de histórico com sistema de eventos
+        volatility_multiplier = self.news_events.get_volatility_multiplier()
         historical_prices = [base_price]
         current = base_price
         
         for i in range(49):
-            # Volatilidade baseada no tipo de ativo
-            if "BTC" in symbol or "ETH" in symbol:
-                volatility = 0.006  # Menos voláteis
-            else:
-                volatility = 0.012  # Mais voláteis
+            # Volatilidade ajustada por eventos
+            base_volatility = 0.006 if "BTC" in symbol or "ETH" in symbol else 0.012
+            adjusted_volatility = base_volatility * volatility_multiplier
                 
-            change = random.gauss(0, volatility)
+            change = random.gauss(0, adjusted_volatility)
             current = current * (1 + change)
             historical_prices.append(current)
         
         # 3000 SIMULAÇÕES MONTE CARLO
         future_paths = self.monte_carlo.generate_price_paths(
-            historical_prices[-1], 
-            num_paths=3000,  # 3000 simulações
-            steps=8  # 8 candles para análise multi-horizonte
+            historical_prices[-1], num_paths=3000, steps=8
         )
         mc_result = self.monte_carlo.calculate_probability_distribution(future_paths)
         
-        # INDICADORES RÁPIDOS
+        # INDICADORES
         rsi = self.indicators.calculate_rsi(historical_prices)
         adx = self.indicators.calculate_adx(historical_prices)
         macd = self.indicators.calculate_macd(historical_prices)
@@ -342,20 +587,36 @@ class EnhancedTradingSystem:
         fibonacci = self.indicators.calculate_fibonacci(historical_prices)
         multi_tf_consensus = self.multi_tf.analyze_consensus(historical_prices)
         
-        # PESOS COM MONTE CARLO COMO PRIORIDADE
+        # NOVOS SISTEMAS
+        liquidity_score = self.liquidity.calculate_liquidity_score(symbol, historical_prices)
+        volatility_regime = self.volatility_clustering.detect_volatility_clusters(historical_prices, symbol)
+        
+        # Atualiza regime de mercado
+        self.memory.update_market_regime(
+            volatility=adjusted_volatility, 
+            adx_values=[adx] if adx else [25]
+        )
+        
+        # Gera eventos aleatórios
+        self.news_events.generate_market_events()
+        
+        # PESOS COM MEMÓRIA
         weights = self.memory.get_symbol_weights(symbol)
         
-        # SISTEMA DE PONTUAÇÃO IMPARCIAL
+        # SISTEMA DE PONTUAÇÃO COM NOVOS AJUSTES
         score = 0
         factors = []
         winning_indicators = []
         
-        # 1. MONTE CARLO (65% peso)
-        mc_score = mc_result['probability_buy'] * weights['monte_carlo'] * 100
+        # 1. MONTE CARLO (65% peso) - com ajuste de volatilidade
+        base_mc_score = mc_result['probability_buy'] * weights['monte_carlo'] * 100
+        volatility_adjustment = self.volatility_clustering.get_regime_adjustment(symbol)
+        mc_score = base_mc_score * volatility_adjustment
+        
         score += mc_score
         factors.append(f"MC:{mc_score:.1f}")
         
-        # 2. INDICADORES TÉCNICOS (35% peso total)
+        # 2. INDICADORES TÉCNICOS
         # RSI
         rsi_score = 0
         if (mc_result['probability_buy'] > 0.5 and 30 < rsi < 70) or (mc_result['probability_buy'] < 0.5 and 30 < rsi < 70):
@@ -416,11 +677,31 @@ class EnhancedTradingSystem:
         score += tf_score
         factors.append(f"TF:{tf_score:.1f}")
         
-        # DIREÇÃO FINAL (baseada no Monte Carlo)
+        # 3. AJUSTES FINAIS POR LIQUIDEZ E EVENTOS
+        liquidity_adjustment = 0.95 + (liquidity_score * 0.1)  # 0.95 a 1.05
+        score *= liquidity_adjustment
+        factors.append(f"LIQ:{liquidity_adjustment:.2f}")
+        
+        # Ajuste por eventos de notícias
+        final_confidence = min(0.90, max(0.55, score / 100))
+        final_confidence = self.news_events.adjust_confidence_for_events(final_confidence)
+        
+        # DIREÇÃO FINAL
         direction = 'buy' if mc_result['probability_buy'] > 0.5 else 'sell'
         
-        # CONFIANÇA IMPARCIAL (55%-90%)
-        confidence = min(0.90, max(0.55, score / 100))
+        # Cache para correlações
+        self.current_analysis_cache[symbol] = {
+            'direction': direction,
+            'confidence': final_confidence,
+            'timestamp': datetime.now()
+        }
+        
+        # APLICA CORRELAÇÕES (após todos os símbolos serem processados)
+        correlation_adjustment = self.correlation.get_correlation_adjustment(
+            symbol, self.current_analysis_cache
+        )
+        final_confidence *= correlation_adjustment
+        factors.append(f"CORR:{correlation_adjustment:.2f}")
         
         return {
             'symbol': symbol,
@@ -428,7 +709,7 @@ class EnhancedTradingSystem:
             'direction': direction,
             'probability_buy': mc_result['probability_buy'],
             'probability_sell': mc_result['probability_sell'],
-            'confidence': confidence,
+            'confidence': final_confidence,
             'rsi': rsi,
             'adx': adx,
             'multi_timeframe': multi_tf_consensus,
@@ -436,7 +717,12 @@ class EnhancedTradingSystem:
             'winning_indicators': winning_indicators,
             'score_factors': factors,
             'price': historical_prices[-1],
-            'timestamp': datetime.now().strftime("%H:%M:%S")
+            'timestamp': datetime.now().strftime("%H:%M:%S"),
+            # Novas métricas
+            'liquidity_score': round(liquidity_score, 2),
+            'volatility_regime': volatility_regime,
+            'market_regime': self.memory.market_regime,
+            'volatility_multiplier': round(volatility_multiplier, 2)
         }
 
 # ========== FLASK APP ==========
@@ -458,6 +744,9 @@ class AnalysisManager:
             self.is_analyzing = True
             start_time = datetime.now()
             print(f"🔍 Iniciando análise com 3000 simulações: {symbols}")
+            
+            # Limpa cache de análise anterior
+            trading_system.current_analysis_cache = {}
             
             # ANALISA TODOS OS HORIZONTES PARA CADA ATIVO
             all_symbol_results = {}
@@ -502,7 +791,12 @@ class AnalysisManager:
                     'winning_indicators': best_result['winning_indicators'],
                     'score_factors': best_result['score_factors'],
                     'assertiveness': self.calculate_assertiveness(best_result),
-                    'is_best_of_symbol': True  # Marca como melhor do ativo
+                    'is_best_of_symbol': True,  # Marca como melhor do ativo
+                    # Novos campos
+                    'liquidity_score': best_result['liquidity_score'],
+                    'volatility_regime': best_result['volatility_regime'],
+                    'market_regime': best_result['market_regime'],
+                    'volatility_multiplier': best_result['volatility_multiplier']
                 }
                 self.current_results.append(formatted_best)
                 
@@ -525,7 +819,12 @@ class AnalysisManager:
                         'winning_indicators': horizon_result['winning_indicators'],
                         'score_factors': horizon_result['score_factors'],
                         'assertiveness': self.calculate_assertiveness(horizon_result),
-                        'is_best_of_symbol': (horizon_result['horizon'] == best_result['horizon'])
+                        'is_best_of_symbol': (horizon_result['horizon'] == best_result['horizon']),
+                        # Novos campos
+                        'liquidity_score': horizon_result['liquidity_score'],
+                        'volatility_regime': horizon_result['volatility_regime'],
+                        'market_regime': horizon_result['market_regime'],
+                        'volatility_multiplier': horizon_result['volatility_multiplier']
                     }
                     all_horizons_display.append(formatted_all)
             
@@ -540,6 +839,7 @@ class AnalysisManager:
             self.analysis_time = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
             processing_time = (datetime.now() - start_time).total_seconds()
             print(f"✅ Análise concluída em {processing_time:.1f}s: {len(symbols)} ativos, {len(self.current_results)} sinais")
+            print(f"📊 Regime de Mercado: {trading_system.memory.market_regime}")
             
         except Exception as e:
             print(f"❌ Erro: {e}")
@@ -572,7 +872,11 @@ class AnalysisManager:
                     'winning_indicators': random.sample(['RSI', 'ADX', 'MACD', 'BB', 'VOL'], 3),
                     'score_factors': ['MC:45.0', 'RSI:8.0', 'ADX:7.0'],
                     'assertiveness': random.randint(70, 90),
-                    'is_best_of_symbol': (horizon == 2)  # Simula que T+2 é o melhor
+                    'is_best_of_symbol': (horizon == 2),  # Simula que T+2 é o melhor
+                    'liquidity_score': round(random.uniform(0.6, 0.9), 2),
+                    'volatility_regime': random.choice(['LOW', 'MEDIUM', 'HIGH']),
+                    'market_regime': 'NORMAL',
+                    'volatility_multiplier': 1.0
                 })
         return results
     
@@ -604,6 +908,12 @@ class AnalysisManager:
         # Bonus por alta probabilidade (>60%)
         if max(result['probability_buy'], result['probability_sell']) > 0.6:
             base += 5
+            
+        # Ajuste por regime de volatilidade
+        if result['volatility_regime'] == 'LOW':
+            base += 3
+        elif result['volatility_regime'] == 'HIGH':
+            base -= 5
             
         return min(round(base, 1), 95)  # Limite de 95% para realismo
     
@@ -655,13 +965,18 @@ def index():
             .quality-low {{ color: #e74c3c; }}
             .symbol-header {{ font-size: 1.1em; font-weight: bold; margin-bottom: 5px; }}
             .horizon-badge {{ background: #3498db; padding: 2px 6px; border-radius: 3px; font-size: 0.8em; margin-left: 5px; }}
+            .regime-low {{ color: #2ecc71; }}
+            .regime-medium {{ color: #f39c12; }}
+            .regime-high {{ color: #e74c3c; }}
+            .liquidity-high {{ color: #2ecc71; }}
+            .liquidity-low {{ color: #e74c3c; }}
         </style>
     </head>
     <body>
         <div class="container">
             <div class="card">
                 <h1>🚀 IA Signal Pro - 3000 SIMULAÇÕES MONTE CARLO</h1>
-                <p><em>Análise completa em ~25s • 6 ativos selecionáveis • Imparcialidade total</em></p>
+                <p><em>Análise completa em ~25s • 6 ativos selecionáveis • Imparcialidade total • 5 Sistemas Integrados</em></p>
                 
                 <div class="symbols-container">
                     <h3>🎯 SELECIONE OS ATIVOS PARA ANÁLISE:</h3>
@@ -707,6 +1022,16 @@ def index():
 
             function formatIndicators(indicators) {{
                 return indicators ? indicators.map(i => `<span class="indicator">${{i}}</span>`).join('') : '';
+            }}
+
+            function getRegimeClass(regime) {{
+                if (regime === 'LOW') return 'regime-low';
+                if (regime === 'HIGH') return 'regime-high';
+                return 'regime-medium';
+            }}
+
+            function getLiquidityClass(score) {{
+                return score > 0.8 ? 'liquidity-high' : (score < 0.6 ? 'liquidity-low' : '');
             }}
 
             async function analyze() {{
@@ -771,6 +1096,8 @@ def index():
                 if (data.best) {{
                     const best = data.best;
                     const qualityClass = 'quality-' + best.monte_carlo_quality.toLowerCase();
+                    const regimeClass = getRegimeClass(best.volatility_regime);
+                    const liquidityClass = getLiquidityClass(best.liquidity_score);
                     
                     document.getElementById('bestResult').innerHTML = `
                         <div class="results ${{best.direction}}">
@@ -792,13 +1119,18 @@ def index():
                                 <div class="metric"><div>Prob Venda</div><strong>${{best.p_sell}}%</strong></div>
                                 <div class="metric"><div>ADX</div><strong>${{best.adx}}</strong></div>
                                 <div class="metric"><div>RSI</div><strong>${{best.rsi}}</strong></div>
-                                <div class="metric"><div>Multi-TF</div><strong>${{best.multi_timeframe}}</strong></div>
-                                <div class="metric"><div>Qualidade MC</div><strong class="${{qualityClass}}">${{best.monte_carlo_quality}}</strong></div>
+                                <div class="metric"><div>Liquidez</div><strong class="${{liquidityClass}}">${{best.liquidity_score}}</strong></div>
+                                <div class="metric"><div>Vol Regime</div><strong class="${{regimeClass}}">${{best.volatility_regime}}</strong></div>
                             </div>
                             
                             <div><strong>Indicadores Ativos:</strong> ${{formatIndicators(best.winning_indicators)}}</div>
                             <div><strong>Pontuação:</strong> ${{formatFactors(best.score_factors)}}</div>
-                            <div><strong>Entrada:</strong> ${{best.entry_time}} | <strong>Preço:</strong> $${{best.price}}</div>
+                            <div>
+                                <strong>Mercado:</strong> ${{best.market_regime}} | 
+                                <strong>Vol Multi:</strong> ${{best.volatility_multiplier}}x |
+                                <strong>Preço:</strong> $${{best.price}}
+                            </div>
+                            <div><strong>Entrada:</strong> ${{best.entry_time}}</div>
                             ${{best.technical_override ? '<div class="override">⚡ ALTA CONVERGÊNCIA TÉCNICA</div>' : ''}}
                             <br><em>Última análise: ${{data.analysis_time}}</em>
                         </div>
@@ -821,8 +1153,18 @@ def index():
                     // Para cada símbolo, mostra todos os horizontes
                     Object.keys(groupedBySymbol).sort().forEach(symbol => {{
                         const symbolResults = groupedBySymbol[symbol].sort((a, b) => a.horizon - b.horizon);
+                        const regimeClass = getRegimeClass(symbolResults[0].volatility_regime);
+                        const liquidityClass = getLiquidityClass(symbolResults[0].liquidity_score);
                         
-                        html += `<div class="symbol-header">${{symbol}}</div>`;
+                        html += `
+                            <div class="symbol-header">
+                                ${{symbol}} 
+                                <span style="font-size: 0.8em; margin-left: 10px;">
+                                    [Regime: <span class="${{regimeClass}}">${{symbolResults[0].volatility_regime}}</span> | 
+                                    Liquidez: <span class="${{liquidityClass}}">${{symbolResults[0].liquidity_score}}</span> |
+                                    Mercado: ${{symbolResults[0].market_regime}}]
+                                </span>
+                            </div>`;
                         
                         symbolResults.forEach(result => {{
                             const qualityClass = 'quality-' + result.monte_carlo_quality.toLowerCase();
@@ -911,7 +1253,7 @@ def get_results():
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'healthy', 'version': '3000-simulations'})
+    return jsonify({'status': 'healthy', 'version': '3000-simulations-v2'})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
@@ -922,4 +1264,10 @@ if __name__ == '__main__':
     print("✅ Imparcialidade total entre horizontes")
     print("✅ Monte Carlo como prioridade (65% peso)")
     print("✅ ADX corrigido e realista (SEM numpy)")
+    print("✅ 5 SISTEMAS INTEGRADOS:")
+    print("   - Memória de Mercado")
+    print("   - Sistema de Liquidez") 
+    print("   - Correlações entre Ativos")
+    print("   - Eventos de Notícias")
+    print("   - Clusterização de Volatilidade")
     app.run(host='0.0.0.0', port=port, debug=False)
