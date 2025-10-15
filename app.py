@@ -7,7 +7,6 @@ import random
 import math
 import json
 from typing import List, Dict, Tuple, Any
-import numpy as np
 
 # ========== SISTEMA DE MEMÓRIA ==========
 class MemorySystem:
@@ -126,11 +125,11 @@ class TechnicalIndicators:
 
     @staticmethod
     def calculate_adx(prices: List[float]) -> float:
-        """ADX realista corrigido"""
+        """ADX realista corrigido - SEM numpy"""
         if len(prices) < 15:
             return random.uniform(20, 40)
         
-        # Calcula True Range (TR)
+        # Calcula True Range (TR) - versão simplificada sem numpy
         true_ranges = []
         for i in range(1, min(15, len(prices))):
             high_low = abs(prices[i] - prices[i-1])
@@ -168,6 +167,15 @@ class TechnicalIndicators:
         return round(adx, 1)
 
     @staticmethod
+    def calculate_std_dev(data: List[float]) -> float:
+        """Calcula desvio padrão sem numpy"""
+        if len(data) < 2:
+            return 0.0
+        mean = sum(data) / len(data)
+        variance = sum((x - mean) ** 2 for x in data) / len(data)
+        return math.sqrt(variance)
+
+    @staticmethod
     def calculate_macd(prices: List[float]) -> Dict:
         """MACD rápido"""
         if len(prices) < 20:
@@ -190,7 +198,7 @@ class TechnicalIndicators:
         
         recent = prices[-15:]
         middle = sum(recent) / 15
-        std = math.sqrt(sum((p - middle) ** 2 for p in recent) / 15)
+        std = TechnicalIndicators.calculate_std_dev(recent)  # Usa nossa função sem numpy
         current = prices[-1]
         
         if current < middle - (1.5 * std):
@@ -913,5 +921,5 @@ if __name__ == '__main__':
     print("✅ Relação completa de TODOS os T+")
     print("✅ Imparcialidade total entre horizontes")
     print("✅ Monte Carlo como prioridade (65% peso)")
-    print("✅ ADX corrigido e realista")
+    print("✅ ADX corrigido e realista (SEM numpy)")
     app.run(host='0.0.0.0', port=port, debug=False)
