@@ -4,82 +4,65 @@ import threading
 from datetime import datetime, timezone, timedelta
 import os
 import random
+import numpy as np
 
-# SIMULAÇÃO do seu sistema - funciona sem seu código core
+# SIMULAÇÃO APRIMORADA com candles mais realistas
 class MockCore:
     @staticmethod
     def analyze_symbols(symbols, sims=1000, only_adx=None):
-        print(f"🔍 Analisando: {symbols}")
+        print(f"🔍 Analisando: {symbols} (simulações: {sims})")
         
         mock_results = []
         symbols_list = [s.strip() for s in symbols if s.strip()]
         
         for i, symbol in enumerate(symbols_list):
-            # Tendência base mais realista (menos aleatória)
-            base_trend = random.uniform(0.4, 0.8)  # Menos extremos
+            # 🎯 SISTEMA DE TENDÊNCIA POR SÍMBOLO (mais consistente)
+            symbol_hash = sum(ord(c) for c in symbol)
+            random.seed(symbol_hash)
+            base_trend = random.uniform(0.4, 0.7)  # Tendência base mais conservadora
             
             for horizon in [1, 2, 3]:
-                # Probabilidades mais consistentes
-                trend_influence = base_trend + random.uniform(-0.15, 0.15)
-                p_buy = max(0.3, min(0.9, trend_influence))
-                p_sell = round(1 - p_buy, 3)
+                # 🔄 SIMULAÇÃO DE CANDLES MAIS REALISTA
+                price_action = MockCore.simulate_price_action(symbol, horizon, base_trend)
                 
-                # 🎯 LÓGICA HÍBRIDA INTELIGENTE
-                base_direction = "buy" if p_buy > p_sell else "sell"
+                # Probabilidades baseadas na ação de preço simulada
+                trend_strength = price_action['trend_strength']
+                volatility = price_action['volatility']
                 
-                # Indicadores mais realistas
-                adx = round(15 + (random.random() * 30), 1)  # 15-45
-                rsi = round(25 + (random.random() * 50), 1)  # 25-75
+                # Cálculo mais sofisticado de probabilidades
+                p_buy, p_sell = MockCore.calculate_probabilities(
+                    trend_strength, volatility, price_action['momentum']
+                )
                 
-                # 🚨 DECISÃO TÉCNICA INTELIGENTE
-                technical_override = False
-                final_direction = base_direction
+                # 🎯 INDICADORES TÉCNICOS CORRELACIONADOS
+                adx, rsi = MockCore.generate_technical_indicators(
+                    trend_strength, volatility, price_action['momentum']
+                )
                 
-                # REGRAS DE INVERSÃO MAIS CONSERVADORAS:
-                # 1. RSI extremo + ADX forte = reversão provável
-                if (rsi > 75 and adx > 30 and base_direction == "buy"):
-                    final_direction = "sell"
-                    technical_override = True
-                    print(f"   ⚡ {symbol} T+{horizon}: VENDA (RSI {rsi} sobrecomprado)")
-                    
-                elif (rsi < 25 and adx > 30 and base_direction == "sell"):
-                    final_direction = "buy"
-                    technical_override = True
-                    print(f"   ⚡ {symbol} T+{horizon}: COMPRA (RSI {rsi} sobrevendido)")
+                # 🚨 DECISÃO TÉCNICA INTELIGENTE APRIMORADA
+                final_direction, technical_override, confidence = MockCore.make_trading_decision(
+                    p_buy, p_sell, adx, rsi, trend_strength, volatility, symbol, horizon
+                )
                 
-                # 2. ADX muito baixo = tendência fraca, confiança menor
-                elif (adx < 20 and base_direction == "buy" and p_buy < 0.6):
-                    final_direction = "sell"  # Inverte se tendência fraca + probabilidade baixa
-                    technical_override = True
-                    print(f"   ⚡ {symbol} T+{horizon}: VENDA (ADX {adx} baixo + prob {p_buy:.1%})")
-                
-                # Confiança mais realista baseada na decisão
-                if technical_override:
-                    # Overrides técnicos têm confiança mais conservadora
-                    confidence = round(0.55 + (random.random() * 0.3), 3)  # 55-85%
-                else:
-                    # Decisões normais têm confiança baseada nas probabilidades
-                    prob_strength = abs(p_buy - p_sell)  # Força da probabilidade
-                    confidence = round(0.5 + (prob_strength * 0.4), 3)  # 50-90%
-                
-                # Ajuste final de confiança baseado em indicadores
-                if adx > 35: confidence = min(confidence + 0.1, 0.95)  # +10% se tendência forte
-                if 30 <= rsi <= 70: confidence = min(confidence + 0.05, 0.95)  # +5% se RSI neutro
+                # Preço baseado na simulação real
+                current_price = price_action['current_price']
                 
                 class Row:
                     def __init__(self):
                         self.symbol = symbol
                         self.h = horizon
                         self.direction = final_direction
-                        self.original_direction = base_direction
+                        self.original_direction = "buy" if p_buy > p_sell else "sell"
                         self.technical_override = technical_override
                         self.p_buy = p_buy
                         self.p_sell = p_sell
                         self.conf = confidence
                         self.adx = adx
                         self.rsi = rsi
-                        self.price = round(100 + (random.random() * 100), 6)
+                        self.price = current_price
                         self.ts = datetime.now().strftime("%H:%M:%S")
+                        self.volatility = volatility
+                        self.trend_strength = trend_strength
                 
                 mock_results.append(Row())
         
@@ -89,6 +72,182 @@ class MockCore:
         
         print(f"   📊 Resultados: {len(quality_results)}/{len(mock_results)} com confiança ≥60%")
         return quality_results, best
+    
+    @staticmethod
+    def simulate_price_action(symbol, horizon, base_trend):
+        """Simula ação de preço mais realista baseada em candles"""
+        # Seed consistente por símbolo e horizonte
+        seed = sum(ord(c) for c in symbol) + horizon
+        random.seed(seed)
+        np.random.seed(seed)
+        
+        # Parâmetros de mercado realistas
+        base_volatility = random.uniform(0.01, 0.05)  # 1-5% de volatilidade
+        trend_direction = 1 if base_trend > 0.5 else -1
+        trend_strength = abs(base_trend - 0.5) * 2  # 0-1
+        
+        # Simulação de série temporal (20 candles)
+        prices = [100.0]  # Preço inicial
+        for i in range(20):
+            # Volatilidade dinâmica (maior em horizontes maiores)
+            dynamic_volatility = base_volatility * (1 + horizon * 0.2)
+            
+            # Componentes do movimento de preço
+            trend_component = trend_direction * trend_strength * dynamic_volatility * 0.3
+            random_component = np.random.normal(0, dynamic_volatility * 0.7)
+            momentum = prices[-1] - prices[0] if len(prices) > 1 else 0
+            
+            # Movimento final do preço
+            price_change = trend_component + random_component + (momentum * 0.1)
+            new_price = prices[-1] * (1 + price_change)
+            prices.append(new_price)
+        
+        # Análise da simulação
+        current_price = prices[-1]
+        high = max(prices)
+        low = min(prices)
+        
+        return {
+            'current_price': round(current_price, 6),
+            'high': round(high, 6),
+            'low': round(low, 6),
+            'trend_strength': min(trend_strength + random.uniform(-0.1, 0.1), 1.0),
+            'volatility': dynamic_volatility,
+            'momentum': (current_price - prices[0]) / prices[0],
+            'candle_pattern': MockCore.analyze_candle_pattern(prices)
+        }
+    
+    @staticmethod
+    def analyze_candle_pattern(prices):
+        """Analisa padrões de candles para decisões mais assertivas"""
+        if len(prices) < 5:
+            return "neutral"
+        
+        recent = prices[-5:]
+        body_sizes = [abs(recent[i] - recent[i-1]) for i in range(1, len(recent))]
+        avg_body = np.mean(body_sizes)
+        
+        # Detecta tendência forte
+        if all(recent[i] > recent[i-1] for i in range(1, len(recent))):
+            return "strong_uptrend"
+        elif all(recent[i] < recent[i-1] for i in range(1, len(recent))):
+            return "strong_downtrend"
+        elif avg_body > np.std(prices) * 0.1:
+            return "high_volatility"
+        else:
+            return "consolidation"
+    
+    @staticmethod
+    def calculate_probabilities(trend_strength, volatility, momentum):
+        """Cálculo mais sofisticado de probabilidades"""
+        # Base da tendência
+        base_p_buy = 0.5 + (trend_strength * 0.4)
+        
+        # Ajuste por momentum
+        momentum_effect = momentum * 2
+        base_p_buy += momentum_effect
+        
+        # Ajuste por volatilidade (alta volatilidade reduz confiança)
+        volatility_penalty = volatility * 0.5
+        base_p_buy = base_p_buy * (1 - volatility_penalty)
+        
+        # Garantir limites razoáveis
+        p_buy = max(0.3, min(0.85, base_p_buy))
+        p_sell = 1 - p_buy
+        
+        # Normalizar para soma 1
+        total = p_buy + p_sell
+        p_buy /= total
+        p_sell /= total
+        
+        return round(p_buy, 3), round(p_sell, 3)
+    
+    @staticmethod
+    def generate_technical_indicators(trend_strength, volatility, momentum):
+        """Gera indicadores técnicos correlacionados com a ação de preço"""
+        # ADX baseado na força da tendência e volatilidade
+        base_adx = trend_strength * 40 + 10  # 10-50
+        adx_variation = random.uniform(-5, 5)
+        adx = max(10, min(60, base_adx + adx_variation))
+        
+        # RSI baseado no momentum e tendência
+        if momentum > 0.02:  # Momentum positivo forte
+            base_rsi = 60 + (momentum * 200)
+        elif momentum < -0.02:  # Momentum negativo forte
+            base_rsi = 40 + (momentum * 200)
+        else:
+            base_rsi = 50 + (random.uniform(-10, 10))
+        
+        rsi = max(20, min(80, base_rsi))
+        
+        return round(adx, 1), round(rsi, 1)
+    
+    @staticmethod
+    def make_trading_decision(p_buy, p_sell, adx, rsi, trend_strength, volatility, symbol, horizon):
+        """Sistema de decisão de trading mais assertivo"""
+        base_direction = "buy" if p_buy > p_sell else "sell"
+        confidence_base = abs(p_buy - p_sell)
+        technical_override = False
+        
+        # 🎯 REGRAS DE DECISÃO APRIMORADAS
+        
+        # 1. CONFIRMAÇÃO POR MULTIPLOS INDICADORES
+        buy_signals = 0
+        sell_signals = 0
+        
+        # Regra ADX + Tendência
+        if adx > 25 and trend_strength > 0.3:
+            if base_direction == "buy":
+                buy_signals += 2
+            else:
+                sell_signals += 2
+        
+        # Regra RSI
+        if rsi > 70:
+            sell_signals += 1
+        elif rsi < 30:
+            buy_signals += 1
+        
+        # Regra de Volatilidade (evitar mercados muito voláteis)
+        if volatility > 0.04:
+            confidence_base *= 0.8  # Reduz confiança em alta volatilidade
+        
+        # 🚨 DECISÃO FINAL
+        final_direction = base_direction
+        signal_diff = buy_signals - sell_signals
+        
+        if abs(signal_diff) >= 2:  # Confirmação técnica forte
+            if signal_diff > 0 and base_direction == "sell":
+                final_direction = "buy"
+                technical_override = True
+                print(f"   ⚡ {symbol} T+{horizon}: COMPRA (Confirmação técnica)")
+            elif signal_diff < 0 and base_direction == "buy":
+                final_direction = "sell"
+                technical_override = True
+                print(f"   ⚡ {symbol} T+{horizon}: VENDA (Confirmação técnica)")
+        
+        # 📊 CÁLCULO DE CONFIANÇA APRIMORADO
+        confidence = confidence_base
+        
+        # Bonus por confirmação técnica
+        if technical_override and abs(signal_diff) >= 2:
+            confidence += 0.15
+        
+        # Bonus por ADX forte
+        if adx > 30:
+            confidence += 0.1
+        
+        # Bonus por RSI neutro
+        if 40 <= rsi <= 60:
+            confidence += 0.05
+        
+        # Penalidade por alta volatilidade
+        if volatility > 0.03:
+            confidence -= 0.1
+        
+        confidence = max(0.4, min(0.95, confidence))
+        
+        return final_direction, technical_override, round(confidence, 3)
 
 # TODO: Quando quiser usar seu código real, DESCOMENTE a linha abaixo:
 # from core import analyze_symbols
@@ -137,7 +296,9 @@ class AnalysisManager:
                     'price': round(row.price, 6),
                     'timestamp': getattr(row, 'ts', ''),
                     'technical_override': getattr(row, 'technical_override', False),
-                    'assertiveness': self.calculate_assertiveness(row)
+                    'assertiveness': self.calculate_assertiveness(row),
+                    'volatility': round(getattr(row, 'volatility', 0) * 100, 2),
+                    'trend_strength': round(getattr(row, 'trend_strength', 0) * 100, 1)
                 }
                 self.current_results.append(result)
             
@@ -156,7 +317,9 @@ class AnalysisManager:
                     'price': round(best_overall.price, 6),
                     'technical_override': getattr(best_overall, 'technical_override', False),
                     'assertiveness': self.calculate_assertiveness(best_overall),
-                    'entry_time': self.calculate_entry_time(best_overall.h)
+                    'entry_time': self.calculate_entry_time(best_overall.h),
+                    'volatility': round(getattr(best_overall, 'volatility', 0) * 100, 2),
+                    'trend_strength': round(getattr(best_overall, 'trend_strength', 0) * 100, 1)
                 }
             
             self.analysis_time = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
@@ -170,15 +333,23 @@ class AnalysisManager:
             self.is_analyzing = False
     
     def calculate_assertiveness(self, row):
-        score = row.conf * 100
-        buy_sell_diff = abs(row.p_buy - row.p_sell) * 100
+        """Cálculo de assertividade mais preciso"""
+        base_score = row.conf * 100
         
-        if buy_sell_diff > 20: score += 10
-        elif buy_sell_diff > 15: score += 5
+        # Fatores de melhoria
+        buy_sell_diff = abs(row.p_buy - row.p_sell) * 100
+        if buy_sell_diff > 25: base_score += 12
+        elif buy_sell_diff > 20: base_score += 8
+        elif buy_sell_diff > 15: base_score += 4
             
-        if hasattr(row, 'adx') and row.adx > 25: score += 5
-            
-        return min(round(score, 1), 100)
+        # Indicadores técnicos
+        if hasattr(row, 'adx') and row.adx > 30: base_score += 8
+        if hasattr(row, 'rsi') and 40 <= row.rsi <= 60: base_score += 5
+        
+        # Volatilidade (menos é melhor)
+        if hasattr(row, 'volatility') and row.volatility < 0.02: base_score += 5
+        
+        return min(round(base_score, 1), 100)
     
     def calculate_entry_time(self, horizon):
         now = datetime.now(timezone.utc)
@@ -240,6 +411,11 @@ def index():
             }
             .buy { color: #2ecc71; }
             .sell { color: #e74c3c; }
+            .technical-override { 
+                border-left: 4px solid #f39c12 !important; 
+            }
+            .volatility-high { color: #e74c3c; }
+            .volatility-low { color: #2ecc71; }
         </style>
     </head>
     <body>
@@ -343,22 +519,24 @@ def index():
                 // Melhor oportunidade
                 if (data.best) {
                     const best = data.best;
-                    const overrideIcon = best.technical_override ? ' ⚠ ' : '';
-                    const overrideText = best.technical_override ? 
-                        '<br><small style="color: #f39c12;">⚠ Decisão Técnica</small>' : '';
+                    const overrideClass = best.technical_override ? 'technical-override' : '';
+                    const volatilityClass = best.volatility > 3 ? 'volatility-high' : 'volatility-low';
                     
                     document.getElementById('bestResult').innerHTML = `
-                        <div class="results" style="border-left: 4px solid ${best.direction === 'buy' ? '#2ecc71' : '#e74c3c'}">
+                        <div class="results ${overrideClass}" style="border-left: 4px solid ${best.direction === 'buy' ? '#2ecc71' : '#e74c3c'}">
                             <strong>${best.symbol} T+${best.horizon}</strong>
                             <span class="${best.direction}">
-                                ${best.direction === 'buy' ? '🟢 COMPRAR' : '🔴 VENDER'} ${overrideIcon}
+                                ${best.direction === 'buy' ? '🟢 COMPRAR' : '🔴 VENDER'} 
+                                ${best.technical_override ? '⚠️' : ''}
                             </span>
                             <br>
                             Compra: <strong>${best.p_buy}%</strong> | Venda: <strong>${best.p_sell}%</strong><br>
-                            Confiança: <strong>${best.confidence}%</strong><br>
+                            Confiança: <strong>${best.confidence}%</strong> | Assertividade: <strong>${best.assertiveness}%</strong><br>
                             ADX: ${best.adx} | RSI: ${best.rsi}<br>
+                            Volatilidade: <span class="${volatilityClass}">${best.volatility}%</span> | 
+                            Tendência: ${best.trend_strength}%<br>
                             Entrada: ${best.entry_time}
-                            ${overrideText}
+                            ${best.technical_override ? '<br><small style="color: #f39c12;">⚠ Decisão Técnica Aplicada</small>' : ''}
                             <br><em>Análise: ${data.analysis_time}</em>
                         </div>
                     `;
@@ -370,20 +548,21 @@ def index():
                     data.results.sort((a, b) => b.confidence - a.confidence);
                     
                     data.results.forEach(result => {
-                        const overrideIcon = result.technical_override ? ' ⚠ ' : '';
-                        const overrideText = result.technical_override ?
-                            `<br><small style="color: #f39c12;">⚠ Decisão Técnica</small>` : '';
-
+                        const overrideClass = result.technical_override ? 'technical-override' : '';
+                        const volatilityClass = result.volatility > 3 ? 'volatility-high' : 'volatility-low';
+                        
                         html += `
-                        <div class="results">
+                        <div class="results ${overrideClass}">
                             <strong>${result.symbol} T+${result.horizon}</strong>
                             <span class="${result.direction}">
-                                ${result.direction == 'buy' ? '🟢 COMPRAR' : '🔴 VENDER'} ${overrideIcon}
+                                ${result.direction == 'buy' ? '🟢 COMPRAR' : '🔴 VENDER'} 
+                                ${result.technical_override ? '⚠️' : ''}
                             </span>
-                            Compra: ${result.p_buy} | Venda: ${result.p_sell} |
-                            Conf: ${result.confidence} |
-                            ADX: ${result.adx} | RSI: ${result.rsi}
-                            ${overrideText}
+                            | Compra: ${result.p_buy}% | Venda: ${result.p_sell}% |
+                            Conf: ${result.confidence}% | Assert: ${result.assertiveness}% |
+                            ADX: ${result.adx} | RSI: ${result.rsi} |
+                            Vol: <span class="${volatilityClass}">${result.volatility}%</span>
+                            ${result.technical_override ? '<br><small style="color: #f39c12;">⚠ Decisão Técnica</small>' : ''}
                         </div>`;
                     });
                     
