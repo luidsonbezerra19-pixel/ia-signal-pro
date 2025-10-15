@@ -27,10 +27,6 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 logging.basicConfig(level=LOG_LEVEL)
 log = logging.getLogger("ia-signal")
 
-
-app = Flask(__name__)
-CORS(app)
-
 # ========== SISTEMA DE PREÇOS REAIS (requests + retry + cache TTL) ==========
 class RealPriceFetcher:
     def __init__(self):
@@ -562,6 +558,61 @@ class MonteCarloSimulator:
         return {'probability_buy': p_buy, 'probability_sell': p_sell, 'quality': quality}
 
 
+        initial = paths[0][0]
+        finals = [p[-1] for p in paths if len(p) > 0]
+        total = len(finals)
+
+        # Contagens por faixas de ganho/perda
+        up_03 = sum(1 for x in finals if x > initial * 1.003)
+        down_03 = sum(1 for x in finals if x < initial * 0.997)
+        up_07 = sum(1 for x in finals if x > initial * 1.007)
+        down_07 = sum(1 for x in finals if x < initial * 0.993)
+        up_10 = sum(1 for x in finals if x > initial * 1.010)
+        down_10 = sum(1 for x in finals if x < initial * 0.990)
+
+        # Média e desvio p/ viés
+        mean_f = sum(finals)/total
+        var = sum((x-mean_f)**2 for x in finals)/total
+        std = (var ** 0.5) if var > 0 else 1e-12
+        # z-edge mede o deslocamento relativo da média vs preço inicial
+        z_edge = (mean_f - initial) / (std + initial*0.001)
+
+        # pesos crescentes para faixas maiores
+        w03, w07, w10 = 1.0, 1.6, 2.2
+        score_up = w03*up_03 + w07*up_07 + w10*up_10
+        score_dn = w03*down_03 + w07*down_07 + w10*down_10
+
+        # parte neutra vai para o lado do score maior + viés do z_edge
+        neutral = total - up_03 - down_03
+        # viés suave: 0.5% * tanh(z_edge)
+        import math
+        bias = 0.005 * math.tanh(z_edge)
+
+        denom = (score_up + score_dn + neutral + 1e-9)
+        p_buy_raw = (score_up + (neutral * (0.5 + bias))) / denom
+        p_sell_raw = (score_dn + (neutral * (0.5 - bias))) / denom
+
+        # normaliza
+        s = p_buy_raw + p_sell_raw
+        p_buy = p_buy_raw / s
+        p_sell = p_sell_raw / s
+
+        # qualidade baseada no "edge" efetivo
+        edge = abs(p_buy - 0.5)
+        if edge > 0.18:
+            quality = 'HIGH'
+        elif edge > 0.10:
+            quality = 'MEDIUM'
+        else:
+            quality = 'LOW'
+
+        # evita empate perfeito
+        if abs(p_buy - p_sell) < 1e-6:
+            p_buy += 0.001
+            p_sell -= 0.001
+
+        return {'probability_buy': p_buy, 'probability_sell': p_sell, 'quality': quality}
+
 # ========== FLASK APP ==========
 
 
@@ -727,105 +778,66 @@ class AnalysisManager:
             self.is_analyzing = True
             start_time = datetime.now()
             log.info(f"🚀 INICIANDO ANÁLISE (reais): {symbols}")
-            
             trading_system.current_analysis_cache = {}
             all_horizons_results = []
 
             for symbol in symbols:
                 log.info(f"🎯 ANALISANDO {symbol}")
                 for horizon in [1, 2, 3]:
-                    result = trading_system.analyze_symbol(symbol, horizon)
+                    try:
+                        result = trading_system.analyze_symbol(symbol, horizon)
+                    except Exception:
+                        result = {'symbol': symbol, 'horizon': horizon, 'confidence': 0.5, 'probability_buy': 0.5, 'probability_sell': 0.5, 'direction': 'buy', 'real_data': False, 'price': 0.0}
                     all_horizons_results.append(result)
-                    log.info(f"   ✅ T+{horizon} - {result['direction'].upper()} | Conf: {result['confidence']:.1%} | Real Data: {result['real_data']}")
+                    log.info(f"   ✅ T+{horizon} - {result.get('symbol','?')} conf {result.get('confidence',0.0):.1%} | Real Data: {result.get('real_data',False)}")
 
-                    # === SELECIONAR MELHOR OPORTUNIDADE GLOBAL CORRETAMENTE ===
-                    # 1) Junta tudo e calcula assertividade “base”
-                    all_results_combined = []
-                    for r in all_horizons_results:
-                        r['assertiveness'] = self.calculate_assertiveness(r)
-                        all_results_combined.append(r)
+            all_results_combined = []
+            for r in all_horizons_results:
+                try:
+                    r['assertiveness'] = self.calculate_assertiveness(r)
+                except Exception:
+                    r['assertiveness'] = r.get('confidence', 0.5)
+                all_results_combined.append(r)
 
-                    # 2) Melhor por símbolo (pré-correlação) — base da correlação
-                    best_by_symbol_pre = {}
-                    for r in all_results_combined:
-                        sym = r['symbol']
-                        if sym not in best_by_symbol_pre or r['assertiveness'] > best_by_symbol_pre[sym]['assertiveness']:
-                            best_by_symbol_pre[sym] = r
+            best_by_symbol_pre = {}
+            for r in all_results_combined:
+                sym = r['symbol']
+                if sym not in best_by_symbol_pre or r['assertiveness'] > best_by_symbol_pre[sym]['assertiveness']:
+                    best_by_symbol_pre[sym] = r
 
-                    # 3) Cache correlação (direção + confidence base do melhor de cada símbolo)
-                    cache_for_corr = {sym: {'direction': r['direction'], 'confidence': r['confidence']} for sym, r in best_by_symbol_pre.items()}
+            cache_for_corr = {sym: {'direction': r.get('direction','buy'), 'confidence': r.get('confidence',0.5)} for sym, r in best_by_symbol_pre.items()}
 
-                    # 4) Aplica correlação com limite e normaliza
-                    formatted = []
-                    for r in all_results_combined:
-                        raw_corr = trading_system.corr.get_correlation_adjustment(r['symbol'], cache_for_corr)
-                        corr = max(0.93, min(1.07, raw_corr))  # ±7%
-                        adjusted_confidence = min(0.95, max(0.40, r['confidence'] * corr))
+            formatted = []
+            for r in all_results_combined:
+                raw_corr = getattr(getattr(trading_system, 'corr', None), 'get_correlation_adjustment', lambda s, c: 1.0)(r['symbol'], cache_for_corr)
+                corr = max(0.93, min(1.07, raw_corr))
+                adjusted_confidence = min(0.95, max(0.40, r.get('confidence',0.5) * corr))
+                prob_buy = float(r.get('probability_buy', 0.5))
+                prob_sell = float(r.get('probability_sell', 0.5))
+                total = prob_buy + prob_sell
+                if total > 0:
+                    prob_buy /= total
+                    prob_sell /= total
+                r2 = {
+                    'symbol': r.get('symbol'),
+                    'horizon': r.get('horizon'),
+                    'direction': r.get('direction'),
+                    'p_buy': round(prob_buy * 100, 1),
+                    'p_sell': round(prob_sell * 100, 1),
+                    'confidence': round(adjusted_confidence, 3),
+                    'assertiveness': r.get('assertiveness', 0.0),
+                    'price': r.get('price', 0.0),
+                    'real_data': r.get('real_data', False)
+                }
+                formatted.append(r2)
 
-                        prob_buy  = float(r['probability_buy'])
-                        prob_sell = float(r['probability_sell'])
-                        total = prob_buy + prob_sell
-                        if total > 0:
-                            prob_buy  /= total
-                            prob_sell /= total
-
-                        formatted.append({
-                            'symbol': r['symbol'],
-                            'horizon': r['horizon'],
-                            'direction': r['direction'],
-                            'p_buy': round(prob_buy * 100, 1),
-                            'p_sell': round(prob_sell * 100, 1),
-                            'edge': round(abs(prob_buy - 0.5) * 100, 1),
-                            'confidence': round(adjusted_confidence * 100, 1),
-                            'confidence_base': round(r['confidence'] * 100, 1),
-                            'adx': round(r['adx'], 1),
-                            'rsi': round(r['rsi'], 1),
-                            'price': round(r['price'], 6),
-                            'timestamp': r['timestamp'],
-                            'technical_override': len(r.get('winning_indicators', [])) >= 4,
-                            'multi_timeframe': r.get('multi_timeframe', 'neutral'),
-                            'monte_carlo_quality': r.get('monte_carlo_quality', 'MEDIUM'),
-                            'winning_indicators': r.get('winning_indicators', []),
-                            'score_factors': r.get('score_factors', []),
-                            'liquidity_score': r.get('liquidity_score', 0.7),
-                            'volatility_regime': r.get('volatility_regime', 'MEDIUM'),
-                            'market_regime': r.get('market_regime', 'NORMAL'),
-                            'volatility_multiplier': r.get('volatility_multiplier', 1.0),
-                            'real_data': r.get('real_data', True),
-                            'entry_time': self.calculate_entry_time_brazil(r['horizon']),
-                        })
-
-                    # 5) Recalcula assertividade após correlação
-                    for F in formatted:
-                        tmp = dict(F)
-                        tmp['confidence'] = (tmp['confidence']/100.0) if tmp['confidence']>1 else tmp['confidence']
-                        # reconcilia com API da assertiveness original
-                        F['assertiveness'] = self.calculate_assertiveness({
-                            'confidence': tmp['confidence'],
-                            'winning_indicators': F['winning_indicators'],
-                            'monte_carlo_quality': F['monte_carlo_quality'],
-                            'multi_timeframe': F['multi_timeframe'],
-                            'direction': F['direction'],
-                            'probability_buy': F['p_buy']/100.0,
-                            'probability_sell': F['p_sell']/100.0,
-                            'volatility_regime': F['volatility_regime']
-                        })
-
-                    # 6) Marca melhor de cada símbolo (após correlação)
-                    for sym in {x['symbol'] for x in formatted}:
-                        group = [x for x in formatted if x['symbol'] == sym]
-                        group.sort(key=lambda z: z['assertiveness'], reverse=True)
-                        best_of_symbol = group[0]
-                        for g in group: g['is_best_of_symbol'] = (g is best_of_symbol)
-
-                    # 7) Escolhe o melhor global (após correlação) com score robusto
-                    def mc_bonus(q): return 3.0 if q == 'HIGH' else (1.0 if q == 'MEDIUM' else 0.0)
-                    for F in formatted:
-                        F['global_score'] = F['assertiveness'] + (0.25 * F.get('edge', 0.0)) + mc_bonus(F['monte_carlo_quality'])
-                    best = max(formatted, key=lambda z: z['global_score']) if formatted else None
-                    if best:
-                        best['is_best_global'] = True
-                        best['entry_time'] = self.calculate_entry_time_brazil(best['horizon'])
+            def mc_bonus(q): return 3.0 if q == 'HIGH' else (1.0 if q == 'MEDIUM' else 0.0)
+            for F in formatted:
+                F['global_score'] = (F.get('assertiveness',0.0) + 0.35 * F.get('confidence',0.0))
+            best = max(formatted, key=lambda z: z['global_score']) if formatted else None
+            if best:
+                best['is_best_global'] = True
+                best['entry_time'] = self.calculate_entry_time_brazil(best['horizon'])
 
             analysis_time = self.get_brazil_time().strftime("%d/%m/%Y %H:%M:%S")
             processing_time = (datetime.now() - start_time).total_seconds()
