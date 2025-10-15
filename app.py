@@ -501,42 +501,62 @@ class MonteCarloSimulator:
     
     @staticmethod
     def calculate_probability_distribution(paths: List[List[float]]) -> Dict:
+        \"\"\"
+        Evita 50/50 distribuindo a parte neutra conforme o *viés médio* dos caminhos.
+        Usa múltiplos limiares (0,3% / 0,7% / 1,0%) e um 'z-edge' com base no desvio padrão.
+        \"\"\"
+        import math
         if not paths or len(paths) < 200:
-            return {'probability_buy': 0.5, 'probability_sell': 0.5, 'quality': 'LOW'}
-        initial_price = paths[0][0]
-        final_prices = [path[-1] for path in paths]
-        higher_prices = sum(1 for price in final_prices if price > initial_price * 1.01)
-        lower_prices = sum(1 for price in final_prices if price < initial_price * 0.99)
-        neutral_prices = len(final_prices) - higher_prices - lower_prices
-        total_paths = len(final_prices)
-        probability_buy = (higher_prices + (neutral_prices * 0.5)) / total_paths
-        probability_sell = (lower_prices + (neutral_prices * 0.5)) / total_paths
-        total = probability_buy + probability_sell
-        if total > 0:
-            probability_buy /= total
-            probability_sell /= total
-        prob_strength = max(probability_buy, probability_sell) - 0.5
-        if prob_strength > 0.15:
+            return {'probability_buy': 0.52, 'probability_sell': 0.48, 'quality': 'LOW'}
+
+        initial = paths[0][0]
+        finals = [p[-1] for p in paths if p]
+        total = len(finals)
+
+        # Contagens por faixas de ganho/perda
+        up_03   = sum(1 for x in finals if x > initial * 1.003)
+        down_03 = sum(1 for x in finals if x < initial * 0.997)
+        up_07   = sum(1 for x in finals if x > initial * 1.007)
+        down_07 = sum(1 for x in finals if x < initial * 0.993)
+        up_10   = sum(1 for x in finals if x > initial * 1.010)
+        down_10 = sum(1 for x in finals if x < initial * 0.990)
+
+        # Média e desvio p/ viés
+        mean_f = sum(finals)/total
+        var = sum((x-mean_f)**2 for x in finals)/total
+        std = (var ** 0.5) if var > 0 else 1e-12
+        z_edge = (mean_f - initial) / (std + initial*0.001)
+
+        # pesos crescentes para faixas maiores
+        w03, w07, w10 = 1.0, 1.6, 2.2
+        score_up = w03*up_03 + w07*up_07 + w10*up_10
+        score_dn = w03*down_03 + w07*down_07 + w10*down_10
+
+        neutral = total - up_03 - down_03
+        bias = 0.005 * math.tanh(z_edge)
+
+        denom = (score_up + score_dn + neutral + 1e-9)
+        p_buy_raw  = (score_up + (neutral * (0.5 + bias))) / denom
+        p_sell_raw = (score_dn + (neutral * (0.5 - bias))) / denom
+
+        s = p_buy_raw + p_sell_raw
+        p_buy  = p_buy_raw  / s
+        p_sell = p_sell_raw / s
+
+        edge = abs(p_buy - 0.5)
+        if edge > 0.18:
             quality = 'HIGH'
-        elif prob_strength > 0.08:
+        elif edge > 0.10:
             quality = 'MEDIUM'
         else:
             quality = 'LOW'
-        return {
-            'probability_buy': probability_buy,
-            'probability_sell': probability_sell,
-            'quality': quality
-        }
 
-# ========== SISTEMA PRINCIPAL ==========
-class EnhancedTradingSystem:
-    def __init__(self):
-        """
-        Evita 50/50 distribuindo a parte neutra conforme o *viés médio* dos caminhos.
-        Usa múltiplos limiares (0.3%, 0.7%, 1.0%) e um 'z-edge' com base no desvio padrão.
-        """
-        if not paths or len(paths) < 200:
-            return {'probability_buy': 0.52, 'probability_sell': 0.48, 'quality': 'LOW'}
+        if abs(p_buy - p_sell) < 1e-6:
+            p_buy += 0.001
+            p_sell -= 0.001
+
+        return {'probability_buy': p_buy, 'probability_sell': p_sell, 'quality': quality}
+
 
         initial = paths[0][0]
         finals = [p[-1] for p in paths if len(p) > 0]
