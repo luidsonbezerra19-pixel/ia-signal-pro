@@ -6,11 +6,28 @@ import os
 import random
 import math
 import json
-import urllib.request
-import urllib.error
+import time
+import logging
 from typing import List, Dict, Tuple, Any
+from threading import Lock
+from concurrent.futures import ThreadPoolExecutor
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
-# ========== SISTEMA DE PREÇOS REAIS CORRIGIDO ==========
+# ====== ENV com defaults seguros (Railway-friendly) ======
+SIMS = int(os.getenv("SIMS", "1800"))                 # Monte Carlo paths (antes 3000)
+CACHE_TTL_S = int(os.getenv("CACHE_TTL_S", "20"))     # TTL de cache dos candles
+BINANCE_TIMEOUT = float(os.getenv("BINANCE_TIMEOUT", "7.5"))
+MAX_WORKERS = int(os.getenv("MAX_WORKERS", "4"))      # Paralelismo leve
+DISABLE_NEWS_EVENTS = os.getenv("DISABLE_NEWS_EVENTS", "1") == "1"
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+# ====== Logs (stdout do Railway) ======
+logging.basicConfig(level=LOG_LEVEL)
+log = logging.getLogger("ia-signal")
+
+# ========== SISTEMA DE PREÇOS REAIS (requests + retry + cache TTL) ==========
 class RealPriceFetcher:
     def __init__(self):
         self.base_url = "https://api.binance.com/api/v3"
@@ -27,91 +44,65 @@ class RealPriceFetcher:
             'BTCUSDT': 45000, 'ETHUSDT': 2500, 'SOLUSDT': 120,
             'ADAUSDT': 0.45, 'XRPUSDT': 0.55, 'BNBUSDT': 320
         }
-    
+        # sessão HTTP com retry/backoff
+        self.session = requests.Session()
+        retry = Retry(total=3, backoff_factor=0.3, status_forcelist=[429, 500, 502, 503, 504])
+        self.session.mount("https://", HTTPAdapter(max_retries=retry))
+
     def get_binance_symbol(self, symbol: str) -> str:
         """Converte símbolo para formato Binance CORRETO"""
         return self.symbol_mapping.get(symbol, symbol.replace('/', ''))
-    
+
     def get_historical_prices(self, symbol: str, interval: str = '1m', limit: int = 50) -> List[float]:
-        """Busca preços históricos reais da Binance - VERSÃO CORRIGIDA"""
+        """Busca preços históricos reais da Binance com retry/backoff"""
         try:
-            # Converte símbolo para formato Binance CORRETO
             binance_symbol = self.get_binance_symbol(symbol)
-            
-            url = f"{self.base_url}/klines?symbol={binance_symbol}&interval={interval}&limit={limit}"
-            
-            print(f"📡 Buscando preços reais: {symbol} -> {binance_symbol}")
-            print(f"🔗 URL: {url}")
-            
-            # Faz a requisição
-            req = urllib.request.Request(
-                url,
-                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-            )
-            
-            with urllib.request.urlopen(req, timeout=15) as response:
-                data = json.loads(response.read().decode())
-            
+            url = f"{self.base_url}/klines"
+            params = {"symbol": binance_symbol, "interval": interval, "limit": limit}
+            headers = {"User-Agent": "ia-signal-railway/1.0"}
+
+            r = self.session.get(url, params=params, timeout=BINANCE_TIMEOUT, headers=headers)
+            r.raise_for_status()
+            data = r.json()
+
             if not data or len(data) < 10:
-                print(f"⚠️ Dados insuficientes para {symbol}, usando fallback")
+                log.warning(f"[binance] dados insuficientes para {symbol}, usando fallback")
                 return self.get_fallback_prices(symbol)
-            
-            # Extrai preços de fechamento (índice 4)
-            prices = [float(candle[4]) for candle in data]
-            
-            # VERIFICAÇÃO DOS DADOS
-            print(f"✅ DADOS REAIS OBTIDOS: {symbol}")
-            print(f"   📊 Preços: {len(prices)} candles")
-            print(f"   💰 Primeiro: ${prices[0]:.2f}")
-            print(f"   💰 Último: ${prices[-1]:.2f}")
-            print(f"   📈 Variação: {((prices[-1] - prices[0]) / prices[0] * 100):.2f}%")
-            
+
+            prices = [float(c[4]) for c in data]  # close
+            log.info(f"[binance] {symbol}: {len(prices)} candles • {prices[0]:.6f} → {prices[-1]:.6f}")
             return prices
-            
-        except urllib.error.HTTPError as e:
-            print(f"❌ Erro HTTP {e.code} para {symbol}: {e.reason}")
-            return self.get_fallback_prices(symbol)
-        except urllib.error.URLError as e:
-            print(f"❌ Erro de rede para {symbol}: {e.reason}")
+
+        except requests.RequestException as e:
+            log.error(f"[binance] erro rede {symbol}: {e}")
             return self.get_fallback_prices(symbol)
         except Exception as e:
-            print(f"❌ Erro geral para {symbol}: {str(e)}")
+            log.error(f"[binance] erro geral {symbol}: {e}")
             return self.get_fallback_prices(symbol)
-    
+
     def get_fallback_prices(self, symbol: str) -> List[float]:
-        """Fallback com preços realistas"""
+        """Fallback determinístico para reprodutibilidade no Railway"""
+        seed_base = int(datetime.utcnow().strftime("%Y%m%d%H%M"))
+        random.seed(hash((symbol, seed_base)) & 0xffffffff)
+
         binance_symbol = self.get_binance_symbol(symbol)
-        base_price = self.fallback_prices.get(binance_symbol, 100)
-        
-        print(f"🔄 USANDO FALLBACK para {symbol} - Base: ${base_price}")
-        
-        # Gera histórico realista
+        base_price = self.fallback_prices.get(binance_symbol, 100.0)
         prices = [base_price]
         current = base_price
-        
-        for i in range(49):
-            # Volatilidade baseada no ativo
+        for _ in range(49):
             if symbol in ['BTC/USDT', 'ETH/USDT']:
-                volatility = 0.002
+                vol = 0.002
             elif symbol in ['BNB/USDT']:
-                volatility = 0.003
+                vol = 0.003
             else:
-                volatility = 0.005
-                
-            change = random.gauss(0, volatility)
-            current = current * (1 + change)
-            prices.append(max(current, base_price * 0.8))
-        
-        print(f"   📊 Dados simulados: {len(prices)} candles")
-        print(f"   💰 Último preço simulado: ${prices[-1]:.2f}")
-        
+                vol = 0.005
+            change = random.gauss(0, vol)
+            current = max(base_price * 0.8, current * (1 + change))
+            prices.append(current)
+        log.warning(f"[fallback] {symbol}: {len(prices)} candles • last {prices[-1]:.6f}")
         return prices
 
-# ========== [RESTANTE DO CÓDIGO PERMANECE IGUAL] ==========
-# ... (MemorySystem, LiquiditySystem, CorrelationSystem, NewsEventSystem, VolatilityClustering)
-# ... (MonteCarloSimulator, TechnicalIndicators, MultiTimeframeAnalyzer)
-# ... (EnhancedTradingSystem, AnalysisManager, Rotas Flask)
-
+# ========== SISTEMAS DE MEMÓRIA / LIQUIDEZ / CORRELAÇÃO / NOTÍCIAS / VOLATILIDADE ==========
 class MemorySystem:
     def __init__(self):
         self.symbol_memory = {}
@@ -125,7 +116,6 @@ class MemorySystem:
             'bollinger': 0.05, 'volume': 0.04, 'fibonacci': 0.03,
             'multi_tf': 0.02
         }
-        
         if self.market_regime == "VOLATILE":
             base_weights['monte_carlo'] = 0.60
             base_weights['bollinger'] = 0.08
@@ -133,12 +123,10 @@ class MemorySystem:
         elif self.market_regime == "TRENDING":
             base_weights['adx'] = 0.10
             base_weights['multi_tf'] = 0.04
-        
         return base_weights
     
     def update_market_regime(self, volatility: float, adx_values: List[float]):
         avg_adx = sum(adx_values) / len(adx_values) if adx_values else 25
-        
         if volatility > 0.015 or avg_adx < 20:
             self.market_regime = "VOLATILE"
         elif avg_adx > 35:
@@ -152,7 +140,6 @@ class MemorySystem:
             'volatility': volatility,
             'avg_adx': avg_adx
         })
-        
         if len(self.regime_memory) > 100:
             self.regime_memory.pop(0)
 
@@ -163,18 +150,14 @@ class LiquiditySystem:
     def calculate_liquidity_score(self, symbol: str, prices: List[float]) -> float:
         if len(prices) < 10:
             return 0.7
-        
         returns = []
         for i in range(1, len(prices)):
             if prices[i-1] != 0:
                 ret = (prices[i] - prices[i-1]) / prices[i-1]
                 returns.append(abs(ret))
-        
         if not returns:
             return 0.7
-            
         volatility = sum(returns) / len(returns)
-        
         if volatility < 0.005:
             liquidity_score = 0.9
         elif volatility < 0.01:
@@ -183,7 +166,6 @@ class LiquiditySystem:
             liquidity_score = 0.7
         else:
             liquidity_score = 0.6
-            
         self.symbol_liquidity[symbol] = liquidity_score
         return liquidity_score
 
@@ -215,7 +197,6 @@ class CorrelationSystem:
     def get_correlation_adjustment(self, symbol: str, other_signals: Dict) -> float:
         if symbol not in self.correlation_matrix:
             return 1.0
-            
         adjustments = []
         for other_symbol, signal_data in other_signals.items():
             if other_symbol != symbol and other_symbol in self.correlation_matrix[symbol]:
@@ -225,10 +206,8 @@ class CorrelationSystem:
                 else:
                     adjustment = 1.0 - (correlation * 0.05)
                 adjustments.append(adjustment)
-        
         if not adjustments:
             return 1.0
-            
         return sum(adjustments) / len(adjustments)
 
 class NewsEventSystem:
@@ -236,35 +215,32 @@ class NewsEventSystem:
         self.active_events = []
     
     def generate_market_events(self):
+        if DISABLE_NEWS_EVENTS:
+            return
         events = [
             {'type': 'FED_MEETING', 'impact': 'HIGH', 'volatility_multiplier': 2.0},
             {'type': 'CPI_RELEASE', 'impact': 'MEDIUM', 'volatility_multiplier': 1.5},
             {'type': 'REGULATION_NEWS', 'impact': 'MEDIUM', 'volatility_multiplier': 1.8},
             {'type': 'WHALE_MOVEMENT', 'impact': 'LOW', 'volatility_multiplier': 1.3},
         ]
-        
         if random.random() < 0.15:
             event = random.choice(events)
             event['start_time'] = datetime.now()
             event['duration_hours'] = random.randint(2, 12)
             self.active_events.append(event)
-            print(f"📢 EVENTO DE MERCADO: {event['type']} (Impacto: {event['impact']})")
+            log.info(f"[evento] {event['type']} (Impacto: {event['impact']})")
     
     def get_volatility_multiplier(self):
         if not self.active_events:
             return 1.0
-        
         max_multiplier = 1.0
         current_time = datetime.now()
-        
         self.active_events = [
             event for event in self.active_events 
             if current_time - event['start_time'] < timedelta(hours=event['duration_hours'])
         ]
-        
         for event in self.active_events:
             max_multiplier = max(max_multiplier, event['volatility_multiplier'])
-        
         return max_multiplier
     
     def adjust_confidence_for_events(self, confidence: float) -> float:
@@ -283,25 +259,19 @@ class VolatilityClustering:
     def detect_volatility_clusters(self, prices: List[float], symbol: str) -> str:
         if len(prices) < 20:
             return "MEDIUM"
-        
         returns = []
         for i in range(1, len(prices)):
             if prices[i-1] != 0:
                 ret = (prices[i] - prices[i-1]) / prices[i-1]
                 returns.append(abs(ret))
-        
         if not returns:
             return "MEDIUM"
-        
         volatility = sum(returns) / len(returns)
         self.historical_volatility.append(volatility)
-        
         if len(self.historical_volatility) > 50:
             self.historical_volatility.pop(0)
-        
         if len(self.historical_volatility) > 10:
             avg_vol = sum(self.historical_volatility) / len(self.historical_volatility)
-            
             if volatility > avg_vol * 1.5:
                 regime = "HIGH"
             elif volatility < avg_vol * 0.7:
@@ -315,13 +285,11 @@ class VolatilityClustering:
                 regime = "LOW"
             else:
                 regime = "MEDIUM"
-        
         self.volatility_regimes[symbol] = regime
         return regime
     
     def get_regime_adjustment(self, symbol: str) -> float:
         regime = self.volatility_regimes.get(symbol, "MEDIUM")
-        
         if regime == "HIGH":
             return 0.85
         elif regime == "LOW":
@@ -329,125 +297,102 @@ class VolatilityClustering:
         else:
             return 1.0
 
-class MonteCarloSimulator:
-    @staticmethod
-    def generate_price_paths(base_price: float, volatility: float, num_paths: int = 3000, steps: int = 10) -> List[List[float]]:
-        paths = []
-        
-        for _ in range(num_paths):
-            prices = [base_price]
-            current = base_price
-            
-            for step in range(steps - 1):
-                adjusted_volatility = volatility * (1 + (step * 0.05))
-                trend = random.uniform(-volatility, volatility)
-                
-                change = trend + random.gauss(0, 1) * adjusted_volatility
-                new_price = current * (1 + change)
-                new_price = max(new_price, base_price * 0.7)
-                
-                prices.append(new_price)
-                current = new_price
-            
-            paths.append(prices)
-        
-        return paths
-    
-    @staticmethod
-    def calculate_probability_distribution(paths: List[List[float]]) -> Dict:
-        if not paths or len(paths) < 1000:
-            return {'probability_buy': 0.5, 'probability_sell': 0.5, 'quality': 'LOW'}
-        
-        initial_price = paths[0][0]
-        final_prices = [path[-1] for path in paths]
-        
-        higher_prices = sum(1 for price in final_prices if price > initial_price * 1.01)
-        lower_prices = sum(1 for price in final_prices if price < initial_price * 0.99)
-        neutral_prices = len(final_prices) - higher_prices - lower_prices
-        
-        total_paths = len(final_prices)
-        probability_buy = (higher_prices + (neutral_prices * 0.5)) / total_paths
-        probability_sell = (lower_prices + (neutral_prices * 0.5)) / total_paths
-        
-        total = probability_buy + probability_sell
-        if total > 0:
-            probability_buy = probability_buy / total
-            probability_sell = probability_sell / total
-        
-        prob_strength = max(probability_buy, probability_sell) - 0.5
-        
-        if prob_strength > 0.15:
-            quality = 'HIGH'
-        elif prob_strength > 0.08:
-            quality = 'MEDIUM'
-        else:
-            quality = 'LOW'
-        
-        return {
-            'probability_buy': max(0.35, min(0.65, probability_buy)),
-            'probability_sell': max(0.35, min(0.65, probability_sell)),
-            'quality': quality
-        }
-
+# ========== INDICADORES TÉCNICOS (EMA/MACD corretos, RSI Wilder, ADX real) ==========
 class TechnicalIndicators:
     @staticmethod
-    def calculate_rsi(prices: List[float]) -> float:
-        if len(prices) < 14:
-            return random.uniform(30, 70)
-            
-        recent_prices = prices[-20:] if len(prices) > 20 else prices
-        
-        gains = losses = 0.0
-        for i in range(1, len(recent_prices)):
-            change = recent_prices[i] - recent_prices[i-1]
-            if change > 0:
-                gains += change
-            else:
-                losses -= change
-        
-        if losses == 0:
-            return 70.0 if gains > 0 else 30.0
-            
-        rs = gains / losses
-        rsi = 100 - (100 / (1 + rs))
-        return max(10, min(90, round(rsi, 1)))
+    def _ema(series: List[float], period: int) -> List[float]:
+        if len(series) < period:
+            return []
+        k = 2.0 / (period + 1.0)
+        ema_vals = [sum(series[:period]) / period]
+        for price in series[period:]:
+            ema_vals.append(price * k + ema_vals[-1] * (1.0 - k))
+        return ema_vals
 
     @staticmethod
-    def calculate_adx(prices: List[float]) -> float:
-        if len(prices) < 15:
-            return random.uniform(20, 40)
-        
-        true_ranges = []
-        for i in range(1, min(15, len(prices))):
-            high_low = abs(prices[i] - prices[i-1])
-            true_ranges.append(high_low)
-        
-        if not true_ranges:
-            return random.uniform(20, 40)
-        
-        atr = sum(true_ranges) / len(true_ranges)
-        
-        plus_dm = 0
-        minus_dm = 0
-        
-        for i in range(1, min(15, len(prices))):
-            up_move = prices[i] - prices[i-1]
-            down_move = prices[i-1] - prices[i]
-            
-            if up_move > down_move and up_move > 0:
-                plus_dm += up_move
-            elif down_move > up_move and down_move > 0:
-                minus_dm += down_move
-        
-        if atr == 0:
-            return random.uniform(15, 25)
-        
-        plus_di = (plus_dm / atr) * 100
-        minus_di = (minus_dm / atr) * 100
-        dx = abs(plus_di - minus_di) / (plus_di + minus_di + 0.0001) * 100
-        
-        adx = min(60, max(10, dx * 1.5))
-        
+    def calculate_macd(prices: List[float]) -> Dict:
+        if len(prices) < 35:
+            return {'signal': 'neutral', 'strength': 0.3}
+        ema12 = TechnicalIndicators._ema(prices, 12)
+        ema26 = TechnicalIndicators._ema(prices, 26)
+        if not ema12 or not ema26:
+            return {'signal': 'neutral', 'strength': 0.3}
+        size = min(len(ema12), len(ema26))
+        macd_line = [a - b for a, b in zip(ema12[-size:], ema26[-size:])]
+        signal_line = TechnicalIndicators._ema(macd_line, 9)
+        if not signal_line:
+            return {'signal': 'neutral', 'strength': 0.3}
+        hist = macd_line[-1] - signal_line[-1]
+        denom = abs(prices[-1]) * 0.002 + 1e-9
+        strength = min(1.0, abs(hist) / denom)
+        if hist > 0:
+            return {'signal': 'bullish', 'strength': strength}
+        elif hist < 0:
+            return {'signal': 'bearish', 'strength': strength}
+        return {'signal': 'neutral', 'strength': 0.3}
+
+    @staticmethod
+    def calculate_rsi(prices: List[float], period: int = 14) -> float:
+        if len(prices) <= period:
+            return 50.0
+        gains, losses = [], []
+        for i in range(1, len(prices)):
+            d = prices[i] - prices[i-1]
+            gains.append(max(d, 0.0))
+            losses.append(max(-d, 0.0))
+        avg_gain = sum(gains[:period]) / period
+        avg_loss = sum(losses[:period]) / period
+        for i in range(period, len(gains)):
+            avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+            avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+        if avg_loss == 0:
+            return 70.0 if avg_gain > 0 else 50.0
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        return round(max(0.0, min(100.0, rsi)), 1)
+
+    @staticmethod
+    def calculate_adx(prices: List[float], period: int = 14) -> float:
+        if len(prices) < period + 2:
+            return 25.0
+        prox_high = []
+        prox_low = []
+        for i in range(len(prices)):
+            win = prices[max(0, i - 2): i + 1]
+            r = (max(win) - min(win)) if len(win) >= 2 else (prices[i] * 0.001)
+            prox_high.append(prices[i] + r * 0.5)
+            prox_low.append(prices[i] - r * 0.5)
+        TR, plusDM, minusDM = [], [], []
+        for i in range(1, len(prices)):
+            high = prox_high[i]; low = prox_low[i]
+            prev_high = prox_high[i-1]; prev_low = prox_low[i-1]
+            tr = max(high - low, abs(high - prices[i-1]), abs(low - prices[i-1]))
+            TR.append(tr)
+            up_move = high - prev_high
+            down_move = prev_low - low
+            plusDM.append(up_move if (up_move > down_move and up_move > 0) else 0.0)
+            minusDM.append(down_move if (down_move > up_move and down_move > 0) else 0.0)
+        def wilder_smooth(vals, p):
+            if len(vals) < p:
+                return []
+            smoothed = [sum(vals[:p])]
+            for v in vals[p:]:
+                smoothed.append(smoothed[-1] - (smoothed[-1] / p) + v)
+            return smoothed
+        trN = wilder_smooth(TR, period)
+        plusDMN = wilder_smooth(plusDM, period)
+        minusDMN = wilder_smooth(minusDM, period)
+        if not trN or not plusDMN or not minusDMN:
+            return 25.0
+        plusDI = [(pd / t) * 100 if t != 0 else 0.0 for pd, t in zip(plusDMN, trN)]
+        minusDI = [(md / t) * 100 if t != 0 else 0.0 for md, t in zip(minusDMN, trN)]
+        DX = [(abs(p - m) / (p + m) * 100) if (p + m) != 0 else 0.0 for p, m in zip(plusDI, minusDI)]
+        if len(DX) < period:
+            return 25.0
+        adx_vals = [sum(DX[:period]) / period]
+        for d in DX[period:]:
+            adx_vals.append(((adx_vals[-1] * (period - 1)) + d) / period)
+        adx = max(10.0, min(60.0, adx_vals[-1]))
         return round(adx, 1)
 
     @staticmethod
@@ -459,29 +404,13 @@ class TechnicalIndicators:
         return math.sqrt(variance)
 
     @staticmethod
-    def calculate_macd(prices: List[float]) -> Dict:
-        if len(prices) < 20:
-            return {'signal': 'neutral', 'strength': 0.3}
-        
-        ema_12 = sum(prices[-12:]) / 12
-        ema_26 = sum(prices[-20:]) / 20
-        
-        if ema_12 > ema_26 * 1.008:
-            return {'signal': 'bullish', 'strength': min(1.0, (ema_12 - ema_26) / ema_26)}
-        elif ema_12 < ema_26 * 0.992:
-            return {'signal': 'bearish', 'strength': min(1.0, (ema_26 - ema_12) / ema_26)}
-        return {'signal': 'neutral', 'strength': 0.3}
-
-    @staticmethod
     def calculate_bollinger_bands(prices: List[float]) -> Dict:
         if len(prices) < 15:
             return {'signal': 'neutral'}
-        
         recent = prices[-15:]
         middle = sum(recent) / 15
         std = TechnicalIndicators.calculate_std_dev(recent)
         current = prices[-1]
-        
         if current < middle - (1.5 * std):
             return {'signal': 'oversold'}
         elif current > middle + (1.5 * std):
@@ -495,12 +424,10 @@ class TechnicalIndicators:
     def calculate_volume_profile(prices: List[float]) -> Dict:
         if len(prices) < 8:
             return {'signal': 'neutral'}
-        
         current = prices[-1]
         high = max(prices[-10:])
         low = min(prices[-10:])
         poc = (high + low) / 2
-        
         if current > poc + (high - low) * 0.25:
             return {'signal': 'overbought'}
         elif current < poc - (high - low) * 0.25:
@@ -511,12 +438,12 @@ class TechnicalIndicators:
     def calculate_fibonacci(prices: List[float]) -> Dict:
         if len(prices) < 15:
             return {'signal': 'neutral'}
-        
         high = max(prices[-15:])
         low = min(prices[-15:])
         current = prices[-1]
         diff = high - low
-        
+        if diff == 0:
+            return {'signal': 'neutral'}
         if current > high - (0.382 * diff):
             return {'signal': 'resistance'}
         elif current < low + (0.618 * diff):
@@ -528,38 +455,80 @@ class MultiTimeframeAnalyzer:
     def analyze_consensus(prices: List[float]) -> str:
         if len(prices) < 15:
             return 'neutral'
-        
         tf_short = prices[-6:]
         tf_medium = prices[-12:]
         tf_long = prices[-18:]
-        
         trends = []
         weights = []
-        
         for i, tf in enumerate([tf_short, tf_medium, tf_long]):
             if len(tf) > 3:
                 trend_strength = (tf[-1] - tf[0]) / tf[0]
                 weight = [0.3, 0.4, 0.5][i]
-                
                 if trend_strength > 0.008:
                     trends.append(('buy', weight))
                 elif trend_strength < -0.008:
                     trends.append(('sell', weight))
                 else:
                     trends.append(('neutral', weight * 0.5))
-        
         if not trends:
             return 'neutral'
-            
         buy_score = sum(weight for direction, weight in trends if direction == 'buy')
         sell_score = sum(weight for direction, weight in trends if direction == 'sell')
-        
         if buy_score > sell_score + 0.2:
             return 'buy'
         elif sell_score > buy_score + 0.2:
             return 'sell'
         return 'neutral'
 
+# ========== MONTE CARLO ==========
+class MonteCarloSimulator:
+    @staticmethod
+    def generate_price_paths(base_price: float, volatility: float, num_paths: int = 1800, steps: int = 4) -> List[List[float]]:
+        paths = []
+        for _ in range(num_paths):
+            prices = [base_price]
+            current = base_price
+            for step in range(steps - 1):
+                adjusted_volatility = volatility * (1 + (step * 0.05))
+                trend = random.uniform(-volatility, volatility)
+                change = trend + random.gauss(0, 1) * adjusted_volatility
+                new_price = current * (1 + change)
+                new_price = max(new_price, base_price * 0.7)
+                prices.append(new_price)
+                current = new_price
+            paths.append(prices)
+        return paths
+    
+    @staticmethod
+    def calculate_probability_distribution(paths: List[List[float]]) -> Dict:
+        if not paths or len(paths) < 200:
+            return {'probability_buy': 0.5, 'probability_sell': 0.5, 'quality': 'LOW'}
+        initial_price = paths[0][0]
+        final_prices = [path[-1] for path in paths]
+        higher_prices = sum(1 for price in final_prices if price > initial_price * 1.01)
+        lower_prices = sum(1 for price in final_prices if price < initial_price * 0.99)
+        neutral_prices = len(final_prices) - higher_prices - lower_prices
+        total_paths = len(final_prices)
+        probability_buy = (higher_prices + (neutral_prices * 0.5)) / total_paths
+        probability_sell = (lower_prices + (neutral_prices * 0.5)) / total_paths
+        total = probability_buy + probability_sell
+        if total > 0:
+            probability_buy /= total
+            probability_sell /= total
+        prob_strength = max(probability_buy, probability_sell) - 0.5
+        if prob_strength > 0.15:
+            quality = 'HIGH'
+        elif prob_strength > 0.08:
+            quality = 'MEDIUM'
+        else:
+            quality = 'LOW'
+        return {
+            'probability_buy': probability_buy,
+            'probability_sell': probability_sell,
+            'quality': quality
+        }
+
+# ========== SISTEMA PRINCIPAL ==========
 class EnhancedTradingSystem:
     def __init__(self):
         self.memory = MemorySystem()
@@ -571,49 +540,48 @@ class EnhancedTradingSystem:
         self.news_events = NewsEventSystem()
         self.volatility_clustering = VolatilityClustering()
         self.price_fetcher = RealPriceFetcher()
-        
         self.current_analysis_cache = {}
+        # cache de preços com TTL
+        self._price_cache: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
+    def _get_prices_cached(self, symbol: str, interval: str = '1m', limit: int = 50) -> List[float]:
+        key = (symbol, interval)
+        now = time.time()
+        hit = self._price_cache.get(key)
+        if hit and now - hit["ts"] < CACHE_TTL_S:
+            return hit["prices"]
+        prices = self.price_fetcher.get_historical_prices(symbol, interval, limit)
+        self._price_cache[key] = {"ts": now, "prices": prices}
+        return prices
     
     def analyze_symbol(self, symbol: str, horizon: int) -> Dict:
-        # 🎯 PREÇOS REAIS DA BINANCE (AGORA FUNCIONANDO)
-        historical_prices = self.price_fetcher.get_historical_prices(symbol)
-        
+        # PREÇOS REAIS COM CACHE
+        historical_prices = self._get_prices_cached(symbol)
         if not historical_prices or len(historical_prices) < 10:
-            print(f"⚠️ Dados insuficientes para {symbol}, usando análise básica")
+            log.warning(f"[analyze] dados insuficientes para {symbol}, usando análise básica")
             return self.get_basic_analysis(symbol, horizon)
         
-        # Calcula volatilidade REAL dos preços
+        # Volatilidade REAL
         returns = []
         for i in range(1, len(historical_prices)):
             if historical_prices[i-1] != 0:
                 ret = (historical_prices[i] - historical_prices[i-1]) / historical_prices[i-1]
                 returns.append(abs(ret))
-        
         real_volatility = sum(returns) / len(returns) if returns else 0.01
         
-        print(f"📊 {symbol} - Volatilidade real: {real_volatility:.4f}")
-        
-        # 3000 SIMULAÇÕES MONTE CARLO COM VOLATILIDADE REAL
+        # Monte Carlo: steps por horizonte (T+1 => 2, T+3 => 4)
+        steps = max(2, horizon + 1)
         future_paths = self.monte_carlo.generate_price_paths(
             historical_prices[-1], 
             volatility=real_volatility,
-            num_paths=3000, 
-            steps=8
+            num_paths=SIMS, 
+            steps=steps
         )
         mc_result = self.monte_carlo.calculate_probability_distribution(future_paths)
-        
-        # VERIFICAÇÃO DE SOMA 100%
         prob_buy = mc_result['probability_buy']
         prob_sell = mc_result['probability_sell']
-        total_prob = prob_buy + prob_sell
         
-        if abs(total_prob - 1.0) > 0.01:
-            prob_buy = prob_buy / total_prob
-            prob_sell = prob_sell / total_prob
-            mc_result['probability_buy'] = prob_buy
-            mc_result['probability_sell'] = prob_sell
-        
-        # INDICADORES COM DADOS REAIS
+        # INDICADORES (reais)
         rsi = self.indicators.calculate_rsi(historical_prices)
         adx = self.indicators.calculate_adx(historical_prices)
         macd = self.indicators.calculate_macd(historical_prices)
@@ -622,20 +590,19 @@ class EnhancedTradingSystem:
         fibonacci = self.indicators.calculate_fibonacci(historical_prices)
         multi_tf_consensus = self.multi_tf.analyze_consensus(historical_prices)
         
-        # NOVOS SISTEMAS
         liquidity_score = self.liquidity.calculate_liquidity_score(symbol, historical_prices)
         volatility_regime = self.volatility_clustering.detect_volatility_clusters(historical_prices, symbol)
         
-        # Atualiza regime de mercado
+        # Atualiza regime mercado
         self.memory.update_market_regime(
             volatility=real_volatility, 
             adx_values=[adx] if adx else [25]
         )
         
-        # Gera eventos aleatórios
+        # Eventos (opcional)
         self.news_events.generate_market_events()
         
-        # PESOS
+        # PESOS (mantém essência)
         weights = self.memory.get_symbol_weights(symbol)
         
         # SISTEMA DE PONTUAÇÃO
@@ -646,57 +613,29 @@ class EnhancedTradingSystem:
         # 1. MONTE CARLO (peso principal)
         mc_direction_strength = abs(prob_buy - 0.5) * 2
         mc_score = mc_direction_strength * 30.0
-        
         if mc_result['quality'] == 'HIGH':
             mc_score *= 1.2
         elif mc_result['quality'] == 'MEDIUM':
             mc_score *= 1.1
-        
         base_score += mc_score if prob_buy > 0.5 else -mc_score
         factors.append(f"MC:{mc_score:.1f}")
         
         # 2. INDICADORES TÉCNICOS
-        indicator_score = 0
-        
-        # RSI
-        if (prob_buy > 0.5 and 30 < rsi < 70) or (prob_buy < 0.5 and 30 < rsi < 70):
-            indicator_score += 6
-            winning_indicators.append('RSI')
-        
-        # ADX
+        indicator_score = 0.0
+        if 30 < rsi < 70:
+            indicator_score += 6; winning_indicators.append('RSI')
         if adx > 25:
-            indicator_score += 5
-            winning_indicators.append('ADX')
-        
-        # MACD
-        if (prob_buy > 0.5 and macd['signal'] == 'bullish') or \
-           (prob_buy < 0.5 and macd['signal'] == 'bearish'):
-            indicator_score += 5 * macd['strength']
-            winning_indicators.append('MACD')
-        
-        # BOLLINGER
-        if (prob_buy > 0.5 and bollinger['signal'] in ['oversold', 'bullish']) or \
-           (prob_buy < 0.5 and bollinger['signal'] in ['overbought', 'bearish']):
-            indicator_score += 4
-            winning_indicators.append('BB')
-        
-        # VOLUME
-        if (prob_buy > 0.5 and volume['signal'] in ['oversold', 'neutral']) or \
-           (prob_buy < 0.5 and volume['signal'] in ['overbought', 'neutral']):
-            indicator_score += 3
-            winning_indicators.append('VOL')
-        
-        # FIBONACCI
-        if (prob_buy > 0.5 and fibonacci['signal'] == 'support') or \
-           (prob_buy < 0.5 and fibonacci['signal'] == 'resistance'):
-            indicator_score += 2
-            winning_indicators.append('FIB')
-        
-        # MULTI-TIMEFRAME
+            indicator_score += 5; winning_indicators.append('ADX')
+        if (prob_buy > 0.5 and macd['signal'] == 'bullish') or (prob_buy < 0.5 and macd['signal'] == 'bearish'):
+            indicator_score += 5 * macd['strength']; winning_indicators.append('MACD')
+        if (prob_buy > 0.5 and bollinger['signal'] in ['oversold', 'bullish']) or (prob_buy < 0.5 and bollinger['signal'] in ['overbought', 'bearish']):
+            indicator_score += 4; winning_indicators.append('BB')
+        if (prob_buy > 0.5 and volume['signal'] in ['oversold', 'neutral']) or (prob_buy < 0.5 and volume['signal'] in ['overbought', 'neutral']):
+            indicator_score += 3; winning_indicators.append('VOL')
+        if (prob_buy > 0.5 and fibonacci['signal'] == 'support') or (prob_buy < 0.5 and fibonacci['signal'] == 'resistance'):
+            indicator_score += 2; winning_indicators.append('FIB')
         if multi_tf_consensus == ('buy' if prob_buy > 0.5 else 'sell'):
-            indicator_score += 4
-            winning_indicators.append('MultiTF')
-        
+            indicator_score += 4; winning_indicators.append('MultiTF')
         base_score += indicator_score if prob_buy > 0.5 else -indicator_score
         factors.append(f"IND:{indicator_score:.1f}")
         
@@ -709,9 +648,9 @@ class EnhancedTradingSystem:
         base_score *= volatility_adjustment
         factors.append(f"VOL:{volatility_adjustment:.2f}")
         
-        # Converter para confiança final
+        # Converter para confiança final (faixa mais aberta 45–95%)
         raw_confidence = (base_score / 100.0)
-        final_confidence = min(0.85, max(0.55, raw_confidence))
+        final_confidence = min(0.95, max(0.45, raw_confidence))
         
         # Eventos de notícias
         final_confidence = self.news_events.adjust_confidence_for_events(final_confidence)
@@ -719,20 +658,12 @@ class EnhancedTradingSystem:
         # DIREÇÃO FINAL
         direction = 'buy' if prob_buy > 0.5 else 'sell'
         
-        # Cache para correlações
+        # Cache p/ correlações (primeira passada)
         self.current_analysis_cache[symbol] = {
             'direction': direction,
             'confidence': final_confidence,
             'timestamp': datetime.now()
         }
-        
-        # CORRELAÇÕES
-        correlation_adjustment = self.correlation.get_correlation_adjustment(
-            symbol, self.current_analysis_cache
-        )
-        final_confidence *= correlation_adjustment
-        final_confidence = min(0.85, max(0.55, final_confidence))
-        factors.append(f"CORR:{correlation_adjustment:.2f}")
         
         return {
             'symbol': symbol,
@@ -788,6 +719,19 @@ CORS(app)
 
 trading_system = EnhancedTradingSystem()
 
+# ==== utilitário: formata o melhor sinal em uma linha curta ====
+def format_best_signal_card(best: dict, analysis_time: str) -> str:
+    if not best:
+        return "Nenhum sinal disponível."
+    side = "🟢 COMPRAR" if best["direction"] == "buy" else "🔴 VENDER"
+    return (
+        f"{best['symbol']} T+{best['horizon']} • {side} • "
+        f"Conf {best['confidence']:.1%} • Prob {best['probability_buy']:.1%}/{best['probability_sell']:.1%} • "
+        f"ADX {best['adx']:.1f} • RSI {best['rsi']:.1f} • "
+        f"Entrada {best.get('entry_time','--')} • Preço {best['price']:.6f}"
+        f" • Última análise {analysis_time or '--'}"
+    )
+
 class AnalysisManager:
     def __init__(self):
         self.current_results = []
@@ -795,48 +739,40 @@ class AnalysisManager:
         self.analysis_time = None
         self.is_analyzing = False
         self.available_symbols = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'ADA/USDT', 'XRP/USDT', 'BNB/USDT']
+        self._lock = Lock()
     
     def analyze_symbols_thread(self, symbols, sims, only_adx):
         try:
             self.is_analyzing = True
             start_time = datetime.now()
-            print(f"🚀 INICIANDO ANÁLISE COM PREÇOS REAIS: {symbols}")
-            print("=" * 60)
+            log.info(f"🚀 INICIANDO ANÁLISE (reais): {symbols}")
             
             trading_system.current_analysis_cache = {}
-            
             all_horizons_results = []
-            
+
             for symbol in symbols:
-                print(f"\n🎯 ANALISANDO {symbol}")
-                print("-" * 40)
+                log.info(f"🎯 ANALISANDO {symbol}")
                 for horizon in [1, 2, 3]:
                     result = trading_system.analyze_symbol(symbol, horizon)
                     all_horizons_results.append(result)
-                    print(f"   ✅ T+{horizon} - {result['direction'].upper()} | Conf: {result['confidence']:.1%} | Real Data: {result['real_data']}")
+                    log.info(f"   ✅ T+{horizon} - {result['direction'].upper()} | Conf: {result['confidence']:.1%} | Real Data: {result['real_data']}")
             
             best_by_symbol = {}
             for result in all_horizons_results:
-                symbol = result['symbol']
-                if symbol not in best_by_symbol or result['confidence'] > best_by_symbol[symbol]['confidence']:
-                    best_by_symbol[symbol] = result
+                sym = result['symbol']
+                if sym not in best_by_symbol or result['confidence'] > best_by_symbol[sym]['confidence']:
+                    best_by_symbol[sym] = result
             
-            self.current_results = []
-            
+            formatted = []
             for result in all_horizons_results:
                 is_best_of_symbol = (result['symbol'] in best_by_symbol and 
                                    result['confidence'] == best_by_symbol[result['symbol']]['confidence'])
-                
-                # VERIFICAÇÃO FINAL DE PROBABILIDADES
                 prob_buy = result['probability_buy']
                 prob_sell = result['probability_sell']
                 total = prob_buy + prob_sell
-                
-                if abs(total - 1.0) > 0.01:
-                    prob_buy = prob_buy / total
-                    prob_sell = prob_sell / total
-                
-                formatted_result = {
+                if total > 0:
+                    prob_buy /= total; prob_sell /= total
+                formatted.append({
                     'symbol': result['symbol'],
                     'horizon': result['horizon'],
                     'direction': result['direction'],
@@ -845,7 +781,7 @@ class AnalysisManager:
                     'confidence': round(result['confidence'] * 100, 1),
                     'adx': round(result['adx'], 1),
                     'rsi': round(result['rsi'], 1),
-                    'price': round(result['price'], 4),
+                    'price': round(result['price'], 6),
                     'timestamp': result['timestamp'],
                     'technical_override': len(result['winning_indicators']) >= 4,
                     'multi_timeframe': result['multi_timeframe'],
@@ -859,45 +795,42 @@ class AnalysisManager:
                     'market_regime': result['market_regime'],
                     'volatility_multiplier': result['volatility_multiplier'],
                     'real_data': result.get('real_data', True)
-                }
-                self.current_results.append(formatted_result)
+                })
             
-            if self.current_results:
-                self.best_opportunity = max(self.current_results, key=lambda x: x['confidence'])
-                self.best_opportunity['entry_time'] = self.calculate_entry_time_brazil(self.best_opportunity['horizon'])
+            # ===== 2ª PASSADA DE CORRELAÇÃO =====
+            cache_for_corr = {}
+            for sym, r in best_by_symbol.items():
+                cache_for_corr[sym] = {'direction': r['direction'], 'confidence': r['confidence']}
+            adjusted = []
+            for r in formatted:
+                corr = trading_system.correlation.get_correlation_adjustment(r['symbol'], cache_for_corr)
+                new_conf = min(95.0, max(40.0, r['confidence'] * corr))
+                r['confidence'] = round(new_conf, 1)
+                adjusted.append(r)
+            formatted = adjusted
+
+            best = max(formatted, key=lambda x: x['confidence']) if formatted else None
+            if best:
+                best_entry_time = self.calculate_entry_time_brazil(best['horizon'])
+                best['entry_time'] = best_entry_time
             
-            self.analysis_time = self.get_brazil_time().strftime("%d/%m/%Y %H:%M:%S")
+            analysis_time = self.get_brazil_time().strftime("%d/%m/%Y %H:%M:%S")
             processing_time = (datetime.now() - start_time).total_seconds()
             
-            # VERIFICAÇÃO DE IMPARCIALIDADE
-            confidence_by_symbol = {}
-            real_data_count = 0
-            for result in self.current_results:
-                symbol = result['symbol']
-                if symbol not in confidence_by_symbol:
-                    confidence_by_symbol[symbol] = []
-                confidence_by_symbol[symbol].append(result['confidence'])
-                if result['real_data']:
-                    real_data_count += 1
-            
-            print(f"\n" + "=" * 60)
-            print(f"✅ ANÁLISE CONCLUÍDA em {processing_time:.1f}s")
-            print(f"📊 DADOS REAIS: {real_data_count}/{len(self.current_results)} sinais")
-            print("📈 VERIFICAÇÃO DE IMPARCIALIDADE:")
-            for symbol, confidences in confidence_by_symbol.items():
-                avg_confidence = sum(confidences) / len(confidences)
-                max_confidence = max(confidences)
-                print(f"   {symbol}: Média={avg_confidence:.1f}% | Máxima={max_confidence:.1f}%")
-            
-            print(f"🏆 MELHOR OPORTUNIDADE: {self.best_opportunity['symbol']} T+{self.best_opportunity['horizon']} ({self.best_opportunity['confidence']}%)")
-            print("=" * 60)
-            
+            with self._lock:
+                self.current_results = formatted
+                self.best_opportunity = best
+                self.analysis_time = analysis_time
+
+            if best:
+                log.info(f"🏆 MELHOR OPORTUNIDADE: {best['symbol']} T+{best['horizon']} ({best['confidence']}%)")
+            log.info(f"✅ ANÁLISE CONCLUÍDA em {processing_time:.1f}s | {len(formatted)} sinais")
+
         except Exception as e:
-            print(f"❌ ERRO: {e}")
-            import traceback
-            traceback.print_exc()
-            self.current_results = self._get_fallback_results(symbols)
-            self.best_opportunity = self.current_results[0] if self.current_results else None
+            log.exception(f"❌ ERRO na análise: {e}")
+            with self._lock:
+                self.current_results = self._get_fallback_results(symbols)
+                self.best_opportunity = self.current_results[0] if self.current_results else None
         finally:
             self.is_analyzing = False
     
@@ -914,24 +847,23 @@ class AnalysisManager:
             for horizon in [1, 2, 3]:
                 prob_buy = random.uniform(0.4, 0.6)
                 prob_sell = 1.0 - prob_buy
-                
                 results.append({
                     'symbol': symbol,
                     'horizon': horizon,
                     'direction': 'buy' if prob_buy > 0.5 else 'sell',
                     'p_buy': round(prob_buy * 100, 1),
                     'p_sell': round(prob_sell * 100, 1),
-                    'confidence': random.randint(60, 80),
-                    'adx': random.randint(30, 50),
+                    'confidence': random.randint(55, 85),
+                    'adx': random.randint(20, 40),
                     'rsi': random.randint(40, 60),
-                    'price': round(random.uniform(50, 400), 4),
+                    'price': round(random.uniform(50, 400), 6),
                     'timestamp': self.get_brazil_time().strftime("%H:%M:%S"),
                     'technical_override': random.choice([True, False]),
-                    'multi_timeframe': random.choice(['buy', 'sell']),
-                    'monte_carlo_quality': random.choice(['MEDIUM', 'HIGH']),
-                    'winning_indicators': random.sample(['RSI', 'ADX', 'MACD', 'BB', 'VOL'], 3),
+                    'multi_timeframe': random.choice(['buy', 'sell', 'neutral']),
+                    'monte_carlo_quality': random.choice(['MEDIUM', 'HIGH', 'LOW']),
+                    'winning_indicators': random.sample(['RSI', 'ADX', 'MACD', 'BB', 'VOL'], k=3),
                     'score_factors': ['MC:45.0', 'RSI:8.0', 'ADX:7.0'],
-                    'assertiveness': random.randint(70, 90),
+                    'assertiveness': random.randint(60, 90),
                     'is_best_of_symbol': (horizon == 2),
                     'liquidity_score': round(random.uniform(0.6, 0.9), 2),
                     'volatility_regime': random.choice(['LOW', 'MEDIUM', 'HIGH']),
@@ -942,8 +874,7 @@ class AnalysisManager:
         return results
     
     def calculate_assertiveness(self, result):
-        base = result['confidence']
-        
+        base = result['confidence'] * 100 if isinstance(result['confidence'], float) and result['confidence'] <= 1 else result['confidence']
         indicator_count = len(result['winning_indicators'])
         if indicator_count >= 5:
             base += 15
@@ -953,28 +884,23 @@ class AnalysisManager:
             base += 6
         elif indicator_count >= 2:
             base += 3
-        
         if result['monte_carlo_quality'] == 'HIGH':
             base += 12
         elif result['monte_carlo_quality'] == 'MEDIUM':
             base += 6
-        
         if result['multi_timeframe'] == result['direction']:
             base += 8
-            
         if max(result['probability_buy'], result['probability_sell']) > 0.6:
             base += 5
-            
         if result['volatility_regime'] == 'LOW':
             base += 3
         elif result['volatility_regime'] == 'HIGH':
             base -= 5
-            
         return min(round(base, 1), 95)
 
 manager = AnalysisManager()
 
-# ========== ROTAS (MANTIDAS) ==========
+# ========== ROTAS (mantidas) ==========
 @app.route('/')
 def index():
     symbols_html = ''.join([f'''
@@ -1030,7 +956,7 @@ def index():
             <div class="card">
                 <h1>🚀 IA Signal Pro - PREÇOS REAIS CONFIRMADOS</h1>
                 <p><em>✅ DADOS REAIS DA BINANCE • Símbolos corrigidos • IMPARCIALIDADE GARANTIDA</em></p>
-                <p><strong>🎯 AGORA COM: Mapeamento correto dos símbolos + Verificação detalhada</strong></p>
+                <p><strong>🎯 AGORA COM: EMAs/MACD corretos, RSI Wilder, ADX real e correlação justa</strong></p>
                 
                 <div class="symbols-container">
                     <h3>🎯 SELECIONE OS ATIVOS PARA ANÁLISE COM DADOS REAIS:</h3>
@@ -1041,7 +967,7 @@ def index():
                 
                 <div style="text-align: center;">
                     <select id="sims" style="width: 200px; display: inline-block;">
-                        <option value="3000" selected>3000 simulações Monte Carlo</option>
+                        <option value="1800" selected>{SIMS} simulações Monte Carlo</option>
                     </select>
                     
                     <button onclick="analyze()" id="analyzeBtn">🎯 ANALISAR COM DADOS REAIS</button>
@@ -1106,7 +1032,7 @@ def index():
                         headers: {{ 'Content-Type': 'application/json' }},
                         body: JSON.stringify({{
                             symbols: symbols,
-                            sims: 3000,
+                            sims: {SIMS},
                             only_adx: 0
                         }})
                     }});
@@ -1148,7 +1074,6 @@ def index():
             function updateResults(data) {{
                 if (data.best) {{
                     const best = data.best;
-                    const qualityClass = 'quality-' + best.monte_carlo_quality.toLowerCase();
                     const regimeClass = getRegimeClass(best.volatility_regime);
                     const liquidityClass = getLiquidityClass(best.liquidity_score);
                     const dataBadge = best.real_data ? 
@@ -1183,8 +1108,8 @@ def index():
                                 <div class="metric"><div>Liquidez</div><strong class="${{liquidityClass}}">${{best.liquidity_score}}</strong></div>
                             </div>
                             
-                            <div><strong>Indicadores Ativos:</strong> ${{formatIndicators(best.winning_indicators)}}</div>
-                            <div><strong>Pontuação:</strong> ${{formatFactors(best.score_factors)}}</div>
+                            <div><strong>Indicadores Ativos:</strong> ${{formatIndicators(best.winning_indicators || [])}}</div>
+                            <div><strong>Pontuação:</strong> ${{formatFactors(best.score_factors || [])}}</div>
                             <div>
                                 <strong>Mercado:</strong> ${{best.market_regime}} | 
                                 <strong>Vol Multi:</strong> ${{best.volatility_multiplier}}x |
@@ -1225,12 +1150,10 @@ def index():
                             </div>`;
                         
                         symbolResults.forEach(result => {{
-                            const qualityClass = 'quality-' + result.monte_carlo_quality.toLowerCase();
                             const isBest = result.is_best_of_symbol;
-                            const bestBadge = isBest ? ' 🏆 MELHOR DO ATIVO' : '';
                             const resultClass = isBest ? 'best-of-symbol' : '';
-                            const isGlobalBest = data.best && data.best.symbol === result.symbol && data.best.horizon === result.horizon;
-                            const globalBestBadge = isGlobalBest ? ' 🌟 MELHOR GLOBAL' : '';
+                            const bestBadge = isBest ? ' 🏆 MELHOR DO ATIVO' : '';
+                            const globalBestBadge = (data.best && data.best.symbol === result.symbol && data.best.horizon === result.horizon) ? ' 🌟 MELHOR GLOBAL' : '';
                             const dataBadge = result.real_data ? 
                                 '<span class="real-data-badge">REAL</span>' : 
                                 '<span class="fallback-badge">SIM</span>';
@@ -1248,10 +1171,9 @@ def index():
                                         <br>
                                         <strong>ADX:</strong> ${{result.adx}} | 
                                         <strong>RSI:</strong> ${{result.rsi}} | 
-                                        <strong>Multi-TF:</strong> ${{result.multi_timeframe}} | 
-                                        <strong>Qual:</strong> <span class="${{qualityClass}}">${{result.monte_carlo_quality}}</span>
+                                        <strong>Multi-TF:</strong> ${{result.multi_timeframe}} 
                                         <br>
-                                        <strong>Indicadores:</strong> ${{formatIndicators(result.winning_indicators)}}
+                                        <strong>Indicadores:</strong> ${{formatIndicators(result.winning_indicators || [])}}
                                     </div>
                                 </div>
                                 ${{result.technical_override ? '<div class="override">⚡ Convergência Técnica</div>' : ''}}
@@ -1275,54 +1197,57 @@ def index():
 def analyze():
     if manager.is_analyzing:
         return jsonify({'success': False, 'error': 'Análise em andamento'}), 429
-    
     try:
         data = request.get_json()
         symbols = [s.strip().upper() for s in data['symbols'] if s.strip()]
-        
         if not symbols:
             return jsonify({'success': False, 'error': 'Selecione pelo menos um ativo'}), 400
-            
-        sims = 3000
-        
+        sims = int(data.get('sims', SIMS))
         thread = threading.Thread(
             target=manager.analyze_symbols_thread,
             args=(symbols, sims, None)
         )
         thread.daemon = True
         thread.start()
-        
         return jsonify({
             'success': True,
-            'message': f'Analisando {len(symbols)} ativos com DADOS REAIS + 3000 simulações...',
+            'message': f'Analisando {len(symbols)} ativos com DADOS REAIS + {sims} simulações...',
             'symbols_count': len(symbols)
         })
-        
     except Exception as e:
+        log.exception("erro no /api/analyze")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/results')
 def get_results():
-    return jsonify({
-        'success': True,
-        'results': manager.current_results,
-        'best': manager.best_opportunity,
-        'analysis_time': manager.analysis_time,
-        'total_signals': len(manager.current_results),
-        'is_analyzing': manager.is_analyzing
-    })
+    with manager._lock:
+        payload = {
+            'success': True,
+            'results': manager.current_results,
+            'best': manager.best_opportunity,
+            'analysis_time': manager.analysis_time,
+            'total_signals': len(manager.current_results),
+            'is_analyzing': manager.is_analyzing
+        }
+    return jsonify(payload)
+
+@app.route('/api/best_signal')
+def best_signal():
+    with manager._lock:
+        best = manager.best_opportunity
+        text = format_best_signal_card(best, manager.analysis_time)
+    return jsonify({'success': True, 'text': text, 'best': best})
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'healthy', 'version': 'real-data-confirmed-v1'})
+    return jsonify({'status': 'healthy', 'version': 'real-data-v2-macd-rsi-adx-corr', 'sims': SIMS})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    print("🚀 IA Signal Pro - PREÇOS REAIS CONFIRMADOS")
-    print("✅ DADOS REAIS: Binance API com mapeamento correto")
-    print("✅ SÍMBOLOS: BTCUSDT, ETHUSDT, SOLUSDT, ADAUSDT, XRPUSDT, BNBUSDT") 
-    print("✅ VERIFICAÇÃO: Logs detalhados mostrando preços reais")
-    print("✅ IMPARCIALIDADE: Preços reais não favorecem ninguém")
-    print("✅ MONTE CARLO: 3000 simulações com volatilidade real")
-    print("🔧 Iniciando servidor na porta:", port)
+    log.info("🚀 IA Signal Pro (Railway-ready)")
+    log.info("✅ DADOS REAIS: Binance API com retry/backoff + cache TTL")
+    log.info("✅ Indicadores: EMA/MACD corretos, RSI Wilder, ADX aproximação real")
+    log.info("✅ Correlação: aplicada em 2ª passada (justa)")
+    log.info("🔧 Servidor na porta: %s", port)
+    # Railway aceita app.run (Nixpacks Python) ou Gunicorn via Procfile; mantemos app.run para compat.
     app.run(host='0.0.0.0', port=port, debug=False)
