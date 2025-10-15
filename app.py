@@ -616,73 +616,141 @@ class MonteCarloSimulator:
 # ========== FLASK APP ==========
 
 
+
 class EnhancedTradingSystem:
     def __init__(self) -> None:
-        # Importante: NENHUMA referência a "paths" aqui.
+        self.price_fetcher = RealPriceFetcher()
         self.mc = MonteCarloSimulator()
         self.ind = TechnicalIndicators()
-        self.last_prices: Dict[str, List[float]] = {}
+        self.liq = LiquiditySystem()
+        self.multi_tf = MultiTimeframeAnalyzer()
+        self.corr = CorrelationSystem()
+        self.news = NewsEventSystem()
+        self.vol_cluster = VolatilityClustering()
+        self._price_cache = {}
 
-    def _fake_prices(self, symbol: str, n: int = 60) -> List[float]:
-        # Gerador seguro para testar sem exchange externa
-        seed = hash((symbol, datetime.utcnow().strftime("%Y%m%d%H%M"))) & 0xffffffff
-        rnd = random.Random(seed)
-        base = {
-            'BTC/USDT': 45000, 'ETH/USDT': 2500, 'SOL/USDT': 120,
-            'ADA/USDT': 0.45, 'XRP/USDT': 0.55, 'BNB/USDT': 320
-        }.get(symbol, 100.0)
-        prices = [base]
-        cur = base
-        for _ in range(n-1):
-            change = rnd.gauss(0, 0.004)
-            cur = max(base*0.7, cur * (1 + change))
-            prices.append(cur)
+    def _get_prices_cached(self, symbol: str, interval: str = '1m', limit: int = 50):
+        key = (symbol, interval, limit)
+        import time
+        now = time.time()
+        hit = self._price_cache.get(key)
+        if hit and (now - hit['ts']) < CACHE_TTL_S:
+            return hit['prices']
+        prices = self.price_fetcher.get_historical_prices(symbol, interval, limit)
+        self._price_cache[key] = {'ts': now, 'prices': prices}
         return prices
 
-    def analyze(self, symbol: str, horizon: int = 2, sims: int = 1200) -> Dict[str, Any]:
-        prices = self._fake_prices(symbol)
-        vol = 0.0
-        for i in range(1, len(prices)):
-            if prices[i-1] != 0:
-                vol += abs((prices[i] - prices[i-1]) / prices[i-1])
-        vol = (vol / max(1, len(prices)-1)) or 0.01
+    def analyze_symbol(self, symbol: str, horizon: int) -> dict:
+        return self.analyze(symbol, horizon=horizon, sims=SIMS)
 
-        steps = max(2, horizon + 1)
-        paths = self.mc.generate_price_paths(prices[-1], vol, num_paths=sims, steps=steps)
-        dist = self.mc.calculate_probability_distribution(paths)
+    def analyze(self, symbol: str, horizon: int = 2, sims: int = SIMS) -> dict:
+        prices = self._get_prices_cached(symbol, '1m', 50)
+        if not prices or len(prices) < 10:
+            # fallback rápido
+            from random import choice
+            direction = choice(['buy','sell'])
+            prob_buy = 0.55 if direction=='buy' else 0.45
+            prob_sell = 1.0 - prob_buy
+            confidence = 0.6
+            rsi = 50.0; adx = 25.0
+            mc_quality = 'LOW'
+            multi_tf = 'neutral'
+            liquidity = 0.7
+            vol_regime = 'MEDIUM'
+            market_regime = 'NORMAL'
+            vol_mult = 1.0
+            real_data = False
+            price = 100.0
+        else:
+            # volatilidade histórica
+            returns = []
+            for i in range(1, len(prices)):
+                if prices[i-1] != 0:
+                    returns.append(abs((prices[i] - prices[i-1]) / prices[i-1]))
+            vol = sum(returns)/len(returns) if returns else 0.01
 
-        rsi = self.ind.rsi(prices)
-        adx = self.ind.adx(prices)
+            steps = max(2, horizon + 1)
+            paths = self.mc.generate_price_paths(prices[-1], vol, num_paths=sims, steps=steps)
+            dist = self.mc.calculate_probability_distribution(paths)
 
-        direction = 'buy' if dist['probability_buy'] > dist['probability_sell'] else 'sell'
-        confidence = min(0.95, max(0.45, 0.50 + (dist['probability_buy'] - 0.5) * 0.8))
+            rsi = TechnicalIndicators.calculate_rsi(prices)
+            adx = TechnicalIndicators.calculate_adx(prices)
+            macd = TechnicalIndicators.calculate_macd(prices)
+            bb = TechnicalIndicators.calculate_bollinger_bands(prices)
+            vol_prof = TechnicalIndicators.calculate_volume_profile(prices)
+            fib = TechnicalIndicators.calculate_fibonacci(prices)
+            multi_tf = MultiTimeframeAnalyzer.analyze_consensus(prices)
+
+            liquidity = self.liq.calculate_liquidity_score(symbol, prices)
+            vol_regime = self.vol_cluster.detect_volatility_clusters(prices, symbol)
+
+            # regime + eventos
+            self.news.generate_market_events()
+            base_score = 50.0
+            factors = []
+            winning = []
+
+            # MC contribution
+            prob_buy = dist['probability_buy']
+            prob_sell = dist['probability_sell']
+            mc_dir_strength = abs(prob_buy - 0.5) * 2
+            mc_score = mc_dir_strength * 30.0
+            if dist['quality'] == 'HIGH': mc_score *= 1.2
+            elif dist['quality'] == 'MEDIUM': mc_score *= 1.1
+            base_score += mc_score if prob_buy > 0.5 else -mc_score
+            factors.append(f"MC:{mc_score:.1f}")
+
+            # técnicos
+            ind_score = 0.0
+            if 30 < rsi < 70: ind_score += 6; winning.append('RSI')
+            if adx > 25: ind_score += 5; winning.append('ADX')
+            if (prob_buy > 0.5 and macd['signal']=='bullish') or (prob_buy < 0.5 and macd['signal']=='bearish'):
+                ind_score += 5 * macd['strength']; winning.append('MACD')
+            if (prob_buy > 0.5 and bb['signal'] in ['oversold','bullish']) or (prob_buy < 0.5 and bb['signal'] in ['overbought','bearish']):
+                ind_score += 4; winning.append('BB')
+            if (prob_buy > 0.5 and vol_prof['signal'] in ['oversold','neutral']) or (prob_buy < 0.5 and vol_prof['signal'] in ['overbought','neutral']):
+                ind_score += 3; winning.append('VOL')
+            if (prob_buy > 0.5 and fib['signal']=='support') or (prob_buy < 0.5 and fib['signal']=='resistance'):
+                ind_score += 2; winning.append('FIB')
+            if multi_tf == ('buy' if prob_buy > 0.5 else 'sell'):
+                ind_score += 4; winning.append('MultiTF')
+            base_score += ind_score if prob_buy > 0.5 else -ind_score
+            factors.append(f"IND:{ind_score:.1f}")
+
+            # liquidez e regime
+            base_score *= (0.95 + liquidity * 0.1)  # 0.95–1.05 aprox
+            base_score *= self.vol_cluster.get_regime_adjustment(symbol)
+
+            raw_conf = base_score / 100.0
+            confidence = min(0.95, max(0.45, raw_conf))
+            confidence = self.news.adjust_confidence_for_events(confidence)
+
+            direction = 'buy' if prob_buy > 0.5 else 'sell'
+            mc_quality = dist['quality']
+            market_regime = 'NORMAL'  # pode vir da MemorySystem se integrar
+
+            price = prices[-1]
+            real_data = True
 
         return {
             'symbol': symbol,
             'horizon': horizon,
-            'direction': direction,
-            'probability_buy': dist['probability_buy'],
-            'probability_sell': dist['probability_sell'],
-            'monte_carlo_quality': dist['quality'],
-            'confidence': confidence,
-            'rsi': rsi,
-            'adx': adx,
-            'price': prices[-1],
-            'timestamp': datetime.now(timezone(timedelta(hours=-3))).strftime("%d/%m/%Y %H:%M:%S")
+            'direction': 'buy' if prob_buy > prob_sell else 'sell',
+            'probability_buy': prob_buy, 'probability_sell': prob_sell,
+            'confidence': confidence, 'rsi': rsi, 'adx': adx,
+            'multi_timeframe': multi_tf, 'monte_carlo_quality': mc_quality,
+            'winning_indicators': winning if 'winning' in locals() else [],
+            'score_factors': factors if 'factors' in locals() else ['BASIC:0.0'],
+            'price': price, 'timestamp': _br_time_str(),
+            'liquidity_score': round(liquidity,2),
+            'volatility_regime': vol_regime, 'market_regime': market_regime,
+            'volatility_multiplier': self.news.get_volatility_multiplier() if hasattr(self, 'news') else 1.0,
+            'real_data': real_data
         }
 
 
-
-app = Flask(__name__)
-
-def _br_time_str(dt_value=None):
-    from datetime import datetime, timezone, timedelta
-    tz = timezone(timedelta(hours=-3))
-    now_brt = dt_value or datetime.now(tz)
-    return now_brt.strftime('%d/%m/%Y %H:%M:%S')
-CORS(app)
-
 trading_system = EnhancedTradingSystem()
+
 
 # ==== utilitário: formata o melhor sinal em uma linha curta ====
 def format_best_signal_card(best: dict, analysis_time: str) -> str:
@@ -696,14 +764,6 @@ def format_best_signal_card(best: dict, analysis_time: str) -> str:
         f"Entrada {best.get('entry_time','--')} • Preço {best['price']:.6f}"
         f" • Última análise {analysis_time or '--'}"
     )
-
-
-    def analyze_symbol(self, symbol: str, horizon: int) -> dict:
-
-        """Adapter para manter compatibilidade com o restante do app."""
-
-        return self.analyze(symbol, horizon=horizon, sims=1200)
-
 class AnalysisManager:
     def __init__(self):
         self.current_results = []
@@ -728,64 +788,96 @@ class AnalysisManager:
                     result = trading_system.analyze_symbol(symbol, horizon)
                     all_horizons_results.append(result)
                     log.info(f"   ✅ T+{horizon} - {result['direction'].upper()} | Conf: {result['confidence']:.1%} | Real Data: {result['real_data']}")
-            
-            best_by_symbol = {}
-            for result in all_horizons_results:
-                sym = result['symbol']
-                if sym not in best_by_symbol or result['confidence'] > best_by_symbol[sym]['confidence']:
-                    best_by_symbol[sym] = result
-            
-            formatted = []
-            for result in all_horizons_results:
-                is_best_of_symbol = (result['symbol'] in best_by_symbol and 
-                                   result['confidence'] == best_by_symbol[result['symbol']]['confidence'])
-                prob_buy = result['probability_buy']
-                prob_sell = result['probability_sell']
-                total = prob_buy + prob_sell
-                if total > 0:
-                    prob_buy /= total; prob_sell /= total
-                formatted.append({
-                    'symbol': result['symbol'],
-                    'horizon': result['horizon'],
-                    'direction': result['direction'],
-                    'p_buy': round(prob_buy * 100, 1),
-                    'p_sell': round(prob_sell * 100, 1),
-                    'confidence': round(result['confidence'] * 100, 1),
-                    'adx': round(result['adx'], 1),
-                    'rsi': round(result['rsi'], 1),
-                    'price': round(result['price'], 6),
-                    'timestamp': result['timestamp'],
-                    'technical_override': len(result['winning_indicators']) >= 4,
-                    'multi_timeframe': result['multi_timeframe'],
-                    'monte_carlo_quality': result['monte_carlo_quality'],
-                    'winning_indicators': result['winning_indicators'],
-                    'score_factors': result['score_factors'],
-                    'assertiveness': self.calculate_assertiveness(result),
-                    'is_best_of_symbol': is_best_of_symbol,
-                    'liquidity_score': result['liquidity_score'],
-                    'volatility_regime': result['volatility_regime'],
-                    'market_regime': result['market_regime'],
-                    'volatility_multiplier': result['volatility_multiplier'],
-                    'real_data': result.get('real_data', True)
-                })
-            
-            # ===== 2ª PASSADA DE CORRELAÇÃO =====
-            cache_for_corr = {}
-            for sym, r in best_by_symbol.items():
-                cache_for_corr[sym] = {'direction': r['direction'], 'confidence': r['confidence']}
-            adjusted = []
-            for r in formatted:
-                corr = trading_system.correlation.get_correlation_adjustment(r['symbol'], cache_for_corr)
-                new_conf = min(95.0, max(40.0, r['confidence'] * corr))
-                r['confidence'] = round(new_conf, 1)
-                adjusted.append(r)
-            formatted = adjusted
 
-            best = max(formatted, key=lambda x: x['confidence']) if formatted else None
-            if best:
-                best_entry_time = self.calculate_entry_time_brazil(best['horizon'])
-                best['entry_time'] = best_entry_time
-            
+# === SELECIONAR MELHOR OPORTUNIDADE GLOBAL CORRETAMENTE ===
+# 1) Junta tudo e calcula assertividade “base”
+all_results_combined = []
+for r in all_horizons_results:
+    r['assertiveness'] = self.calculate_assertiveness(r)
+    all_results_combined.append(r)
+
+# 2) Melhor por símbolo (pré-correlação) — base da correlação
+best_by_symbol_pre = {}
+for r in all_results_combined:
+    sym = r['symbol']
+    if sym not in best_by_symbol_pre or r['assertiveness'] > best_by_symbol_pre[sym]['assertiveness']:
+        best_by_symbol_pre[sym] = r
+
+# 3) Cache correlação (direção + confidence base do melhor de cada símbolo)
+cache_for_corr = {sym: {'direction': r['direction'], 'confidence': r['confidence']} for sym, r in best_by_symbol_pre.items()}
+
+# 4) Aplica correlação com limite e normaliza
+formatted = []
+for r in all_results_combined:
+    raw_corr = trading_system.corr.get_correlation_adjustment(r['symbol'], cache_for_corr)
+    corr = max(0.93, min(1.07, raw_corr))  # ±7%
+    adjusted_confidence = min(0.95, max(0.40, r['confidence'] * corr))
+
+    prob_buy  = float(r['probability_buy'])
+    prob_sell = float(r['probability_sell'])
+    total = prob_buy + prob_sell
+    if total > 0:
+        prob_buy  /= total
+        prob_sell /= total
+
+    formatted.append({
+        'symbol': r['symbol'],
+        'horizon': r['horizon'],
+        'direction': r['direction'],
+        'p_buy': round(prob_buy * 100, 1),
+        'p_sell': round(prob_sell * 100, 1),
+        'edge': round(abs(prob_buy - 0.5) * 100, 1),
+        'confidence': round(adjusted_confidence * 100, 1),
+        'confidence_base': round(r['confidence'] * 100, 1),
+        'adx': round(r['adx'], 1),
+        'rsi': round(r['rsi'], 1),
+        'price': round(r['price'], 6),
+        'timestamp': r['timestamp'],
+        'technical_override': len(r.get('winning_indicators', [])) >= 4,
+        'multi_timeframe': r.get('multi_timeframe', 'neutral'),
+        'monte_carlo_quality': r.get('monte_carlo_quality', 'MEDIUM'),
+        'winning_indicators': r.get('winning_indicators', []),
+        'score_factors': r.get('score_factors', []),
+        'liquidity_score': r.get('liquidity_score', 0.7),
+        'volatility_regime': r.get('volatility_regime', 'MEDIUM'),
+        'market_regime': r.get('market_regime', 'NORMAL'),
+        'volatility_multiplier': r.get('volatility_multiplier', 1.0),
+        'real_data': r.get('real_data', True),
+        'entry_time': self.calculate_entry_time_brazil(r['horizon']),
+    })
+
+# 5) Recalcula assertividade após correlação
+for F in formatted:
+    tmp = dict(F)
+    tmp['confidence'] = (tmp['confidence']/100.0) if tmp['confidence']>1 else tmp['confidence']
+    # reconcilia com API da assertiveness original
+    F['assertiveness'] = self.calculate_assertiveness({
+        'confidence': tmp['confidence'],
+        'winning_indicators': F['winning_indicators'],
+        'monte_carlo_quality': F['monte_carlo_quality'],
+        'multi_timeframe': F['multi_timeframe'],
+        'direction': F['direction'],
+        'probability_buy': F['p_buy']/100.0,
+        'probability_sell': F['p_sell']/100.0,
+        'volatility_regime': F['volatility_regime']
+    })
+
+# 6) Marca melhor de cada símbolo (após correlação)
+for sym in {x['symbol'] for x in formatted}:
+    group = [x for x in formatted if x['symbol'] == sym]
+    group.sort(key=lambda z: z['assertiveness'], reverse=True)
+    best_of_symbol = group[0]
+    for g in group: g['is_best_of_symbol'] = (g is best_of_symbol)
+
+# 7) Escolhe o melhor global (após correlação) com score robusto
+def mc_bonus(q): return 3.0 if q == 'HIGH' else (1.0 if q == 'MEDIUM' else 0.0)
+for F in formatted:
+    F['global_score'] = F['assertiveness'] + (0.25 * F.get('edge', 0.0)) + mc_bonus(F['monte_carlo_quality'])
+best = max(formatted, key=lambda z: z['global_score']) if formatted else None
+if best:
+    best['is_best_global'] = True
+    best['entry_time'] = self.calculate_entry_time_brazil(best['horizon'])
+
             analysis_time = self.get_brazil_time().strftime("%d/%m/%Y %H:%M:%S")
             processing_time = (datetime.now() - start_time).total_seconds()
             
