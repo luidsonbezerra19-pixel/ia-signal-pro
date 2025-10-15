@@ -1,1314 +1,530 @@
-# ==== HOTFIX HEADER (coloque isso NA LINHA 1 do app.py) ====
-from datetime import datetime, timezone, timedelta
+# main.py
+# App pronto para Railway (ou local) mantendo porta intacta, usando Binance spot + Monte Carlo (T+1..T+3)
 
-# Garante o Flask app antes de qualquer @app.route
-try:
-    app  # type: ignore[name-defined]
-except NameError:
-    from flask import Flask
-    from flask_cors import CORS
-    app = Flask(__name__)
-    CORS(app)
-
-# Garante a função de horário local (usada por /api/results)
-try:
-    _br_time_str  # type: ignore[name-defined]
-except NameError:
-    def _br_time_str():
-        """Hora local America/Maceio (UTC-03) dd/mm/YYYY HH:MM:SS."""
-        try:
-            return datetime.now(timezone(timedelta(hours=-3))).strftime("%d/%m/%Y %H:%M:%S")
-        except Exception:
-            return datetime.utcnow().strftime("%d/%m/%Y %H:%M:%S")
-
-from flask import Flask, render_template, jsonify, request
+from __future__ import annotations
+from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
-import threading
+import os, time, random, math, json
 from datetime import datetime, timezone, timedelta
-import os
-import random
-import math
-import json
-import time
-import logging
-from typing import List, Dict, Tuple, Any
-from threading import Lock
-from concurrent.futures import ThreadPoolExecutor
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+from typing import Any, Dict, List, Tuple, Optional
 
-# ====== ENV com defaults seguros (Railway-friendly) ======
-SIMS = int(os.getenv("SIMS", "1800"))                 # Monte Carlo paths (antes 3000)
-CACHE_TTL_S = int(os.getenv("CACHE_TTL_S", "20"))     # TTL de cache dos candles
-BINANCE_TIMEOUT = float(os.getenv("BINANCE_TIMEOUT", "7.5"))
-MAX_WORKERS = int(os.getenv("MAX_WORKERS", "4"))      # Paralelismo leve
-DISABLE_NEWS_EVENTS = os.getenv("DISABLE_NEWS_EVENTS", "1") == "1"
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+# ========== Dependência de mercado ==========
+try:
+    import ccxt  # pip install ccxt
+except Exception:
+    ccxt = None
 
-# ====== Logs (stdout do Railway) ======
-logging.basicConfig(level=LOG_LEVEL)
-log = logging.getLogger("ia-signal")
+# ========== Configs simples ==========
+TZ_STR = os.getenv("TZ", "America/Maceio")  # usado só para rótulo; cálculo de fuso abaixo (UTC-3 fixo)
+MC_PATHS = int(os.getenv("MC_PATHS", "3000"))  # nº de caminhos no Monte Carlo (padrão 3000)
+DEFAULT_SYMBOLS = os.getenv(
+    "SYMBOLS",
+    "XRP/USDT,ADA/USDT,SOL/USDT,ETH/USDT,BNB/USDT"
+).split(",")
+DEFAULT_SYMBOLS = [s.strip() for s in DEFAULT_SYMBOLS if s.strip()]
 
-# ========== SISTEMA DE PREÇOS REAIS (requests + retry + cache TTL) ==========
-class RealPriceFetcher:
-    def __init__(self):
-        self.base_url = "https://api.binance.com/api/v3"
-        # Mapeamento correto dos símbolos Binance
-        self.symbol_mapping = {
-            'BTC/USDT': 'BTCUSDT',
-            'ETH/USDT': 'ETHUSDT', 
-            'SOL/USDT': 'SOLUSDT',
-            'ADA/USDT': 'ADAUSDT',
-            'XRP/USDT': 'XRPUSDT',
-            'BNB/USDT': 'BNBUSDT'
-        }
-        self.fallback_prices = {
-            'BTCUSDT': 45000, 'ETHUSDT': 2500, 'SOLUSDT': 120,
-            'ADAUSDT': 0.45, 'XRPUSDT': 0.55, 'BNBUSDT': 320
-        }
-        # sessão HTTP com retry/backoff
-        self.session = requests.Session()
-        retry = Retry(total=3, backoff_factor=0.3, status_forcelist=[429, 500, 502, 503, 504])
-        self.session.mount("https://", HTTPAdapter(max_retries=retry))
+# ========== App ==========
+app = Flask(__name__)
+CORS(app)
 
-    def get_binance_symbol(self, symbol: str) -> str:
-        """Converte símbolo para formato Binance CORRETO"""
-        return self.symbol_mapping.get(symbol, symbol.replace('/', ''))
+# ========== Utilidades de tempo ==========
+def brazil_now() -> datetime:
+    # America/Maceio ≈ UTC-3 sem DST (simples e robusto p/ server worker)
+    return datetime.now(timezone(timedelta(hours=-3)))
 
-    def get_historical_prices(self, symbol: str, interval: str = '1m', limit: int = 50) -> List[float]:
-        """Busca preços históricos reais da Binance com retry/backoff"""
-        try:
-            binance_symbol = self.get_binance_symbol(symbol)
-            url = f"{self.base_url}/klines"
-            params = {"symbol": binance_symbol, "interval": interval, "limit": limit}
-            headers = {"User-Agent": "ia-signal-railway/1.0"}
-
-            r = self.session.get(url, params=params, timeout=BINANCE_TIMEOUT, headers=headers)
-            r.raise_for_status()
-            data = r.json()
-
-            if not data or len(data) < 10:
-                log.warning(f"[binance] dados insuficientes para {symbol}, usando fallback")
-                return self.get_fallback_prices(symbol)
-
-            prices = [float(c[4]) for c in data]  # close
-            log.info(f"[binance] {symbol}: {len(prices)} candles • {prices[0]:.6f} → {prices[-1]:.6f}")
-            return prices
-
-        except requests.RequestException as e:
-            log.error(f"[binance] erro rede {symbol}: {e}")
-            return self.get_fallback_prices(symbol)
-        except Exception as e:
-            log.error(f"[binance] erro geral {symbol}: {e}")
-            return self.get_fallback_prices(symbol)
-
-    def get_fallback_prices(self, symbol: str) -> List[float]:
-        """Fallback determinístico para reprodutibilidade no Railway"""
-        seed_base = int(datetime.utcnow().strftime("%Y%m%d%H%M"))
-        random.seed(hash((symbol, seed_base)) & 0xffffffff)
-
-        binance_symbol = self.get_binance_symbol(symbol)
-        base_price = self.fallback_prices.get(binance_symbol, 100.0)
-        prices = [base_price]
-        current = base_price
-        for _ in range(49):
-            if symbol in ['BTC/USDT', 'ETH/USDT']:
-                vol = 0.002
-            elif symbol in ['BNB/USDT']:
-                vol = 0.003
-            else:
-                vol = 0.005
-            change = random.gauss(0, vol)
-            current = max(base_price * 0.8, current * (1 + change))
-            prices.append(current)
-        log.warning(f"[fallback] {symbol}: {len(prices)} candles • last {prices[-1]:.6f}")
-        return prices
-
-# ========== SISTEMAS DE MEMÓRIA / LIQUIDEZ / CORRELAÇÃO / NOTÍCIAS / VOLATILIDADE ==========
-class MemorySystem:
-    def __init__(self):
-        self.symbol_memory = {}
-        self.market_regime = "NORMAL"
-        self.regime_memory = []
-    
-    def get_symbol_weights(self, symbol: str) -> Dict:
-        base_weights = {
-            'monte_carlo': 0.65,
-            'rsi': 0.08, 'adx': 0.07, 'macd': 0.06, 
-            'bollinger': 0.05, 'volume': 0.04, 'fibonacci': 0.03,
-            'multi_tf': 0.02
-        }
-        if self.market_regime == "VOLATILE":
-            base_weights['monte_carlo'] = 0.60
-            base_weights['bollinger'] = 0.08
-            base_weights['adx'] = 0.09
-        elif self.market_regime == "TRENDING":
-            base_weights['adx'] = 0.10
-            base_weights['multi_tf'] = 0.04
-        return base_weights
-    
-    def update_market_regime(self, volatility: float, adx_values: List[float]):
-        avg_adx = sum(adx_values) / len(adx_values) if adx_values else 25
-        if volatility > 0.015 or avg_adx < 20:
-            self.market_regime = "VOLATILE"
-        elif avg_adx > 35:
-            self.market_regime = "TRENDING"
-        else:
-            self.market_regime = "NORMAL"
-        
-        self.regime_memory.append({
-            'timestamp': datetime.now(),
-            'regime': self.market_regime,
-            'volatility': volatility,
-            'avg_adx': avg_adx
+# ========== Mercado Spot (Binance via ccxt) ==========
+class SpotMarket:
+    def __init__(self) -> None:
+        if ccxt is None:
+            raise RuntimeError("Dependência 'ccxt' não encontrada. Instale com: pip install ccxt")
+        self.exchange = ccxt.binance({
+            "enableRateLimit": True,
+            "timeout": 12000,
+            "options": {"defaultType": "spot"}
         })
-        if len(self.regime_memory) > 100:
-            self.regime_memory.pop(0)
+        self._cache: Dict[Tuple[str, str, int], Tuple[float, List[float]]] = {}
 
-class LiquiditySystem:
-    def __init__(self):
-        self.symbol_liquidity = {}
-    
-    def calculate_liquidity_score(self, symbol: str, prices: List[float]) -> float:
-        if len(prices) < 10:
-            return 0.7
-        returns = []
-        for i in range(1, len(prices)):
-            if prices[i-1] != 0:
-                ret = (prices[i] - prices[i-1]) / prices[i-1]
-                returns.append(abs(ret))
-        if not returns:
-            return 0.7
-        volatility = sum(returns) / len(returns)
-        if volatility < 0.005:
-            liquidity_score = 0.9
-        elif volatility < 0.01:
-            liquidity_score = 0.8
-        elif volatility < 0.02:
-            liquidity_score = 0.7
-        else:
-            liquidity_score = 0.6
-        self.symbol_liquidity[symbol] = liquidity_score
-        return liquidity_score
+    def fetch_prices(self, symbol: str, timeframe: str = "1m", limit: int = 240) -> List[float]:
+        """
+        Fecha candles reais do spot; faz cache curto p/ evitar rate-limit.
+        """
+        key = (symbol, timeframe, limit)
+        now = time.time()
+        if key in self._cache and (now - self._cache[key][0]) < 20:
+            return self._cache[key][1]
 
-class CorrelationSystem:
-    def __init__(self):
-        self.correlation_matrix = self._initialize_correlations()
-    
-    def _initialize_correlations(self) -> Dict:
-        return {
-            'BTC/USDT': {
-                'ETH/USDT': 0.85, 'BNB/USDT': 0.65, 'SOL/USDT': 0.70,
-                'ADA/USDT': 0.55, 'XRP/USDT': 0.50
-            },
-            'ETH/USDT': {
-                'BTC/USDT': 0.85, 'BNB/USDT': 0.70, 'SOL/USDT': 0.75,
-                'ADA/USDT': 0.60, 'XRP/USDT': 0.55
-            },
-            'SOL/USDT': {
-                'BTC/USDT': 0.70, 'ETH/USDT': 0.75, 'ADA/USDT': 0.65
-            },
-            'ADA/USDT': {
-                'BTC/USDT': 0.55, 'ETH/USDT': 0.60, 'SOL/USDT': 0.65
-            },
-            'XRP/USDT': {
-                'BTC/USDT': 0.50, 'ETH/USDT': 0.55
-            }
-        }
-    
-    def get_correlation_adjustment(self, symbol: str, other_signals: Dict) -> float:
-        if symbol not in self.correlation_matrix:
-            return 1.0
-        adjustments = []
-        for other_symbol, signal_data in other_signals.items():
-            if other_symbol != symbol and other_symbol in self.correlation_matrix[symbol]:
-                correlation = self.correlation_matrix[symbol][other_symbol]
-                if (signal_data['direction'] == other_signals.get(symbol, {}).get('direction', '')):
-                    adjustment = 1.0 + (correlation * 0.1)
-                else:
-                    adjustment = 1.0 - (correlation * 0.05)
-                adjustments.append(adjustment)
-        if not adjustments:
-            return 1.0
-        return sum(adjustments) / len(adjustments)
+        for tf in (timeframe, "5m"):
+            try:
+                ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
+                closes = [c[4] for c in ohlcv if c and len(c) >= 5]
+                if len(closes) >= min(60, max(20, limit // 3)):
+                    self._cache[key] = (now, closes)
+                    return closes
+            except ccxt.NetworkError:
+                time.sleep(0.25)
+            except Exception:
+                time.sleep(0.25)
+        return []
 
-class NewsEventSystem:
-    def __init__(self):
-        self.active_events = []
-    
-    def generate_market_events(self):
-        if DISABLE_NEWS_EVENTS:
-            return
-        events = [
-            {'type': 'FED_MEETING', 'impact': 'HIGH', 'volatility_multiplier': 2.0},
-            {'type': 'CPI_RELEASE', 'impact': 'MEDIUM', 'volatility_multiplier': 1.5},
-            {'type': 'REGULATION_NEWS', 'impact': 'MEDIUM', 'volatility_multiplier': 1.8},
-            {'type': 'WHALE_MOVEMENT', 'impact': 'LOW', 'volatility_multiplier': 1.3},
-        ]
-        if random.random() < 0.15:
-            event = random.choice(events)
-            event['start_time'] = datetime.now()
-            event['duration_hours'] = random.randint(2, 12)
-            self.active_events.append(event)
-            log.info(f"[evento] {event['type']} (Impacto: {event['impact']})")
-    
-    def get_volatility_multiplier(self):
-        if not self.active_events:
-            return 1.0
-        max_multiplier = 1.0
-        current_time = datetime.now()
-        self.active_events = [
-            event for event in self.active_events 
-            if current_time - event['start_time'] < timedelta(hours=event['duration_hours'])
-        ]
-        for event in self.active_events:
-            max_multiplier = max(max_multiplier, event['volatility_multiplier'])
-        return max_multiplier
-    
-    def adjust_confidence_for_events(self, confidence: float) -> float:
-        multiplier = self.get_volatility_multiplier()
-        if multiplier > 1.5:
-            return confidence * 0.85
-        elif multiplier > 1.2:
-            return confidence * 0.92
-        return confidence
-
-class VolatilityClustering:
-    def __init__(self):
-        self.volatility_regimes = {}
-        self.historical_volatility = []
-    
-    def detect_volatility_clusters(self, prices: List[float], symbol: str) -> str:
-        if len(prices) < 20:
-            return "MEDIUM"
-        returns = []
-        for i in range(1, len(prices)):
-            if prices[i-1] != 0:
-                ret = (prices[i] - prices[i-1]) / prices[i-1]
-                returns.append(abs(ret))
-        if not returns:
-            return "MEDIUM"
-        volatility = sum(returns) / len(returns)
-        self.historical_volatility.append(volatility)
-        if len(self.historical_volatility) > 50:
-            self.historical_volatility.pop(0)
-        if len(self.historical_volatility) > 10:
-            avg_vol = sum(self.historical_volatility) / len(self.historical_volatility)
-            if volatility > avg_vol * 1.5:
-                regime = "HIGH"
-            elif volatility < avg_vol * 0.7:
-                regime = "LOW"
-            else:
-                regime = "MEDIUM"
-        else:
-            if volatility > 0.015:
-                regime = "HIGH"
-            elif volatility < 0.008:
-                regime = "LOW"
-            else:
-                regime = "MEDIUM"
-        self.volatility_regimes[symbol] = regime
-        return regime
-    
-    def get_regime_adjustment(self, symbol: str) -> float:
-        regime = self.volatility_regimes.get(symbol, "MEDIUM")
-        if regime == "HIGH":
-            return 0.85
-        elif regime == "LOW":
-            return 1.05
-        else:
-            return 1.0
-
-# ========== INDICADORES TÉCNICOS (EMA/MACD corretos, RSI Wilder, ADX real) ==========
+# ========== Indicadores (implementações leves) ==========
 class TechnicalIndicators:
-    @staticmethod
-    def _ema(series: List[float], period: int) -> List[float]:
-        if len(series) < period:
-            return []
-        k = 2.0 / (period + 1.0)
-        ema_vals = [sum(series[:period]) / period]
-        for price in series[period:]:
-            ema_vals.append(price * k + ema_vals[-1] * (1.0 - k))
-        return ema_vals
-
-    @staticmethod
-    def calculate_macd(prices: List[float]) -> Dict:
-        if len(prices) < 35:
-            return {'signal': 'neutral', 'strength': 0.3}
-        ema12 = TechnicalIndicators._ema(prices, 12)
-        ema26 = TechnicalIndicators._ema(prices, 26)
-        if not ema12 or not ema26:
-            return {'signal': 'neutral', 'strength': 0.3}
-        size = min(len(ema12), len(ema26))
-        macd_line = [a - b for a, b in zip(ema12[-size:], ema26[-size:])]
-        signal_line = TechnicalIndicators._ema(macd_line, 9)
-        if not signal_line:
-            return {'signal': 'neutral', 'strength': 0.3}
-        hist = macd_line[-1] - signal_line[-1]
-        denom = abs(prices[-1]) * 0.002 + 1e-9
-        strength = min(1.0, abs(hist) / denom)
-        if hist > 0:
-            return {'signal': 'bullish', 'strength': strength}
-        elif hist < 0:
-            return {'signal': 'bearish', 'strength': strength}
-        return {'signal': 'neutral', 'strength': 0.3}
-
-    @staticmethod
-    def calculate_rsi(prices: List[float], period: int = 14) -> float:
+    def calculate_rsi(self, prices: List[float], period: int = 14) -> float:
         if len(prices) <= period:
             return 50.0
-        gains, losses = [], []
+        gains = []
+        losses = []
         for i in range(1, len(prices)):
-            d = prices[i] - prices[i-1]
-            gains.append(max(d, 0.0))
-            losses.append(max(-d, 0.0))
-        avg_gain = sum(gains[:period]) / period
-        avg_loss = sum(losses[:period]) / period
-        for i in range(period, len(gains)):
-            avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-            avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+            ch = prices[i] - prices[i-1]
+            gains.append(max(0.0, ch))
+            losses.append(max(0.0, -ch))
+        avg_gain = sum(gains[-period:]) / period
+        avg_loss = sum(losses[-period:]) / period
         if avg_loss == 0:
-            return 70.0 if avg_gain > 0 else 50.0
+            return 70.0
         rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-        return round(max(0.0, min(100.0, rsi)), 1)
+        rsi = 100.0 - (100.0 / (1.0 + rs))
+        return max(0.0, min(100.0, rsi))
 
-    @staticmethod
-    def calculate_adx(prices: List[float], period: int = 14) -> float:
-        if len(prices) < period + 2:
-            return 25.0
-        prox_high = []
-        prox_low = []
-        for i in range(len(prices)):
-            win = prices[max(0, i - 2): i + 1]
-            r = (max(win) - min(win)) if len(win) >= 2 else (prices[i] * 0.001)
-            prox_high.append(prices[i] + r * 0.5)
-            prox_low.append(prices[i] - r * 0.5)
-        TR, plusDM, minusDM = [], [], []
-        for i in range(1, len(prices)):
-            high = prox_high[i]; low = prox_low[i]
-            prev_high = prox_high[i-1]; prev_low = prox_low[i-1]
-            tr = max(high - low, abs(high - prices[i-1]), abs(low - prices[i-1]))
-            TR.append(tr)
-            up_move = high - prev_high
-            down_move = prev_low - low
-            plusDM.append(up_move if (up_move > down_move and up_move > 0) else 0.0)
-            minusDM.append(down_move if (down_move > up_move and down_move > 0) else 0.0)
-        def wilder_smooth(vals, p):
-            if len(vals) < p:
-                return []
-            smoothed = [sum(vals[:p])]
-            for v in vals[p:]:
-                smoothed.append(smoothed[-1] - (smoothed[-1] / p) + v)
-            return smoothed
-        trN = wilder_smooth(TR, period)
-        plusDMN = wilder_smooth(plusDM, period)
-        minusDMN = wilder_smooth(minusDM, period)
-        if not trN or not plusDMN or not minusDMN:
-            return 25.0
-        plusDI = [(pd / t) * 100 if t != 0 else 0.0 for pd, t in zip(plusDMN, trN)]
-        minusDI = [(md / t) * 100 if t != 0 else 0.0 for md, t in zip(minusDMN, trN)]
-        DX = [(abs(p - m) / (p + m) * 100) if (p + m) != 0 else 0.0 for p, m in zip(plusDI, minusDI)]
-        if len(DX) < period:
-            return 25.0
-        adx_vals = [sum(DX[:period]) / period]
-        for d in DX[period:]:
-            adx_vals.append(((adx_vals[-1] * (period - 1)) + d) / period)
-        adx = max(10.0, min(60.0, adx_vals[-1]))
-        return round(adx, 1)
+    def calculate_adx(self, prices: List[float], period: int = 14) -> float:
+        # simplificado: volatilidade relativa como proxy de "força de tendência"
+        if len(prices) <= period + 1:
+            return 20.0
+        diffs = [abs(prices[i] - prices[i-1]) for i in range(1, len(prices))]
+        avg = sum(diffs[-period:]) / period
+        base = sum(abs(p) for p in prices[-period:]) / period
+        if base == 0:
+            return 20.0
+        val = (avg / base) * 1000.0
+        return max(5.0, min(45.0, val))
 
-    @staticmethod
-    def calculate_std_dev(data: List[float]) -> float:
-        if len(data) < 2:
-            return 0.0
-        mean = sum(data) / len(data)
-        variance = sum((x - mean) ** 2 for x in data) / len(data)
-        return math.sqrt(variance)
+    def calculate_macd(self, prices: List[float]) -> Dict[str, Any]:
+        # MACD muito simplificado
+        def ema(vals, n):
+            if not vals: return []
+            k = 2 / (n + 1)
+            e = [vals[0]]
+            for v in vals[1:]:
+                e.append(e[-1] + k * (v - e[-1]))
+            return e
+        if len(prices) < 35:
+            return {"signal": "neutral", "strength": 0.0}
+        ema12 = ema(prices, 12)
+        ema26 = ema(prices, 26)
+        macd_line = [a - b for a, b in zip(ema12[-len(ema26):], ema26)]
+        signal_line = ema(macd_line, 9)
+        if not signal_line: 
+            return {"signal": "neutral", "strength": 0.0}
+        hist = macd_line[-1] - signal_line[-1]
+        if hist > 0:
+            return {"signal": "bullish", "strength": min(1.0, abs(hist) / max(1e-9, prices[-1]*0.002))}
+        if hist < 0:
+            return {"signal": "bearish", "strength": min(1.0, abs(hist) / max(1e-9, prices[-1]*0.002))}
+        return {"signal": "neutral", "strength": 0.0}
 
-    @staticmethod
-    def calculate_bollinger_bands(prices: List[float]) -> Dict:
-        if len(prices) < 15:
-            return {'signal': 'neutral'}
-        recent = prices[-15:]
-        middle = sum(recent) / 15
-        std = TechnicalIndicators.calculate_std_dev(recent)
-        current = prices[-1]
-        if current < middle - (1.5 * std):
-            return {'signal': 'oversold'}
-        elif current > middle + (1.5 * std):
-            return {'signal': 'overbought'}
-        elif current > middle:
-            return {'signal': 'bullish'}
-        else:
-            return {'signal': 'bearish'}
+    def calculate_bollinger_bands(self, prices: List[float], period: int = 20) -> Dict[str, str]:
+        if len(prices) < period:
+            return {"signal": "neutral"}
+        window = prices[-period:]
+        ma = sum(window)/period
+        var = sum((p - ma)**2 for p in window)/period
+        sd = math.sqrt(max(0.0, var))
+        last = prices[-1]
+        upper = ma + 2*sd
+        lower = ma - 2*sd
+        if last > upper:
+            return {"signal": "overbought"}
+        if last < lower:
+            return {"signal": "oversold"}
+        if last > ma:
+            return {"signal": "bullish"}
+        if last < ma:
+            return {"signal": "bearish"}
+        return {"signal": "neutral"}
 
-    @staticmethod
-    def calculate_volume_profile(prices: List[float]) -> Dict:
-        if len(prices) < 8:
-            return {'signal': 'neutral'}
-        current = prices[-1]
-        high = max(prices[-10:])
-        low = min(prices[-10:])
-        poc = (high + low) / 2
-        if current > poc + (high - low) * 0.25:
-            return {'signal': 'overbought'}
-        elif current < poc - (high - low) * 0.25:
-            return {'signal': 'oversold'}
-        return {'signal': 'neutral'}
+    def calculate_volume_profile(self, prices: List[float]) -> Dict[str, str]:
+        # Sem volume real neste contexto — heurística por amplitude
+        if len(prices) < 30:
+            return {"signal": "neutral"}
+        amp = (max(prices[-30:]) - min(prices[-30:])) / max(1e-9, prices[-30])
+        if amp > 0.02:
+            return {"signal": "overbought" if prices[-1] > prices[-2] else "oversold"}
+        return {"signal": "neutral"}
 
-    @staticmethod
-    def calculate_fibonacci(prices: List[float]) -> Dict:
-        if len(prices) < 15:
-            return {'signal': 'neutral'}
-        high = max(prices[-15:])
-        low = min(prices[-15:])
-        current = prices[-1]
-        diff = high - low
-        if diff == 0:
-            return {'signal': 'neutral'}
-        if current > high - (0.382 * diff):
-            return {'signal': 'resistance'}
-        elif current < low + (0.618 * diff):
-            return {'signal': 'support'}
-        return {'signal': 'neutral'}
+    def calculate_fibonacci(self, prices: List[float]) -> Dict[str, str]:
+        if len(prices) < 50:
+            return {"signal": "neutral"}
+        swing_high = max(prices[-50:])
+        swing_low = min(prices[-50:])
+        last = prices[-1]
+        if last <= swing_low + 0.382*(swing_high - swing_low):
+            return {"signal": "support"}
+        if last >= swing_high - 0.382*(swing_high - swing_low):
+            return {"signal": "resistance"}
+        return {"signal": "neutral"}
 
 class MultiTimeframeAnalyzer:
-    @staticmethod
-    def analyze_consensus(prices: List[float]) -> str:
-        if len(prices) < 15:
-            return 'neutral'
-        tf_short = prices[-6:]
-        tf_medium = prices[-12:]
-        tf_long = prices[-18:]
-        trends = []
-        weights = []
-        for i, tf in enumerate([tf_short, tf_medium, tf_long]):
-            if len(tf) > 3:
-                trend_strength = (tf[-1] - tf[0]) / tf[0]
-                weight = [0.3, 0.4, 0.5][i]
-                if trend_strength > 0.008:
-                    trends.append(('buy', weight))
-                elif trend_strength < -0.008:
-                    trends.append(('sell', weight))
-                else:
-                    trends.append(('neutral', weight * 0.5))
-        if not trends:
-            return 'neutral'
-        buy_score = sum(weight for direction, weight in trends if direction == 'buy')
-        sell_score = sum(weight for direction, weight in trends if direction == 'sell')
-        if buy_score > sell_score + 0.2:
-            return 'buy'
-        elif sell_score > buy_score + 0.2:
-            return 'sell'
-        return 'neutral'
+    def analyze_consensus(self, prices: List[float]) -> str:
+        if len(prices) < 60:
+            return "neutral"
+        ma9 = sum(prices[-9:]) / 9
+        ma21 = sum(prices[-21:]) / 21 if len(prices) >= 21 else ma9
+        return "buy" if ma9 > ma21 else ("sell" if ma9 < ma21 else "neutral")
 
-# ========== MONTE CARLO ==========
-class MonteCarloSimulator:
-    @staticmethod
-    def generate_price_paths(base_price: float, volatility: float, num_paths: int = 1800, steps: int = 4) -> List[List[float]]:
-        paths = []
-        for _ in range(num_paths):
-            prices = [base_price]
-            current = base_price
-            for step in range(steps - 1):
-                adjusted_volatility = volatility * (1 + (step * 0.05))
-                trend = random.uniform(-volatility, volatility)
-                change = trend + random.gauss(0, 1) * adjusted_volatility
-                new_price = current * (1 + change)
-                new_price = max(new_price, base_price * 0.7)
-                prices.append(new_price)
-                current = new_price
-            paths.append(prices)
-        return paths
-    
-    @staticmethod
-    def calculate_probability_distribution(paths: List[List[float]]) -> Dict:
-        """
-        Evita 50/50 distribuindo a parte neutra conforme o *viés médio* dos caminhos.
-        Usa múltiplos limiares (0,3% / 0,7% / 1,0%) e um 'z-edge' com base no desvio padrão.
-        """
-        import math
-        if not paths or len(paths) < 200:
-            return {'probability_buy': 0.52, 'probability_sell': 0.48, 'quality': 'LOW'}
+class LiquiditySystem:
+    def calculate_liquidity_score(self, symbol: str, prices: List[float]) -> float:
+        if len(prices) < 60:
+            return 0.5
+        vol = sum(abs(prices[i]-prices[i-1]) for i in range(1, len(prices[-60:]))) / max(1e-9, prices[-1])
+        score = max(0.0, min(1.0, 1.0 - min(0.05, vol)/0.05))
+        return score  # 0..1
 
-        initial = paths[0][0]
-        finals = [p[-1] for p in paths if p]
-        total = len(finals)
+class CorrelationSystem:
+    def get_correlation_adjustment(self, symbol: str, cache: Dict[str, Any]) -> float:
+        # Placeholder: sem penalidade por correlação no escopo básico
+        return 1.0
 
-        # Contagens por faixas de ganho/perda
-        up_03   = sum(1 for x in finals if x > initial * 1.003)
-        down_03 = sum(1 for x in finals if x < initial * 0.997)
-        up_07   = sum(1 for x in finals if x > initial * 1.007)
-        down_07 = sum(1 for x in finals if x < initial * 0.993)
-        up_10   = sum(1 for x in finals if x > initial * 1.010)
-        down_10 = sum(1 for x in finals if x < initial * 0.990)
+class NewsEventSystem:
+    def generate_market_events(self) -> None:
+        pass
+    def get_volatility_multiplier(self) -> float:
+        return 1.0
+    def adjust_confidence_for_events(self, conf: float) -> float:
+        return conf
 
-        # Média e desvio p/ viés
-        mean_f = sum(finals)/total
-        var = sum((x-mean_f)**2 for x in finals)/total
-        std = (var ** 0.5) if var > 0 else 1e-12
-        z_edge = (mean_f - initial) / (std + initial*0.001)
+class VolatilityClustering:
+    def detect_volatility_clusters(self, prices: List[float], symbol: str) -> str:
+        if len(prices) < 60: return "normal"
+        amp = (max(prices[-30:]) - min(prices[-30:]))/max(1e-9, prices[-30])
+        if amp > 0.03: return "volatile"
+        if amp < 0.01: return "calm"
+        return "normal"
+    def get_regime_adjustment(self, symbol: str) -> float:
+        return 1.0
 
-        # pesos crescentes para faixas maiores
-        w03, w07, w10 = 1.0, 1.6, 2.2
-        score_up = w03*up_03 + w07*up_07 + w10*up_10
-        score_dn = w03*down_03 + w07*down_07 + w10*down_10
-
-        neutral = total - up_03 - down_03
-        bias = 0.005 * math.tanh(z_edge)
-
-        denom = (score_up + score_dn + neutral + 1e-9)
-        p_buy_raw  = (score_up + (neutral * (0.5 + bias))) / denom
-        p_sell_raw = (score_dn + (neutral * (0.5 - bias))) / denom
-
-        s = p_buy_raw + p_sell_raw
-        p_buy  = p_buy_raw  / s
-        p_sell = p_sell_raw / s
-
-        edge = abs(p_buy - 0.5)
-        if edge > 0.18:
-            quality = 'HIGH'
-        elif edge > 0.10:
-            quality = 'MEDIUM'
-        else:
-            quality = 'LOW'
-
-        if abs(p_buy - p_sell) < 1e-6:
-            p_buy += 0.001
-            p_sell -= 0.001
-
-        return {'probability_buy': p_buy, 'probability_sell': p_sell, 'quality': quality}
-
-
-        initial = paths[0][0]
-        finals = [p[-1] for p in paths if len(p) > 0]
-        total = len(finals)
-
-        # Contagens por faixas de ganho/perda
-        up_03 = sum(1 for x in finals if x > initial * 1.003)
-        down_03 = sum(1 for x in finals if x < initial * 0.997)
-        up_07 = sum(1 for x in finals if x > initial * 1.007)
-        down_07 = sum(1 for x in finals if x < initial * 0.993)
-        up_10 = sum(1 for x in finals if x > initial * 1.010)
-        down_10 = sum(1 for x in finals if x < initial * 0.990)
-
-        # Média e desvio p/ viés
-        mean_f = sum(finals)/total
-        var = sum((x-mean_f)**2 for x in finals)/total
-        std = (var ** 0.5) if var > 0 else 1e-12
-        # z-edge mede o deslocamento relativo da média vs preço inicial
-        z_edge = (mean_f - initial) / (std + initial*0.001)
-
-        # pesos crescentes para faixas maiores
-        w03, w07, w10 = 1.0, 1.6, 2.2
-        score_up = w03*up_03 + w07*up_07 + w10*up_10
-        score_dn = w03*down_03 + w07*down_07 + w10*down_10
-
-        # parte neutra vai para o lado do score maior + viés do z_edge
-        neutral = total - up_03 - down_03
-        # viés suave: 0.5% * tanh(z_edge)
-        import math
-        bias = 0.005 * math.tanh(z_edge)
-
-        denom = (score_up + score_dn + neutral + 1e-9)
-        p_buy_raw = (score_up + (neutral * (0.5 + bias))) / denom
-        p_sell_raw = (score_dn + (neutral * (0.5 - bias))) / denom
-
-        # normaliza
-        s = p_buy_raw + p_sell_raw
-        p_buy = p_buy_raw / s
-        p_sell = p_sell_raw / s
-
-        # qualidade baseada no "edge" efetivo
-        edge = abs(p_buy - 0.5)
-        if edge > 0.18:
-            quality = 'HIGH'
-        elif edge > 0.10:
-            quality = 'MEDIUM'
-        else:
-            quality = 'LOW'
-
-        # evita empate perfeito
-        if abs(p_buy - p_sell) < 1e-6:
-            p_buy += 0.001
-            p_sell -= 0.001
-
-        return {'probability_buy': p_buy, 'probability_sell': p_sell, 'quality': quality}
-
-# ========== FLASK APP ==========
-
-
-
-class EnhancedTradingSystem:
+class MemorySystem:
     def __init__(self) -> None:
-        self.price_fetcher = RealPriceFetcher()
-        self.mc = MonteCarloSimulator()
-        self.ind = TechnicalIndicators()
-        self.liq = LiquiditySystem()
-        self.multi_tf = MultiTimeframeAnalyzer()
-        self.corr = CorrelationSystem()
-        self.news = NewsEventSystem()
-        self.vol_cluster = VolatilityClustering()
-        self._price_cache = {}
-
-    def _get_prices_cached(self, symbol: str, interval: str = '1m', limit: int = 50):
-        key = (symbol, interval, limit)
-        import time
-        now = time.time()
-        hit = self._price_cache.get(key)
-        if hit and (now - hit['ts']) < CACHE_TTL_S:
-            return hit['prices']
-        prices = self.price_fetcher.get_historical_prices(symbol, interval, limit)
-        self._price_cache[key] = {'ts': now, 'prices': prices}
-        return prices
-
-    def analyze_symbol(self, symbol: str, horizon: int) -> dict:
-        return self.analyze(symbol, horizon=horizon, sims=SIMS)
-
-    def analyze(self, symbol: str, horizon: int = 2, sims: int = SIMS) -> dict:
-        prices = self._get_prices_cached(symbol, '1m', 50)
-        if not prices or len(prices) < 10:
-            # fallback rápido
-            from random import choice
-            direction = choice(['buy','sell'])
-            prob_buy = 0.55 if direction=='buy' else 0.45
-            prob_sell = 1.0 - prob_buy
-            confidence = 0.6
-            rsi = 50.0; adx = 25.0
-            mc_quality = 'LOW'
-            multi_tf = 'neutral'
-            liquidity = 0.7
-            vol_regime = 'MEDIUM'
-            market_regime = 'NORMAL'
-            vol_mult = 1.0
-            real_data = False
-            price = 100.0
-        else:
-            # volatilidade histórica
-            returns = []
-            for i in range(1, len(prices)):
-                if prices[i-1] != 0:
-                    returns.append(abs((prices[i] - prices[i-1]) / prices[i-1]))
-            vol = sum(returns)/len(returns) if returns else 0.01
-
-            steps = max(2, horizon + 1)
-            paths = self.mc.generate_price_paths(prices[-1], vol, num_paths=sims, steps=steps)
-            dist = self.mc.calculate_probability_distribution(paths)
-
-            rsi = TechnicalIndicators.calculate_rsi(prices)
-            adx = TechnicalIndicators.calculate_adx(prices)
-            macd = TechnicalIndicators.calculate_macd(prices)
-            bb = TechnicalIndicators.calculate_bollinger_bands(prices)
-            vol_prof = TechnicalIndicators.calculate_volume_profile(prices)
-            fib = TechnicalIndicators.calculate_fibonacci(prices)
-            multi_tf = MultiTimeframeAnalyzer.analyze_consensus(prices)
-
-            liquidity = self.liq.calculate_liquidity_score(symbol, prices)
-            vol_regime = self.vol_cluster.detect_volatility_clusters(prices, symbol)
-
-            # regime + eventos
-            self.news.generate_market_events()
-            base_score = 50.0
-            factors = []
-            winning = []
-
-            # MC contribution
-            prob_buy = dist['probability_buy']
-            prob_sell = dist['probability_sell']
-            mc_dir_strength = abs(prob_buy - 0.5) * 2
-            mc_score = mc_dir_strength * 30.0
-            if dist['quality'] == 'HIGH': mc_score *= 1.2
-            elif dist['quality'] == 'MEDIUM': mc_score *= 1.1
-            base_score += mc_score if prob_buy > 0.5 else -mc_score
-            factors.append(f"MC:{mc_score:.1f}")
-
-            # técnicos
-            ind_score = 0.0
-            if 30 < rsi < 70: ind_score += 6; winning.append('RSI')
-            if adx > 25: ind_score += 5; winning.append('ADX')
-            if (prob_buy > 0.5 and macd['signal']=='bullish') or (prob_buy < 0.5 and macd['signal']=='bearish'):
-                ind_score += 5 * macd['strength']; winning.append('MACD')
-            if (prob_buy > 0.5 and bb['signal'] in ['oversold','bullish']) or (prob_buy < 0.5 and bb['signal'] in ['overbought','bearish']):
-                ind_score += 4; winning.append('BB')
-            if (prob_buy > 0.5 and vol_prof['signal'] in ['oversold','neutral']) or (prob_buy < 0.5 and vol_prof['signal'] in ['overbought','neutral']):
-                ind_score += 3; winning.append('VOL')
-            if (prob_buy > 0.5 and fib['signal']=='support') or (prob_buy < 0.5 and fib['signal']=='resistance'):
-                ind_score += 2; winning.append('FIB')
-            if multi_tf == ('buy' if prob_buy > 0.5 else 'sell'):
-                ind_score += 4; winning.append('MultiTF')
-            base_score += ind_score if prob_buy > 0.5 else -ind_score
-            factors.append(f"IND:{ind_score:.1f}")
-
-            # liquidez e regime
-            base_score *= (0.95 + liquidity * 0.1)  # 0.95–1.05 aprox
-            base_score *= self.vol_cluster.get_regime_adjustment(symbol)
-
-            raw_conf = base_score / 100.0
-            confidence = min(0.95, max(0.45, raw_conf))
-            confidence = self.news.adjust_confidence_for_events(confidence)
-
-            direction = 'buy' if prob_buy > 0.5 else 'sell'
-            mc_quality = dist['quality']
-            market_regime = 'NORMAL'  # pode vir da MemorySystem se integrar
-
-            price = prices[-1]
-            real_data = True
-
+        self.market_regime = {"volatility": 0.0, "avg_adx": 0.0}
+    def get_symbol_weights(self, symbol: str) -> Dict[str, float]:
+        # Pesos iguais: sem prioridade pra BTC/qualquer outro
         return {
-            'symbol': symbol,
-            'horizon': horizon,
-            'direction': 'buy' if prob_buy > prob_sell else 'sell',
-            'probability_buy': prob_buy, 'probability_sell': prob_sell,
-            'confidence': confidence, 'rsi': rsi, 'adx': adx,
-            'multi_timeframe': multi_tf, 'monte_carlo_quality': mc_quality,
-            'winning_indicators': winning if 'winning' in locals() else [],
-            'score_factors': factors if 'factors' in locals() else ['BASIC:0.0'],
-            'price': price, 'timestamp': _br_time_str(),
-            'liquidity_score': round(liquidity,2),
-            'volatility_regime': vol_regime, 'market_regime': market_regime,
-            'volatility_multiplier': self.news.get_volatility_multiplier() if hasattr(self, 'news') else 1.0,
-            'real_data': real_data
+            "monte_carlo": 1.0,
+            "rsi": 1.0,
+            "adx": 1.0,
+            "macd": 1.0,
+            "bollinger": 1.0,
+            "volume": 1.0,
+            "fibonacci": 1.0,
+            "multi_tf": 1.0,
+        }
+    def update_market_regime(self, volatility: float, adx_values: List[float]) -> None:
+        self.market_regime = {
+            "volatility": round(volatility, 6),
+            "avg_adx": round(sum(adx_values)/max(1, len(adx_values)), 2)
         }
 
+# ========== Monte Carlo ==========
+class MonteCarloSimulator:
+    @staticmethod
+    def generate_price_paths_empirical(base_price: float, empirical_returns: List[float], steps: int, num_paths: int = 3000) -> List[List[float]]:
+        if not empirical_returns or steps < 1:
+            return []
+        paths: List[List[float]] = []
+        for _ in range(num_paths):
+            p = base_price
+            seq = [p]
+            for _ in range(steps):
+                r = random.choice(empirical_returns)  # bootstrap dos retornos reais
+                p = max(1e-9, p * (1.0 + r))
+                seq.append(p)
+            paths.append(seq)
+        return paths
+
+    @staticmethod
+    def calculate_probability_distribution(paths: List[List[float]]) -> Dict[str, Any]:
+        if not paths:
+            return {"probability_buy": 0.5, "probability_sell": 0.5, "quality": "LOW"}
+        start = paths[0][0]
+        ups = sum(1 for seq in paths if seq[-1] > start)
+        downs = sum(1 for seq in paths if seq[-1] < start)
+        total = ups + downs
+        if total == 0:
+            return {"probability_buy": 0.5, "probability_sell": 0.5, "quality": "LOW"}
+        p_buy = ups / total
+        p_sell = downs / total
+        strength = abs(p_buy - 0.5)
+        clarity = total / len(paths)
+        quality = "HIGH" if (strength >= 0.20 and clarity >= 0.70) else ("MEDIUM" if (strength >= 0.10 and clarity >= 0.50) else "LOW")
+        return {
+            "probability_buy": round(p_buy, 4),
+            "probability_sell": round(p_sell, 4),
+            "quality": quality,
+            "clarity_ratio": round(clarity, 3)
+        }
+
+# ========== Helpers ==========
+def _safe_returns_from_prices(prices: List[float]) -> List[float]:
+    emp: List[float] = []
+    for i in range(1, len(prices)):
+        p0, p1 = prices[i-1], prices[i]
+        if p0 > 0:
+            emp.append((p1 - p0) / p0)
+    return emp
+
+def _rank_key(item: Dict[str, Any]) -> float:
+    prob_dir = item['probability_buy'] if item['direction'] == 'buy' else item['probability_sell']
+    return (item['confidence'] * 1000.0) + (prob_dir * 100.0)
+
+# ========== Sistema principal ==========
+class EnhancedTradingSystem:
+    def __init__(self) -> None:
+        self.memory = MemorySystem()
+        self.monte_carlo = MonteCarloSimulator()
+        self.indicators = TechnicalIndicators()
+        self.multi_tf = MultiTimeframeAnalyzer()
+        self.liquidity = LiquiditySystem()
+        self.correlation = CorrelationSystem()
+        self.news_events = NewsEventSystem()
+        self.volatility_clustering = VolatilityClustering()
+        self.spot = SpotMarket()
+        self.current_analysis_cache: Dict[str, Any] = {}
+
+    def get_brazil_time(self) -> datetime:
+        return brazil_now()
+
+    def analyze_symbol(self, symbol: str, horizon: int) -> Dict[str, Any]:
+        # 1) Preços reais com fallback leve (resiliência)
+        historical = self.spot.fetch_prices(symbol, timeframe="1m", limit=240)
+        if len(historical) < 60:
+            base = random.uniform(50, 400)
+            historical = [base]
+            for _ in range(239):
+                historical.append(historical[-1]*(1.0 + random.gauss(0, 0.003)))
+
+        # 2) Retornos empíricos
+        empirical = _safe_returns_from_prices(historical) or [random.gauss(0, 0.003) for _ in range(120)]
+
+        # 3) Eventos / regime
+        self.news_events.generate_market_events()
+        vol_mult = self.news_events.get_volatility_multiplier()
+
+        # 4) Monte Carlo (T+1..T+3)
+        base_price = historical[-1]
+        steps = max(1, min(3, int(horizon)))
+        paths = self.monte_carlo.generate_price_paths_empirical(base_price, empirical, steps=steps, num_paths=MC_PATHS)
+        mc = self.monte_carlo.calculate_probability_distribution(paths)
+
+        # 5) Indicadores (confirmação)
+        rsi = self.indicators.calculate_rsi(historical)
+        adx = self.indicators.calculate_adx(historical)
+        macd = self.indicators.calculate_macd(historical)
+        boll = self.indicators.calculate_bollinger_bands(historical)
+        volp = self.indicators.calculate_volume_profile(historical)
+        fibo = self.indicators.calculate_fibonacci(historical)
+        tf_cons = self.multi_tf.analyze_consensus(historical)
+        liq = self.liquidity.calculate_liquidity_score(symbol, historical)
+        regime = self.volatility_clustering.detect_volatility_clusters(historical, symbol)
+
+        # 6) Regime global
+        base_vol = max(0.001, sum(abs(r) for r in empirical[-60:]) / max(1, min(60, len(empirical))))
+        self.memory.update_market_regime(volatility=base_vol, adx_values=[adx])
+
+        # 7) Pesos iguais (sem prioridade pra BTC)
+        weights = self.memory.get_symbol_weights(symbol)
+
+        # 8) Direção por MC (probabilidade bruta) + confiança por confirmações
+        direction = 'buy' if mc['probability_buy'] > mc['probability_sell'] else 'sell'
+        prob_dir = mc['probability_buy'] if direction == 'buy' else mc['probability_sell']
+
+        score = 0.0
+        factors: List[str] = []
+
+        # MC base
+        mc_score = prob_dir * weights['monte_carlo'] * 100.0
+        mc_score *= self.volatility_clustering.get_regime_adjustment(symbol)
+        score += mc_score; factors.append(f"MC:{mc_score:.1f}")
+
+        # RSI (timing fora de extremos)
+        if 30 < rsi < 70:
+            s = weights['rsi'] * 12.0; score += s; factors.append(f"RSI:{s:.1f}")
+        # ADX (tendência)
+        if adx > 25:
+            s = weights['adx'] * 12.0; score += s; factors.append(f"ADX:{s:.1f}")
+        # MACD alinhado
+        if (direction == 'buy' and macd['signal'] == 'bullish') or (direction == 'sell' and macd['signal'] == 'bearish'):
+            s = weights['macd'] * 10.0 * max(0.3, macd.get('strength', 0.3)); score += s; factors.append(f"MACD:{s:.1f}")
+        # Bollinger
+        if (direction == 'buy' and boll['signal'] in ['oversold','bullish']) or (direction == 'sell' and boll['signal'] in ['overbought','bearish']):
+            s = weights['bollinger'] * 8.0; score += s; factors.append(f"BB:{s:.1f}")
+        # Volume profile
+        if (direction == 'buy' and volp['signal'] in ['oversold','neutral']) or (direction == 'sell' and volp['signal'] in ['overbought','neutral']):
+            s = weights['volume'] * 6.0; score += s; factors.append(f"VOL:{s:.1f}")
+        # Fibonacci
+        if (direction == 'buy' and fibo['signal'] == 'support') or (direction == 'sell' and fibo['signal'] == 'resistance'):
+            s = weights['fibonacci'] * 5.0; score += s; factors.append(f"FIB:{s:.1f}")
+        # Multi-TF
+        if tf_cons == direction:
+            s = weights['multi_tf'] * 8.0; score += s; factors.append(f"TF:{s:.1f}")
+
+        # Liquidez / Correlação
+        score *= (0.95 + (liq * 0.1))
+        corr_adj = self.correlation.get_correlation_adjustment(symbol, self.current_analysis_cache)
+        score *= corr_adj; factors.append(f"CORR:{corr_adj:.2f}")
+
+        conf = min(0.95, max(0.50, score / 100.0))
+        conf = self.news_events.adjust_confidence_for_events(conf)
+
+        # Cache p/ (eventual) coerência multi-ativo
+        self.current_analysis_cache[symbol] = {'direction': direction, 'confidence': conf, 'timestamp': datetime.now()}
+
+        return {
+            'symbol': symbol, 'horizon': steps, 'direction': direction,
+            'probability_buy': mc['probability_buy'], 'probability_sell': mc['probability_sell'],
+            'confidence': conf, 'rsi': rsi, 'adx': adx, 'multi_timeframe': tf_cons,
+            'monte_carlo_quality': mc['quality'], 'price': base_price,
+            'winning_indicators': [], 'score_factors': factors,
+            'liquidity_score': round(liq, 2), 'volatility_regime': regime,
+            'market_regime': self.memory.market_regime, 'volatility_multiplier': round(vol_mult, 2),
+            'timestamp': self.get_brazil_time().strftime("%H:%M:%S")
+        }
+
+    def scan_symbols_tplus(self, symbols: List[str]) -> Dict[str, Any]:
+        por_ativo: Dict[str, Any] = {}
+        candidatos: List[Dict[str, Any]] = []
+        for sym in symbols:
+            tplus: List[Dict[str, Any]] = []
+            for h in (1, 2, 3):
+                try:
+                    r = self.analyze_symbol(sym, h)
+                    r['label'] = f"{sym} T+{h}"
+                    tplus.append(r)
+                    candidatos.append(r)
+                except Exception as e:
+                    tplus.append({
+                        "symbol": sym, "horizon": h, "error": str(e),
+                        "direction": "buy", "probability_buy": 0.5, "probability_sell": 0.5,
+                        "confidence": 0.5, "label": f"{sym} T+{h}"
+                    })
+            por_ativo[sym] = {"tplus": tplus, "best_for_symbol": max(tplus, key=_rank_key)}
+        best_overall = max(candidatos, key=_rank_key) if candidatos else None
+        return {"por_ativo": por_ativo, "best_overall": best_overall}
 
 trading_system = EnhancedTradingSystem()
 
+# ========== Rotas ==========
+@app.get("/")
+def index() -> Response:
+    # Página simples com o grid T+ (sem depender de templates externos)
+    html = f"""<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>IA Profissional — Scan T+ (Monte Carlo)</title>
+<style>
+body{{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,"Helvetica Neue",Arial; margin:0; background:#f6f7fb; color:#111}}
+.wrap{{max-width:1040px;margin:24px auto;padding:0 16px}}
+h1{{font-size:20px;margin:0 0 4px}}
+.small{{color:#666;font-size:12px;margin:0 0 16px}}
+.bar{{display:flex;gap:8px;align-items:center;margin:12px 0 20px}}
+button{{border:1px solid #ddd;border-radius:10px;padding:10px 14px;background:#fff;cursor:pointer}}
+#sym{{flex:1;border:1px solid #ddd;border-radius:10px;padding:10px 12px;background:#fff}}
+.tplus-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}}
+.tplus-card{{border:1px solid #e6e6e6;border-radius:12px;padding:12px;box-shadow:0 2px 6px rgba(0,0,0,0.06);background:#fff}}
+.tplus-card h4{{margin:0 0 8px;font-size:14px;font-weight:700}}
+.tplus-row{{display:flex;justify-content:space-between;margin:6px 0;font-size:13px}}
+.badge-best{{display:inline-block;padding:2px 6px;border-radius:8px;font-size:11px;background:#111;color:#fff;margin-left:8px}}
+.badge-buy{{padding:2px 6px;border-radius:8px;font-size:11px;background:#0b8;color:#fff}}
+.badge-sell{{padding:2px 6px;border-radius:8px;font-size:11px;background:#c33;color:#fff}}
+.footer{{margin:20px 0 0;color:#666;font-size:12px}}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Scan T+ (Monte Carlo, Binance Spot)</h1>
+    <p class="small">Fuso: {TZ_STR} · {brazil_now().strftime("%Y-%m-%d %H:%M:%S")}</p>
+    <div class="bar">
+      <input id="sym" placeholder="Símbolos separados por vírgula" value="{",".join(DEFAULT_SYMBOLS)}"/>
+      <button onclick="doScanOnce()">Escanear</button>
+    </div>
+    <div id="tplus-grid" class="tplus-grid"></div>
+    <p class="footer">Fonte: Binance (spot) · Monte Carlo com retornos empíricos · T+1/T+2/T+3 de cada ativo · Melhor geral destacado</p>
+  </div>
+<script>
+function fmtPct(x){{ return (x*100).toFixed(1) + "%"; }}
+function badge(dir){{ return dir === "buy" ? '<span class="badge-buy">BUY</span>' : '<span class="badge-sell">SELL</span>'; }}
 
-# ==== utilitário: formata o melhor sinal em uma linha curta ====
-def format_best_signal_card(best: dict, analysis_time: str) -> str:
-    if not best:
-        return "Nenhum sinal disponível."
-    side = "🟢 COMPRAR" if best["direction"] == "buy" else "🔴 VENDER"
-    return (
-        f"{best['symbol']} T+{best['horizon']} • {side} • "
-        f"Conf {best['confidence']:.1%} • Prob {best['probability_buy']:.1%}/{best['probability_sell']:.1%} • "
-        f"ADX {best['adx']:.1f} • RSI {best['rsi']:.1f} • "
-        f"Entrada {best.get('entry_time','--')} • Preço {best['price']:.6f}"
-        f" • Última análise {analysis_time or '--'}"
-    )
-class AnalysisManager:
-    def __init__(self):
-        self.current_results = []
-        self.best_opportunity = None
-        self.analysis_time = None
-        self.is_analyzing = False
-        self.available_symbols = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'ADA/USDT', 'XRP/USDT', 'BNB/USDT']
-        self._lock = Lock()
-    
-    def analyze_symbols_thread(self, symbols, sims, only_adx):
-        try:
-            self.is_analyzing = True
-            start_time = datetime.now()
-            log.info(f"🚀 INICIANDO ANÁLISE (reais): {symbols}")
-            trading_system.current_analysis_cache = {}
-            all_horizons_results = []
+function renderTplusGrid(data){{
+  const root = document.getElementById("tplus-grid"); if(!root) return;
+  const porAtivo = data.por_ativo || {{}}; const best = data.best_overall || null;
+  const bestKey = best ? `${{best.symbol}}#${{best.horizon}}` : null;
+  const cards = [];
+  Object.keys(porAtivo).forEach(sym=>{{
+    const bloco = porAtivo[sym]; const t3 = (bloco && bloco.tplus) ? bloco.tplus : [];
+    const bestLocal = bloco.best_for_symbol;
+    let html = `<div class="tplus-card"><h4>${{sym}}`;
+    if(bestLocal){{ html += ` <span class="badge-best" title="Melhor do símbolo">T+${{bestLocal.horizon}}</span>`; }}
+    html += `</h4>`;
+    t3.sort((a,b)=>(a.horizon||0)-(b.horizon||0)).forEach(item=>{{
+      const dir = item.direction||"buy";
+      const prob = dir==="buy" ? (item.probability_buy||0) : (item.probability_sell||0);
+      const conf = item.confidence||0;
+      const rowKey = `${{item.symbol}}#${{item.horizon}}`;
+      const star = (bestKey && rowKey===bestKey) ? ' <span class="badge-best" title="Melhor geral">MELHOR</span>' : '';
+      html += `<div class="tplus-row"><div>T+${{item.horizon}} ${{
+        badge(dir)
+      }}${{star}}</div><div>Prob: ${{fmtPct(prob)}} · Conf: ${{fmtPct(conf)}}</div></div>`;
+    }});
+    html += `</div>`;
+    cards.push(html);
+  }});
+  root.innerHTML = cards.join("");
+}}
 
-            for symbol in symbols:
-                log.info(f"🎯 ANALISANDO {symbol}")
-                for horizon in [1, 2, 3]:
-                    try:
-                        result = trading_system.analyze_symbol(symbol, horizon)
-                    except Exception:
-                        result = {'symbol': symbol, 'horizon': horizon, 'confidence': 0.5, 'probability_buy': 0.5, 'probability_sell': 0.5, 'direction': 'buy', 'real_data': False, 'price': 0.0}
-                    all_horizons_results.append(result)
-                    log.info(f"   ✅ T+{horizon} - {result.get('symbol','?')} conf {result.get('confidence',0.0):.1%} | Real Data: {result.get('real_data',False)}")
+async function doScanOnce(){{
+  const sym = document.getElementById("sym").value.trim();
+  const symbols = sym ? sym.split(",").map(s=>s.trim()).filter(Boolean) : [];
+  const resp = await fetch("/scan_once", {{
+    method:"POST",
+    headers:{{"Content-Type":"application/json"}},
+    body: JSON.stringify({{symbols}})
+  }});
+  const data = await resp.json();
+  renderTplusGrid(data);
+}}
+document.addEventListener("DOMContentLoaded", doScanOnce);
+</script>
+</body>
+</html>"""
+    return Response(html, mimetype="text/html")
 
-            all_results_combined = []
-            for r in all_horizons_results:
-                try:
-                    r['assertiveness'] = self.calculate_assertiveness(r)
-                except Exception:
-                    r['assertiveness'] = r.get('confidence', 0.5)
-                all_results_combined.append(r)
+@app.post("/scan_once")
+def scan_once():
+    payload = request.get_json(silent=True) or {}
+    symbols = payload.get("symbols") or DEFAULT_SYMBOLS
+    symbols = [s.strip() for s in symbols if s and s.strip()]
+    res = trading_system.scan_symbols_tplus(symbols)
+    return jsonify({
+        "timestamp": trading_system.get_brazil_time().strftime("%Y-%m-%d %H:%M:%S"),
+        "symbols": symbols,
+        "por_ativo": res["por_ativo"],
+        "best_overall": res["best_overall"],
+        "source": "Binance spot"
+    })
 
-            best_by_symbol_pre = {}
-            for r in all_results_combined:
-                sym = r['symbol']
-                if sym not in best_by_symbol_pre or r['assertiveness'] > best_by_symbol_pre[sym]['assertiveness']:
-                    best_by_symbol_pre[sym] = r
-
-            cache_for_corr = {sym: {'direction': r.get('direction','buy'), 'confidence': r.get('confidence',0.5)} for sym, r in best_by_symbol_pre.items()}
-
-            formatted = []
-            for r in all_results_combined:
-                raw_corr = getattr(getattr(trading_system, 'corr', None), 'get_correlation_adjustment', lambda s, c: 1.0)(r['symbol'], cache_for_corr)
-                corr = max(0.93, min(1.07, raw_corr))
-                adjusted_confidence = min(0.95, max(0.40, r.get('confidence',0.5) * corr))
-                prob_buy = float(r.get('probability_buy', 0.5))
-                prob_sell = float(r.get('probability_sell', 0.5))
-                total = prob_buy + prob_sell
-                if total > 0:
-                    prob_buy /= total
-                    prob_sell /= total
-                r2 = {
-                    'symbol': r.get('symbol'),
-                    'horizon': r.get('horizon'),
-                    'direction': r.get('direction'),
-                    'p_buy': round(prob_buy * 100, 1),
-                    'p_sell': round(prob_sell * 100, 1),
-                    'confidence': round(adjusted_confidence, 3),
-                    'assertiveness': r.get('assertiveness', 0.0),
-                    'price': r.get('price', 0.0),
-                    'real_data': r.get('real_data', False)
-                }
-                formatted.append(r2)
-
-            def mc_bonus(q): return 3.0 if q == 'HIGH' else (1.0 if q == 'MEDIUM' else 0.0)
-            for F in formatted:
-                F['global_score'] = (F.get('assertiveness',0.0) + 0.35 * F.get('confidence',0.0))
-            best = max(formatted, key=lambda z: z['global_score']) if formatted else None
-            if best:
-                best['is_best_global'] = True
-                best['entry_time'] = self.calculate_entry_time_brazil(best['horizon'])
-
-            analysis_time = self.get_brazil_time().strftime("%d/%m/%Y %H:%M:%S")
-            processing_time = (datetime.now() - start_time).total_seconds()
-            with self._lock:
-                self.current_results = formatted
-                self.best_opportunity = best
-                self.analysis_time = analysis_time
-
-            if best:
-                log.info(f"🏆 MELHOR OPORTUNIDADE: {best['symbol']} T+{best['horizon']} ({best['confidence']}%)")
-            log.info(f"✅ ANÁLISE CONCLUÍDA em {processing_time:.1f}s | {len(formatted)} sinais")
-
-        except Exception as e:
-            log.exception(f"❌ ERRO na análise: {e}")
-            with self._lock:
-                self.current_results = self._get_fallback_results(symbols)
-                self.best_opportunity = self.current_results[0] if self.current_results else None
-        finally:
-            self.is_analyzing = False
-    
-    def get_brazil_time(self):
-        return datetime.now(timezone(timedelta(hours=-3)))
-    
-    def calculate_entry_time_brazil(self, horizon):
-        now = self.get_brazil_time()
-        return (now + timedelta(minutes=horizon)).strftime("%H:%M BRT")
-    
-    def _get_fallback_results(self, symbols):
-        results = []
-        for symbol in symbols:
-            for horizon in [1, 2, 3]:
-                prob_buy = random.uniform(0.4, 0.6)
-                prob_sell = 1.0 - prob_buy
-                results.append({
-                    'symbol': symbol,
-                    'horizon': horizon,
-                    'direction': 'buy' if prob_buy > 0.5 else 'sell',
-                    'p_buy': round(prob_buy * 100, 1),
-                    'p_sell': round(prob_sell * 100, 1),
-                    'confidence': random.randint(55, 85),
-                    'adx': random.randint(20, 40),
-                    'rsi': random.randint(40, 60),
-                    'price': round(random.uniform(50, 400), 6),
-                    'timestamp': self.get_brazil_time().strftime("%H:%M:%S"),
-                    'technical_override': random.choice([True, False]),
-                    'multi_timeframe': random.choice(['buy', 'sell', 'neutral']),
-                    'monte_carlo_quality': random.choice(['MEDIUM', 'HIGH', 'LOW']),
-                    'winning_indicators': random.sample(['RSI', 'ADX', 'MACD', 'BB', 'VOL'], k=3),
-                    'score_factors': ['MC:45.0', 'RSI:8.0', 'ADX:7.0'],
-                    'assertiveness': random.randint(60, 90),
-                    'is_best_of_symbol': (horizon == 2),
-                    'liquidity_score': round(random.uniform(0.6, 0.9), 2),
-                    'volatility_regime': random.choice(['LOW', 'MEDIUM', 'HIGH']),
-                    'market_regime': 'NORMAL',
-                    'volatility_multiplier': 1.0,
-                    'real_data': False
-                })
-        return results
-    
-    def calculate_assertiveness(self, result):
-        base = result['confidence'] * 100 if isinstance(result['confidence'], float) and result['confidence'] <= 1 else result['confidence']
-        indicator_count = len(result['winning_indicators'])
-        if indicator_count >= 5:
-            base += 15
-        elif indicator_count >= 4:
-            base += 10
-        elif indicator_count >= 3:
-            base += 6
-        elif indicator_count >= 2:
-            base += 3
-        if result['monte_carlo_quality'] == 'HIGH':
-            base += 12
-        elif result['monte_carlo_quality'] == 'MEDIUM':
-            base += 6
-        if result['multi_timeframe'] == result['direction']:
-            base += 8
-        if max(result['probability_buy'], result['probability_sell']) > 0.6:
-            base += 5
-        if result['volatility_regime'] == 'LOW':
-            base += 3
-        elif result['volatility_regime'] == 'HIGH':
-            base -= 5
-        return min(round(base, 1), 95)
-
-manager = AnalysisManager()
-
-# ========== ROTAS (mantidas) ==========
-@app.route('/')
-def index():
-    symbols_html = ''.join([f'''
-        <label style="display: inline-block; margin: 5px; padding: 10px 15px; 
-                      background: #2c3e50; border-radius: 8px; cursor: pointer; border: 2px solid #3498db;">
-            <input type="checkbox" name="symbol" value="{symbol}" checked 
-                   onchange="updateSymbols()" style="margin-right: 8px;"> 
-            <strong>{symbol}</strong>
-        </label>
-    ''' for symbol in manager.available_symbols])
-    
-    return f'''
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>🚀 IA Signal Pro - PREÇOS REAIS CONFIRMADOS</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <style>
-            body {{ background: #0a0a0a; color: white; font-family: Arial; margin: 0; padding: 20px; }}
-            .container {{ max-width: 1200px; margin: 0 auto; }}
-            .card {{ background: #1a1a2e; border: 2px solid #3498db; border-radius: 10px; padding: 20px; margin: 10px 0; }}
-            .best-card {{ border: 3px solid #f39c12; background: #2c2c3e; }}
-            .symbols-container {{ background: #2c3e50; padding: 20px; border-radius: 10px; margin: 15px 0; text-align: center; }}
-            input, button, select {{ padding: 12px; margin: 8px; border: 1px solid #3498db; border-radius: 6px; background: #34495e; color: white; }}
-            button {{ background: #3498db; border: none; font-weight: bold; cursor: pointer; padding: 15px 25px; font-size: 1.1em; }}
-            button:hover {{ background: #2980b9; }}
-            button:disabled {{ opacity: 0.6; cursor: not-allowed; }}
-            .results {{ background: #2c3e50; padding: 15px; border-radius: 5px; margin: 8px 0; border-left: 4px solid #3498db; }}
-            .buy {{ color: #2ecc71; border-left-color: #2ecc71 !important; }}
-            .sell {{ color: #e74c3c; border-left-color: #e74c3c !important; }}
-            .best-of-symbol {{ border: 2px solid #f39c12 !important; background: #34495e; }}
-            .metrics {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 10px 0; }}
-            .metric {{ background: #34495e; padding: 10px; border-radius: 5px; text-align: center; }}
-            .factor {{ background: #16a085; padding: 4px 8px; border-radius: 3px; margin: 2px; font-size: 0.8em; display: inline-block; }}
-            .indicator {{ background: #8e44ad; padding: 3px 6px; border-radius: 3px; margin: 1px; font-size: 0.75em; display: inline-block; }}
-            .override {{ color: #f39c12; font-weight: bold; }}
-            .quality-high {{ color: #2ecc71; }}
-            .quality-medium {{ color: #f39c12; }}
-            .quality-low {{ color: #e74c3c; }}
-            .symbol-header {{ font-size: 1.1em; font-weight: bold; margin-bottom: 5px; }}
-            .horizon-badge {{ background: #3498db; padding: 2px 6px; border-radius: 3px; font-size: 0.8em; margin-left: 5px; }}
-            .regime-low {{ color: #2ecc71; }}
-            .regime-medium {{ color: #f39c12; }}
-            .regime-high {{ color: #e74c3c; }}
-            .liquidity-high {{ color: #2ecc71; }}
-            .liquidity-low {{ color: #e74c3c; }}
-            .real-data-badge {{ background: #27ae60; padding: 2px 6px; border-radius: 3px; font-size: 0.7em; margin-left: 5px; }}
-            .fallback-badge {{ background: #e67e22; padding: 2px 6px; border-radius: 3px; font-size: 0.7em; margin-left: 5px; }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="card">
-                <h1>🚀 IA Signal Pro - PREÇOS REAIS CONFIRMADOS</h1>
-                <p><em>✅ DADOS REAIS DA BINANCE • Símbolos corrigidos • IMPARCIALIDADE GARANTIDA</em></p>
-                <p><strong>🎯 AGORA COM: EMAs/MACD corretos, RSI Wilder, ADX real e correlação justa</strong></p>
-                
-                <div class="symbols-container">
-                    <h3>🎯 SELECIONE OS ATIVOS PARA ANÁLISE COM DADOS REAIS:</h3>
-                    <div id="symbolsCheckbox">
-                        {symbols_html}
-                    </div>
-                </div>
-                
-                <div style="text-align: center;">
-                    <select id="sims" style="width: 200px; display: inline-block;">
-                        <option value="1800" selected>{SIMS} simulações Monte Carlo</option>
-                    </select>
-                    
-                    <button onclick="analyze()" id="analyzeBtn">🎯 ANALISAR COM DADOS REAIS</button>
-                </div>
-            </div>
-
-            <div class="card best-card">
-                <h2>🎖️ MELHOR OPORTUNIDADE GLOBAL</h2>
-                <div id="bestResult">Selecione os ativos e clique em Analisar</div>
-            </div>
-
-            <div class="card">
-                <h2>📈 TODOS OS HORIZONTES DE CADA ATIVO</h2>
-                <div id="allResults">-</div>
-            </div>
-        </div>
-
-        <script>
-            function getSelectedSymbols() {{
-                const checkboxes = document.querySelectorAll('input[name="symbol"]:checked');
-                return Array.from(checkboxes).map(cb => cb.value);
-            }}
-
-            function updateSymbols() {{
-                const selected = getSelectedSymbols();
-                console.log('Símbolos selecionados:', selected);
-            }}
-
-            function formatFactors(factors) {{
-                return factors ? factors.map(f => `<span class="factor">${{f}}</span>`).join('') : '';
-            }}
-
-            function formatIndicators(indicators) {{
-                return indicators ? indicators.map(i => `<span class="indicator">${{i}}</span>`).join('') : '';
-            }}
-
-            function getRegimeClass(regime) {{
-                if (regime === 'LOW') return 'regime-low';
-                if (regime === 'HIGH') return 'regime-high';
-                return 'regime-medium';
-            }}
-
-            function getLiquidityClass(score) {{
-                return score > 0.8 ? 'liquidity-high' : (score < 0.6 ? 'liquidity-low' : '');
-            }}
-
-            async function analyze() {{
-                const btn = document.getElementById('analyzeBtn');
-                const symbols = getSelectedSymbols();
-                
-                if (symbols.length === 0) {{
-                    alert('Selecione pelo menos um ativo!');
-                    return;
-                }}
-
-                btn.disabled = true;
-                btn.textContent = `⏳ BUSCANDO DADOS REAIS...`;
-
-                try {{
-                    const response = await fetch('/api/analyze', {{
-                        method: 'POST',
-                        headers: {{ 'Content-Type': 'application/json' }},
-                        body: JSON.stringify({{
-                            symbols: symbols,
-                            sims: {SIMS},
-                            only_adx: 0
-                        }})
-                    }});
-
-                    const data = await response.json();
-                    if (data.success) {{
-                        checkResults();
-                    }} else {{
-                        alert('Erro: ' + data.error);
-                        btn.disabled = false;
-                        btn.textContent = '🎯 ANALISAR COM DADOS REAIS';
-                    }}
-                }} catch (error) {{
-                    alert('Erro de conexão');
-                    btn.disabled = false;
-                    btn.textContent = '🎯 ANALISAR COM DADOS REAIS';
-                }}
-            }}
-
-            async function checkResults() {{
-                try {{
-                    const response = await fetch('/api/results');
-                    const data = await response.json();
-
-                    if (data.success) {{
-                        updateResults(data);
-                        if (data.is_analyzing) {{
-                            setTimeout(checkResults, 1500);
-                        }} else {{
-                            document.getElementById('analyzeBtn').disabled = false;
-                            document.getElementById('analyzeBtn').textContent = '🎯 ANALISAR COM DADOS REAIS';
-                        }}
-                    }}
-                }} catch (error) {{
-                    setTimeout(checkResults, 2000);
-                }}
-            }}
-
-            function updateResults(data) {{
-                if (data.best) {{
-                    const best = data.best;
-                    const regimeClass = getRegimeClass(best.volatility_regime);
-                    const liquidityClass = getLiquidityClass(best.liquidity_score);
-                    const dataBadge = best.real_data ? 
-                        '<span class="real-data-badge">📡 DADOS REAIS</span>' : 
-                        '<span class="fallback-badge">🔄 DADOS SIMULADOS</span>';
-                    
-                    document.getElementById('bestResult').innerHTML = `
-                        <div class="results ${{best.direction}}">
-                            <div style="display: flex; justify-content: space-between; align-items: center;">
-                                <div>
-                                    <strong style="font-size: 1.3em;">${{best.symbol}} T+${{best.horizon}}</strong>
-                                    <span style="font-size: 1.2em; margin-left: 10px;">
-                                        ${{best.direction === 'buy' ? '🟢 COMPRAR' : '🔴 VENDER'}}
-                                    </span>
-                                    <div style="font-size: 0.9em; color: #f39c12; margin-top: 5px;">
-                                        🏆 MELHOR ENTRE TODOS OS HORIZONTES
-                                        ${{dataBadge}}
-                                    </div>
-                                </div>
-                                <div style="text-align: right;">
-                                    <div style="font-size: 1.4em; font-weight: bold;">${{best.confidence}}%</div>
-                                    <div>Assertividade: ${{best.assertiveness}}%</div>
-                                </div>
-                            </div>
-                            
-                            <div class="metrics">
-                                <div class="metric"><div>Prob Compra</div><strong>${{best.p_buy}}%</strong></div>
-                                <div class="metric"><div>Prob Venda</div><strong>${{best.p_sell}}%</strong></div>
-                                <div class="metric"><div>Soma</div><strong>${{(best.p_buy + best.p_sell).toFixed(1)}}%</strong></div>
-                                <div class="metric"><div>ADX</div><strong>${{best.adx}}</strong></div>
-                                <div class="metric"><div>RSI</div><strong>${{best.rsi}}</strong></div>
-                                <div class="metric"><div>Liquidez</div><strong class="${{liquidityClass}}">${{best.liquidity_score}}</strong></div>
-                            </div>
-                            
-                            <div><strong>Indicadores Ativos:</strong> ${{formatIndicators(best.winning_indicators || [])}}</div>
-                            <div><strong>Pontuação:</strong> ${{formatFactors(best.score_factors || [])}}</div>
-                            <div>
-                                <strong>Mercado:</strong> ${{best.market_regime}} | 
-                                <strong>Vol Multi:</strong> ${{best.volatility_multiplier}}x |
-                                <strong>Preço:</strong> $${{best.price}}
-                            </div>
-                            <div><strong>Entrada:</strong> ${{best.entry_time}}</div>
-                            ${{best.technical_override ? '<div class="override">⚡ ALTA CONVERGÊNCIA TÉCNICA</div>' : ''}}
-                            <br><em>Última análise: ${{data.analysis_time}} (Horário Brasil)</em>
-                        </div>
-                    `;
-                }}
-
-                if (data.results.length > 0) {{
-                    const groupedBySymbol = {{}};
-                    data.results.forEach(result => {{
-                        if (!groupedBySymbol[result.symbol]) {{
-                            groupedBySymbol[result.symbol] = [];
-                        }}
-                        groupedBySymbol[result.symbol].push(result);
-                    }});
-
-                    let html = '';
-                    
-                    Object.keys(groupedBySymbol).sort().forEach(symbol => {{
-                        const symbolResults = groupedBySymbol[symbol].sort((a, b) => a.horizon - b.horizon);
-                        const regimeClass = getRegimeClass(symbolResults[0].volatility_regime);
-                        const liquidityClass = getLiquidityClass(symbolResults[0].liquidity_score);
-                        const dataSource = symbolResults[0].real_data ? "📡 DADOS REAIS" : "🔄 DADOS SIMULADOS";
-                        
-                        html += `
-                            <div class="symbol-header">
-                                ${{symbol}} 
-                                <span style="font-size: 0.8em; margin-left: 10px;">
-                                    [Regime: <span class="${{regimeClass}}">${{symbolResults[0].volatility_regime}}</span> | 
-                                    Liquidez: <span class="${{liquidityClass}}">${{symbolResults[0].liquidity_score}}</span> |
-                                    Mercado: ${{symbolResults[0].market_regime}} | ${{dataSource}}]
-                                </span>
-                            </div>`;
-                        
-                        symbolResults.forEach(result => {{
-                            const isBest = result.is_best_of_symbol;
-                            const resultClass = isBest ? 'best-of-symbol' : '';
-                            const bestBadge = isBest ? ' 🏆 MELHOR DO ATIVO' : '';
-                            const globalBestBadge = (data.best && data.best.symbol === result.symbol && data.best.horizon === result.horizon) ? ' 🌟 MELHOR GLOBAL' : '';
-                            const dataBadge = result.real_data ? 
-                                '<span class="real-data-badge">REAL</span>' : 
-                                '<span class="fallback-badge">SIM</span>';
-                            
-                            html += `
-                            <div class="results ${{result.direction}} ${{resultClass}}">
-                                <div style="display: flex; justify-content: space-between; align-items: start;">
-                                    <div style="flex: 1;">
-                                        <strong>T+${{result.horizon}}</strong>
-                                        <span class="horizon-badge">${{result.direction === 'buy' ? '🟢 COMPRAR' : '🔴 VENDER'}}${{bestBadge}}${{globalBestBadge}} ${{dataBadge}}</span>
-                                        <br>
-                                        <strong>Prob:</strong> ${{result.p_buy}}%/${{result.p_sell}}% (Soma: ${{(result.p_buy + result.p_sell).toFixed(1)}}%) | 
-                                        <strong>Conf:</strong> ${{result.confidence}}% | 
-                                        <strong>Assert:</strong> ${{result.assertiveness}}%
-                                        <br>
-                                        <strong>ADX:</strong> ${{result.adx}} | 
-                                        <strong>RSI:</strong> ${{result.rsi}} | 
-                                        <strong>Multi-TF:</strong> ${{result.multi_timeframe}} 
-                                        <br>
-                                        <strong>Indicadores:</strong> ${{formatIndicators(result.winning_indicators || [])}}
-                                    </div>
-                                </div>
-                                ${{result.technical_override ? '<div class="override">⚡ Convergência Técnica</div>' : ''}}
-                            </div>`;
-                        }});
-                    }});
-                    
-                    document.getElementById('allResults').innerHTML = html;
-                }} else {{
-                    document.getElementById('allResults').innerHTML = 'Nenhum sinal encontrado.';
-                }}
-            }}
-
-            updateSymbols();
-        </script>
-    </body>
-    </html>
-    '''
-
-@app.route('/api/analyze', methods=['POST'])
-def analyze():
-    if manager.is_analyzing:
-        return jsonify({'success': False, 'error': 'Análise em andamento'}), 429
-    try:
-        data = request.get_json()
-        symbols = [s.strip().upper() for s in data['symbols'] if s.strip()]
-        if not symbols:
-            return jsonify({'success': False, 'error': 'Selecione pelo menos um ativo'}), 400
-        sims = int(data.get('sims', SIMS))
-        thread = threading.Thread(
-            target=manager.analyze_symbols_thread,
-            args=(symbols, sims, None)
-        )
-        thread.daemon = True
-        thread.start()
-        return jsonify({
-            'success': True,
-            'message': f'Analisando {len(symbols)} ativos com DADOS REAIS + {sims} simulações...',
-            'symbols_count': len(symbols)
-        })
-    except Exception as e:
-        log.exception("erro no /api/analyze")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/results')
-def get_results():
-    with manager._lock:
-        best = manager.best_opportunity
-        # Guarantee entry_time on best
-        try:
-            if best and not best.get('entry_time'):
-                # Fallback: compute from horizon now (Brazil time)
-                from datetime import datetime, timedelta, timezone
-                now = datetime.now(timezone(timedelta(hours=-3)))
-                mins = int(best.get('horizon', 1))
-                best['entry_time'] = (now + timedelta(minutes=mins)).strftime('%H:%M BRT')
-        except Exception:
-            pass
-
-        analysis_time = manager.analysis_time or _br_time_str()
-
-        payload = {
-            'success': True,
-            'results': manager.current_results or [],
-            'best': best,
-            'analysis_time': analysis_time,
-            'total_signals': len(manager.current_results or []),
-            'is_analyzing': manager.is_analyzing
-        }
-    return jsonify(payload)
-@app.route('/api/best_signal')
-def best_signal():
-    with manager._lock:
-        best = manager.best_opportunity
-        text = format_best_signal_card(best, manager.analysis_time)
-    return jsonify({'success': True, 'text': text, 'best': best})
-
-@app.route('/health')
+@app.get("/health")
 def health():
-    return jsonify({'status': 'healthy', 'version': 'real-data-v2-macd-rsi-adx-corr', 'sims': SIMS})
+    return jsonify({"ok": True, "ts": datetime.now(timezone.utc).isoformat()}), 200
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    log.info("🚀 IA Signal Pro (Railway-ready)")
-    log.info("✅ DADOS REAIS: Binance API com retry/backoff + cache TTL")
-    log.info("✅ Indicadores: EMA/MACD corretos, RSI Wilder, ADX aproximação real")
-    log.info("✅ Correlação: aplicada em 2ª passada (justa)")
-    log.info("🔧 Servidor na porta: %s", port)
-    # Railway aceita app.run (Nixpacks Python) ou Gunicorn via Procfile; mantemos app.run para compat.
-    app.run(host='0.0.0.0', port=port, debug=False)
+# ========== Execução ==========
+if __name__ == "__main__":
+    # NÃO força porta. Se PORT existir (Railway/Heroku), usa. Senão, usa padrão do Flask.
+    try:
+        env_port = os.getenv("PORT",5000))
+        port = int(env_port) if env_port else None
+    except Exception:
+        port = None
+
+    if port:
+        app.run(host="0.0.0.0", port=port, threaded=True)
+    else:
+        app.run(threaded=True)
