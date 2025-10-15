@@ -525,7 +525,8 @@ def index():
                             // Continua verificando se ainda está analisando
                             setTimeout(checkResults, 2000);
                         } else {
-                            // Análise concluída - para de verificar e reativa botão
+                            // ⚠️ CORREÇÃO CRÍTICA: Para completamente quando análise terminar
+                            isChecking = false;
                             resetAnalyzeButton();
                             document.getElementById('status').textContent = '✅ Análise concluída - Pronto para nova análise';
                         }
@@ -533,7 +534,9 @@ def index():
                 } catch (error) {
                     console.error('Erro:', error);
                     // Em caso de erro, tenta mais algumas vezes depois para
-                    setTimeout(checkResults, 3000);
+                    if (isChecking) {
+                        setTimeout(checkResults, 3000);
+                    }
                 }
             }
 
@@ -598,6 +601,11 @@ def index():
                     document.getElementById('status').textContent = `✅ ${data.results.length} ativos analisados - Pronto para nova análise`;
                 }
             }
+
+            // ⚠️ CORREÇÃO: Resetar isChecking quando a página carregar
+            document.addEventListener('DOMContentLoaded', function() {
+                isChecking = false;
+            });
 
             // Verificar status inicial
             checkResults();
