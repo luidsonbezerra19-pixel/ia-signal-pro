@@ -467,6 +467,8 @@ def index():
         </div>
 
         <script>
+            let isChecking = false;
+            
             async function analyze() {
                 const btn = document.getElementById('analyzeBtn');
                 btn.disabled = true;
@@ -490,21 +492,28 @@ def index():
                     const data = await response.json();
                     
                     if (data.success) {
+                        isChecking = true;
                         checkResults();
                     } else {
                         alert('Erro: ' + data.error);
-                        btn.disabled = false;
-                        btn.textContent = '🎯 ANALISAR AGORA';
+                        resetAnalyzeButton();
                     }
 
                 } catch (error) {
                     alert('Erro de conexão: ' + error.message);
-                    btn.disabled = false;
-                    btn.textContent = '🎯 ANALISAR AGORA';
+                    resetAnalyzeButton();
                 }
             }
 
+            function resetAnalyzeButton() {
+                document.getElementById('analyzeBtn').disabled = false;
+                document.getElementById('analyzeBtn').textContent = '🎯 ANALISAR AGORA';
+                isChecking = false;
+            }
+
             async function checkResults() {
+                if (!isChecking) return;
+                
                 try {
                     const response = await fetch('/api/results');
                     const data = await response.json();
@@ -516,12 +525,14 @@ def index():
                             // Continua verificando se ainda está analisando
                             setTimeout(checkResults, 2000);
                         } else {
-                            document.getElementById('analyzeBtn').disabled = false;
-                            document.getElementById('analyzeBtn').textContent = '🎯 ANALISAR AGORA';
+                            // Análise concluída - para de verificar e reativa botão
+                            resetAnalyzeButton();
+                            document.getElementById('status').textContent = '✅ Análise concluída - Pronto para nova análise';
                         }
                     }
                 } catch (error) {
                     console.error('Erro:', error);
+                    // Em caso de erro, tenta mais algumas vezes depois para
                     setTimeout(checkResults, 3000);
                 }
             }
@@ -578,7 +589,13 @@ def index():
                     });
                     
                     document.getElementById('allResults').innerHTML = html;
-                    document.getElementById('status').textContent = `✅ ${data.results.length} ativos analisados`;
+                }
+                
+                // Atualiza status
+                if (data.is_analyzing) {
+                    document.getElementById('status').textContent = '⏳ Analisando...';
+                } else if (data.results.length > 0) {
+                    document.getElementById('status').textContent = `✅ ${data.results.length} ativos analisados - Pronto para nova análise`;
                 }
             }
 
