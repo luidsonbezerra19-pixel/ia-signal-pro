@@ -501,10 +501,10 @@ class MonteCarloSimulator:
     
     @staticmethod
     def calculate_probability_distribution(paths: List[List[float]]) -> Dict:
-        \"\"\"
+        """
         Evita 50/50 distribuindo a parte neutra conforme o *viés médio* dos caminhos.
         Usa múltiplos limiares (0,3% / 0,7% / 1,0%) e um 'z-edge' com base no desvio padrão.
-        \"\"\"
+        """
         import math
         if not paths or len(paths) < 200:
             return {'probability_buy': 0.52, 'probability_sell': 0.48, 'quality': 'LOW'}
