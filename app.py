@@ -6,10 +6,11 @@ import os
 import random
 import math
 import json
-import requests
+import urllib.request
+import urllib.error
 from typing import List, Dict, Tuple, Any
 
-# ========== SISTEMA DE PREÇOS REAIS ==========
+# ========== SISTEMA DE PREÇOS REAIS SEM REQUESTS ==========
 class RealPriceFetcher:
     def __init__(self):
         self.base_url = "https://api.binance.com/api/v3"
@@ -19,21 +20,18 @@ class RealPriceFetcher:
         }
     
     def get_historical_prices(self, symbol: str, interval: str = '1m', limit: int = 50) -> List[float]:
-        """Busca preços históricos reais da Binance"""
+        """Busca preços históricos reais da Binance usando urllib (sem requests)"""
         try:
             # Converte símbolo para formato Binance
             binance_symbol = symbol.replace('/', '').replace('USDT', 'USDT')
             
-            url = f"{self.base_url}/klines"
-            params = {
-                'symbol': binance_symbol,
-                'interval': interval,
-                'limit': limit
-            }
+            url = f"{self.base_url}/klines?symbol={binance_symbol}&interval={interval}&limit={limit}"
             
             print(f"📡 Buscando preços reais para {binance_symbol}...")
-            response = requests.get(url, params=params, timeout=10)
-            data = response.json()
+            
+            # Usa urllib em vez de requests
+            with urllib.request.urlopen(url, timeout=10) as response:
+                data = json.loads(response.read().decode())
             
             if not data or len(data) < 10:
                 print(f"⚠️ Dados insuficientes para {symbol}, usando fallback")
@@ -44,8 +42,11 @@ class RealPriceFetcher:
             print(f"✅ Preços reais obtidos: {symbol} - {len(prices)} candles - Último: ${prices[-1]:.2f}")
             return prices
             
+        except urllib.error.URLError as e:
+            print(f"❌ Erro de rede para {symbol}: {e}")
+            return self.get_fallback_prices(symbol)
         except Exception as e:
-            print(f"❌ Erro ao buscar preços reais para {symbol}: {e}")
+            print(f"❌ Erro geral para {symbol}: {e}")
             return self.get_fallback_prices(symbol)
     
     def get_fallback_prices(self, symbol: str) -> List[float]:
@@ -1297,7 +1298,7 @@ def health():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print("🚀 IA Signal Pro - PREÇOS REAIS + 3000 SIMULAÇÕES")
-    print("✅ DADOS REAIS: Binance API integrada")
+    print("✅ DADOS REAIS: Binance API integrada (sem requests)")
     print("✅ MONTE CARLO: Com volatilidade real de cada ativo") 
     print("✅ IMPARCIALIDADE: Preços reais não favorecem ninguém")
     print("✅ VERIFICAÇÃO: Logs mostram distribuição de confianças")
