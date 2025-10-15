@@ -4,9 +4,9 @@ import threading
 from datetime import datetime, timezone, timedelta
 import os
 import random
-import numpy as np
+import math
 
-# SIMULAÇÃO APRIMORADA com candles mais realistas
+# SIMULAÇÃO APRIMORADA com candles mais realistas (sem numpy)
 class MockCore:
     @staticmethod
     def analyze_symbols(symbols, sims=1000, only_adx=None):
@@ -75,11 +75,10 @@ class MockCore:
     
     @staticmethod
     def simulate_price_action(symbol, horizon, base_trend):
-        """Simula ação de preço mais realista baseada em candles"""
+        """Simula ação de preço mais realista baseada em candles (sem numpy)"""
         # Seed consistente por símbolo e horizonte
         seed = sum(ord(c) for c in symbol) + horizon
         random.seed(seed)
-        np.random.seed(seed)
         
         # Parâmetros de mercado realistas
         base_volatility = random.uniform(0.01, 0.05)  # 1-5% de volatilidade
@@ -92,9 +91,16 @@ class MockCore:
             # Volatilidade dinâmica (maior em horizontes maiores)
             dynamic_volatility = base_volatility * (1 + horizon * 0.2)
             
-            # Componentes do movimento de preço
+            # Componentes do movimento de preço (substituindo numpy.random.normal)
+            # Usando Box-Muller transform para distribuição normal
+            def normal_random(mean=0, std=1):
+                u1 = random.random()
+                u2 = random.random()
+                z0 = math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * math.pi * u2)
+                return mean + z0 * std
+            
             trend_component = trend_direction * trend_strength * dynamic_volatility * 0.3
-            random_component = np.random.normal(0, dynamic_volatility * 0.7)
+            random_component = normal_random(0, dynamic_volatility * 0.7)
             momentum = prices[-1] - prices[0] if len(prices) > 1 else 0
             
             # Movimento final do preço
@@ -119,20 +125,25 @@ class MockCore:
     
     @staticmethod
     def analyze_candle_pattern(prices):
-        """Analisa padrões de candles para decisões mais assertivas"""
+        """Analisa padrões de candles para decisões mais assertivas (sem numpy)"""
         if len(prices) < 5:
             return "neutral"
         
         recent = prices[-5:]
         body_sizes = [abs(recent[i] - recent[i-1]) for i in range(1, len(recent))]
-        avg_body = np.mean(body_sizes)
+        avg_body = sum(body_sizes) / len(body_sizes)
+        
+        # Calcula desvio padrão manualmente (substituindo numpy.std)
+        mean_price = sum(prices) / len(prices)
+        variance = sum((x - mean_price) ** 2 for x in prices) / len(prices)
+        std_dev = math.sqrt(variance)
         
         # Detecta tendência forte
         if all(recent[i] > recent[i-1] for i in range(1, len(recent))):
             return "strong_uptrend"
         elif all(recent[i] < recent[i-1] for i in range(1, len(recent))):
             return "strong_downtrend"
-        elif avg_body > np.std(prices) * 0.1:
+        elif avg_body > std_dev * 0.1:
             return "high_volatility"
         else:
             return "consolidation"
