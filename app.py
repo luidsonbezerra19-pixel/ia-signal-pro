@@ -12,7 +12,7 @@ from typing import List, Dict, Tuple, Any
 class MemorySystem:
     def __init__(self):
         self.symbol_memory = {}
-        self.market_regime = "NORMAL"  # NORMAL, VOLATILE, TRENDING
+        self.market_regime = "NORMAL"
         self.regime_memory = []
     
     def get_symbol_weights(self, symbol: str) -> Dict:
@@ -24,7 +24,6 @@ class MemorySystem:
             'multi_tf': 0.02
         }
         
-        # Ajuste baseado apenas no regime de mercado (igual para todos)
         if self.market_regime == "VOLATILE":
             base_weights['monte_carlo'] = 0.60
             base_weights['bollinger'] = 0.08
@@ -33,11 +32,10 @@ class MemorySystem:
             base_weights['adx'] = 0.10
             base_weights['multi_tf'] = 0.04
         
-        # REMOVIDO: ajustes especiais para BTC/ETH - TODOS SÃO IGUAIS AGORA
         return base_weights
     
     def update_market_regime(self, volatility: float, adx_values: List[float]):
-        """Atualiza regime de mercado baseado na volatilidade e ADX"""
+        """Atualiza regime de mercado"""
         avg_adx = sum(adx_values) / len(adx_values) if adx_values else 25
         
         if volatility > 0.015 or avg_adx < 20:
@@ -54,7 +52,6 @@ class MemorySystem:
             'avg_adx': avg_adx
         })
         
-        # Mantém apenas últimas 100 leituras
         if len(self.regime_memory) > 100:
             self.regime_memory.pop(0)
 
@@ -62,14 +59,12 @@ class MemorySystem:
 class LiquiditySystem:
     def __init__(self):
         self.symbol_liquidity = {}
-        self.volume_profile = {}
     
     def calculate_liquidity_score(self, symbol: str, prices: List[float]) -> float:
-        """Calcula score de liquidez baseado APENAS na volatilidade - IMPARCIAL"""
+        """Calcula score de liquidez baseado APENAS na volatilidade"""
         if len(prices) < 10:
-            return 0.7  # Valor padrão igual para todos
+            return 0.7
         
-        # Calcula volatilidade relativa (proxy para liquidez)
         returns = []
         for i in range(1, len(prices)):
             if prices[i-1] != 0:
@@ -81,8 +76,6 @@ class LiquiditySystem:
             
         volatility = sum(returns) / len(returns)
         
-        # Ativos com menor volatilidade têm maior liquidez implícita
-        # MESMO CRITÉRIO PARA TODOS OS SÍMBOLOS
         if volatility < 0.005:
             liquidity_score = 0.9
         elif volatility < 0.01:
@@ -92,14 +85,8 @@ class LiquiditySystem:
         else:
             liquidity_score = 0.6
             
-        # REMOVIDO: ajustes especiais para BTC/ETH - TODOS SÃO IGUAIS
         self.symbol_liquidity[symbol] = liquidity_score
         return liquidity_score
-    
-    def get_spread_impact(self, symbol: str) -> float:
-        """Estima impacto do spread baseado na liquidez"""
-        liquidity = self.symbol_liquidity.get(symbol, 0.7)
-        return 0.001 * (1 - liquidity)
 
 # ========== SISTEMA DE CORRELAÇÕES ==========
 class CorrelationSystem:
@@ -107,7 +94,6 @@ class CorrelationSystem:
         self.correlation_matrix = self._initialize_correlations()
     
     def _initialize_correlations(self) -> Dict:
-        """Inicializa matriz de correlações baseada em grupos de ativos"""
         return {
             'BTC/USDT': {
                 'ETH/USDT': 0.85, 'BNB/USDT': 0.65, 'SOL/USDT': 0.70,
@@ -129,7 +115,6 @@ class CorrelationSystem:
         }
     
     def get_correlation_adjustment(self, symbol: str, other_signals: Dict) -> float:
-        """Ajusta confiança baseado em correlações com outros sinais"""
         if symbol not in self.correlation_matrix:
             return 1.0
             
@@ -152,16 +137,13 @@ class CorrelationSystem:
 class NewsEventSystem:
     def __init__(self):
         self.active_events = []
-        self.volatility_multiplier = 1.0
     
     def generate_market_events(self):
-        """Gera eventos de mercado aleatórios (simulação)"""
         events = [
             {'type': 'FED_MEETING', 'impact': 'HIGH', 'volatility_multiplier': 2.0},
             {'type': 'CPI_RELEASE', 'impact': 'MEDIUM', 'volatility_multiplier': 1.5},
             {'type': 'REGULATION_NEWS', 'impact': 'MEDIUM', 'volatility_multiplier': 1.8},
             {'type': 'WHALE_MOVEMENT', 'impact': 'LOW', 'volatility_multiplier': 1.3},
-            {'type': 'EXCHANGE_ISSUE', 'impact': 'HIGH', 'volatility_multiplier': 2.2}
         ]
         
         if random.random() < 0.15:
@@ -169,10 +151,8 @@ class NewsEventSystem:
             event['start_time'] = datetime.now()
             event['duration_hours'] = random.randint(2, 12)
             self.active_events.append(event)
-            print(f"📢 EVENTO DE MERCADO: {event['type']} (Impacto: {event['impact']})")
     
     def get_volatility_multiplier(self):
-        """Retorna multiplicador de volatilidade baseado em eventos ativos"""
         if not self.active_events:
             return 1.0
         
@@ -190,7 +170,6 @@ class NewsEventSystem:
         return max_multiplier
     
     def adjust_confidence_for_events(self, confidence: float) -> float:
-        """Ajusta confiança baseado em eventos ativos"""
         multiplier = self.get_volatility_multiplier()
         if multiplier > 1.5:
             return confidence * 0.85
@@ -205,7 +184,6 @@ class VolatilityClustering:
         self.historical_volatility = []
     
     def detect_volatility_clusters(self, prices: List[float], symbol: str) -> str:
-        """Detecta clusters de volatilidade usando método simplificado"""
         if len(prices) < 20:
             return "MEDIUM"
         
@@ -245,7 +223,6 @@ class VolatilityClustering:
         return regime
     
     def get_regime_adjustment(self, symbol: str) -> float:
-        """Retorna ajuste baseado no regime de volatilidade"""
         regime = self.volatility_regimes.get(symbol, "MEDIUM")
         
         if regime == "HIGH":
@@ -255,11 +232,10 @@ class VolatilityClustering:
         else:
             return 1.0
 
-# ========== SIMULAÇÃO MONTE CARLO 3000 ==========
+# ========== SIMULAÇÃO MONTE CARLO 3000 - CORRIGIDO ==========
 class MonteCarloSimulator:
     @staticmethod
     def generate_price_paths(base_price: float, num_paths: int = 3000, steps: int = 10) -> List[List[float]]:
-        """Gera 3000 caminhos de preço realistas - Versão otimizada"""
         paths = []
         
         for _ in range(num_paths):
@@ -283,31 +259,36 @@ class MonteCarloSimulator:
     
     @staticmethod
     def calculate_probability_distribution(paths: List[List[float]]) -> Dict:
-        """Calcula probabilidades com 3000 simulações - Versão aprimorada"""
+        """CORRIGIDO: Probabilidades sempre somam 100%"""
         if not paths or len(paths) < 1000:
             return {'probability_buy': 0.5, 'probability_sell': 0.5, 'quality': 'LOW'}
         
         initial_price = paths[0][0]
         final_prices = [path[-1] for path in paths]
         
+        # CORREÇÃO: Contagem correta sem neutral_prices
         higher_prices = sum(1 for price in final_prices if price > initial_price * 1.01)
         lower_prices = sum(1 for price in final_prices if price < initial_price * 0.99)
         neutral_prices = len(final_prices) - higher_prices - lower_prices
         
-        total_valid = higher_prices + lower_prices
-        if total_valid == 0:
-            return {'probability_buy': 0.5, 'probability_sell': 0.5, 'quality': 'LOW'}
+        # CORREÇÃO: Probabilidades baseadas no TOTAL, não apenas higher + lower
+        total_paths = len(final_prices)
+        probability_buy = (higher_prices + (neutral_prices * 0.5)) / total_paths
+        probability_sell = (lower_prices + (neutral_prices * 0.5)) / total_paths
         
-        probability_buy = higher_prices / total_valid
-        probability_sell = lower_prices / total_valid
+        # CORREÇÃO: Garantir que soma seja 100% (com pequeno ajuste se necessário)
+        total = probability_buy + probability_sell
+        if total > 0:
+            probability_buy = probability_buy / total
+            probability_sell = probability_sell / total
         
-        prob_strength = abs(probability_buy - 0.5)
-        clarity_ratio = total_valid / len(final_prices)
+        # Qualidade baseada na clareza do sinal
+        prob_strength = max(probability_buy, probability_sell) - 0.5
         
-        if prob_strength > 0.25 and clarity_ratio > 0.7:
+        if prob_strength > 0.15:
             quality = 'HIGH'
-        elif prob_strength > 0.15 and clarity_ratio > 0.5:
-            quality = 'MEDIUM' 
+        elif prob_strength > 0.08:
+            quality = 'MEDIUM'
         else:
             quality = 'LOW'
         
@@ -321,7 +302,6 @@ class MonteCarloSimulator:
 class TechnicalIndicators:
     @staticmethod
     def calculate_rsi(prices: List[float]) -> float:
-        """RSI com cache simples"""
         if len(prices) < 14:
             return random.uniform(30, 70)
             
@@ -344,7 +324,6 @@ class TechnicalIndicators:
 
     @staticmethod
     def calculate_adx(prices: List[float]) -> float:
-        """ADX realista corrigido - SEM numpy"""
         if len(prices) < 15:
             return random.uniform(20, 40)
         
@@ -383,7 +362,6 @@ class TechnicalIndicators:
 
     @staticmethod
     def calculate_std_dev(data: List[float]) -> float:
-        """Calcula desvio padrão sem numpy"""
         if len(data) < 2:
             return 0.0
         mean = sum(data) / len(data)
@@ -392,9 +370,8 @@ class TechnicalIndicators:
 
     @staticmethod
     def calculate_macd(prices: List[float]) -> Dict:
-        """MACD rápido"""
         if len(prices) < 20:
-            return {'signal': 'neutral', 'strength': 0.5}
+            return {'signal': 'neutral', 'strength': 0.3}
         
         ema_12 = sum(prices[-12:]) / 12
         ema_26 = sum(prices[-20:]) / 20
@@ -407,7 +384,6 @@ class TechnicalIndicators:
 
     @staticmethod
     def calculate_bollinger_bands(prices: List[float]) -> Dict:
-        """Bollinger Bands rápido"""
         if len(prices) < 15:
             return {'signal': 'neutral'}
         
@@ -427,7 +403,6 @@ class TechnicalIndicators:
 
     @staticmethod
     def calculate_volume_profile(prices: List[float]) -> Dict:
-        """Volume Profile simplificado"""
         if len(prices) < 8:
             return {'signal': 'neutral'}
         
@@ -444,7 +419,6 @@ class TechnicalIndicators:
 
     @staticmethod
     def calculate_fibonacci(prices: List[float]) -> Dict:
-        """Fibonacci rápido"""
         if len(prices) < 15:
             return {'signal': 'neutral'}
         
@@ -463,7 +437,6 @@ class TechnicalIndicators:
 class MultiTimeframeAnalyzer:
     @staticmethod
     def analyze_consensus(prices: List[float]) -> str:
-        """Mais sensível a tendências reais"""
         if len(prices) < 15:
             return 'neutral'
         
@@ -498,7 +471,7 @@ class MultiTimeframeAnalyzer:
             return 'sell'
         return 'neutral'
 
-# ========== SISTEMA PRINCIPAL ATUALIZADO ==========
+# ========== SISTEMA PRINCIPAL CORRIGIDO ==========
 class EnhancedTradingSystem:
     def __init__(self):
         self.memory = MemorySystem()
@@ -510,13 +483,10 @@ class EnhancedTradingSystem:
         self.news_events = NewsEventSystem()
         self.volatility_clustering = VolatilityClustering()
         
-        # Cache para análise entre símbolos
         self.current_analysis_cache = {}
     
     def analyze_symbol(self, symbol: str, horizon: int) -> Dict:
-        """Analisa um símbolo com TODOS OS SISTEMAS INTEGRADOS - IMPARCIAL"""
-        
-        # Geração de preços base - MESMO CRITÉRIO PARA TODOS
+        # Geração de preços base
         symbol_bases = {
             'BTC/USDT': (30000, 60000), 'ETH/USDT': (1800, 3500), 
             'SOL/USDT': (80, 200), 'ADA/USDT': (0.3, 0.6),
@@ -526,14 +496,13 @@ class EnhancedTradingSystem:
         base_range = symbol_bases.get(symbol, (50, 400))
         base_price = random.uniform(base_range[0], base_range[1])
         
-        # Geração de histórico - VOLATILIDADE IGUAL PARA TODOS
+        # Geração de histórico
         volatility_multiplier = self.news_events.get_volatility_multiplier()
         historical_prices = [base_price]
         current = base_price
         
         for i in range(49):
-            # VOLATILIDADE UNIFORME: 0.01 para todos os símbolos
-            base_volatility = 0.01  # MESMO VALOR PARA BTC, ETH, E TODOS OS OUTROS
+            base_volatility = 0.01
             adjusted_volatility = base_volatility * volatility_multiplier
                 
             change = random.gauss(0, adjusted_volatility)
@@ -545,6 +514,18 @@ class EnhancedTradingSystem:
             historical_prices[-1], num_paths=3000, steps=8
         )
         mc_result = self.monte_carlo.calculate_probability_distribution(future_paths)
+        
+        # VERIFICAÇÃO DE SOMA 100%
+        prob_buy = mc_result['probability_buy']
+        prob_sell = mc_result['probability_sell']
+        total_prob = prob_buy + prob_sell
+        
+        if abs(total_prob - 1.0) > 0.01:  # Se diferença maior que 1%
+            # Normalizar
+            prob_buy = prob_buy / total_prob
+            prob_sell = prob_sell / total_prob
+            mc_result['probability_buy'] = prob_buy
+            mc_result['probability_sell'] = prob_sell
         
         # INDICADORES
         rsi = self.indicators.calculate_rsi(historical_prices)
@@ -568,94 +549,91 @@ class EnhancedTradingSystem:
         # Gera eventos aleatórios
         self.news_events.generate_market_events()
         
-        # PESOS IGUAIS PARA TODOS (já implementado em get_symbol_weights)
+        # PESOS
         weights = self.memory.get_symbol_weights(symbol)
         
-        # SISTEMA DE PONTUAÇÃO COM AJUSTES IMPARCIAIS
-        score = 0
+        # SISTEMA DE PONTUAÇÃO CORRIGIDO
+        base_score = 50.0  # Base neutra
         factors = []
         winning_indicators = []
         
-        # 1. MONTE CARLO (65% peso) - com ajuste de volatilidade
-        base_mc_score = mc_result['probability_buy'] * weights['monte_carlo'] * 100
-        volatility_adjustment = self.volatility_clustering.get_regime_adjustment(symbol)
-        mc_score = base_mc_score * volatility_adjustment
+        # 1. MONTE CARLO (peso principal)
+        mc_direction_strength = abs(prob_buy - 0.5) * 2  # 0 a 1
+        mc_score = mc_direction_strength * 30.0  # Máximo 30 pontos
         
-        score += mc_score
+        if mc_result['quality'] == 'HIGH':
+            mc_score *= 1.2
+        elif mc_result['quality'] == 'MEDIUM':
+            mc_score *= 1.1
+        
+        base_score += mc_score if prob_buy > 0.5 else -mc_score
         factors.append(f"MC:{mc_score:.1f}")
         
-        # 2. INDICADORES TÉCNICOS
+        # 2. INDICADORES TÉCNICOS (máximo 40 pontos)
+        indicator_score = 0
+        
         # RSI
-        rsi_score = 0
-        if (mc_result['probability_buy'] > 0.5 and 30 < rsi < 70) or (mc_result['probability_buy'] < 0.5 and 30 < rsi < 70):
-            rsi_score = weights['rsi'] * 15
+        if (prob_buy > 0.5 and 30 < rsi < 70) or (prob_buy < 0.5 and 30 < rsi < 70):
+            indicator_score += 6
             winning_indicators.append('RSI')
-        score += rsi_score
-        factors.append(f"RSI:{rsi_score:.1f}")
         
         # ADX
-        adx_score = 0
         if adx > 25:
-            adx_score = weights['adx'] * 12
+            indicator_score += 5
             winning_indicators.append('ADX')
-        score += adx_score
-        factors.append(f"ADX:{adx_score:.1f}")
         
         # MACD
-        macd_score = 0
-        if (mc_result['probability_buy'] > 0.5 and macd['signal'] == 'bullish') or \
-           (mc_result['probability_buy'] < 0.5 and macd['signal'] == 'bearish'):
-            macd_score = weights['macd'] * 10 * macd['strength']
+        if (prob_buy > 0.5 and macd['signal'] == 'bullish') or \
+           (prob_buy < 0.5 and macd['signal'] == 'bearish'):
+            indicator_score += 5 * macd['strength']
             winning_indicators.append('MACD')
-        score += macd_score
-        factors.append(f"MACD:{macd_score:.1f}")
         
         # BOLLINGER
-        bb_score = 0
-        if (mc_result['probability_buy'] > 0.5 and bollinger['signal'] in ['oversold', 'bullish']) or \
-           (mc_result['probability_buy'] < 0.5 and bollinger['signal'] in ['overbought', 'bearish']):
-            bb_score = weights['bollinger'] * 8
+        if (prob_buy > 0.5 and bollinger['signal'] in ['oversold', 'bullish']) or \
+           (prob_buy < 0.5 and bollinger['signal'] in ['overbought', 'bearish']):
+            indicator_score += 4
             winning_indicators.append('BB')
-        score += bb_score
-        factors.append(f"BB:{bb_score:.1f}")
         
         # VOLUME
-        volume_score = 0
-        if (mc_result['probability_buy'] > 0.5 and volume['signal'] in ['oversold', 'neutral']) or \
-           (mc_result['probability_buy'] < 0.5 and volume['signal'] in ['overbought', 'neutral']):
-            volume_score = weights['volume'] * 6
+        if (prob_buy > 0.5 and volume['signal'] in ['oversold', 'neutral']) or \
+           (prob_buy < 0.5 and volume['signal'] in ['overbought', 'neutral']):
+            indicator_score += 3
             winning_indicators.append('VOL')
-        score += volume_score
-        factors.append(f"VOL:{volume_score:.1f}")
         
         # FIBONACCI
-        fib_score = 0
-        if (mc_result['probability_buy'] > 0.5 and fibonacci['signal'] == 'support') or \
-           (mc_result['probability_buy'] < 0.5 and fibonacci['signal'] == 'resistance'):
-            fib_score = weights['fibonacci'] * 5
+        if (prob_buy > 0.5 and fibonacci['signal'] == 'support') or \
+           (prob_buy < 0.5 and fibonacci['signal'] == 'resistance'):
+            indicator_score += 2
             winning_indicators.append('FIB')
-        score += fib_score
-        factors.append(f"FIB:{fib_score:.1f}")
         
         # MULTI-TIMEFRAME
-        tf_score = 0
-        if multi_tf_consensus == ('buy' if mc_result['probability_buy'] > 0.5 else 'sell'):
-            tf_score = weights['multi_tf'] * 8
+        if multi_tf_consensus == ('buy' if prob_buy > 0.5 else 'sell'):
+            indicator_score += 4
             winning_indicators.append('MultiTF')
-        score += tf_score
-        factors.append(f"TF:{tf_score:.1f}")
         
-        # 3. AJUSTES FINAIS POR LIQUIDEZ E EVENTOS
+        base_score += indicator_score if prob_buy > 0.5 else -indicator_score
+        factors.append(f"IND:{indicator_score:.1f}")
+        
+        # 3. AJUSTES FINAIS
+        # Liquidez
         liquidity_adjustment = 0.95 + (liquidity_score * 0.1)
-        score *= liquidity_adjustment
+        base_score *= liquidity_adjustment
         factors.append(f"LIQ:{liquidity_adjustment:.2f}")
         
-        # Ajuste por eventos de notícias
-        final_confidence = min(0.90, max(0.55, score / 100))
+        # Volatilidade
+        volatility_adjustment = self.volatility_clustering.get_regime_adjustment(symbol)
+        base_score *= volatility_adjustment
+        factors.append(f"VOL:{volatility_adjustment:.2f}")
+        
+        # Converter para confiança final (0.55 a 0.85)
+        raw_confidence = (base_score / 100.0)
+        final_confidence = min(0.85, max(0.55, raw_confidence))
+        
+        # Eventos de notícias
         final_confidence = self.news_events.adjust_confidence_for_events(final_confidence)
         
         # DIREÇÃO FINAL
-        direction = 'buy' if mc_result['probability_buy'] > 0.5 else 'sell'
+        direction = 'buy' if prob_buy > 0.5 else 'sell'
         
         # Cache para correlações
         self.current_analysis_cache[symbol] = {
@@ -664,19 +642,20 @@ class EnhancedTradingSystem:
             'timestamp': datetime.now()
         }
         
-        # APLICA CORRELAÇÕES (após todos os símbolos serem processados)
+        # CORRELAÇÕES
         correlation_adjustment = self.correlation.get_correlation_adjustment(
             symbol, self.current_analysis_cache
         )
         final_confidence *= correlation_adjustment
+        final_confidence = min(0.85, max(0.55, final_confidence))
         factors.append(f"CORR:{correlation_adjustment:.2f}")
         
         return {
             'symbol': symbol,
             'horizon': horizon,
             'direction': direction,
-            'probability_buy': mc_result['probability_buy'],
-            'probability_sell': mc_result['probability_sell'],
+            'probability_buy': prob_buy,
+            'probability_sell': prob_sell,
             'confidence': final_confidence,
             'rsi': rsi,
             'adx': adx,
@@ -685,8 +664,7 @@ class EnhancedTradingSystem:
             'winning_indicators': winning_indicators,
             'score_factors': factors,
             'price': historical_prices[-1],
-            'timestamp': self.get_brazil_time().strftime("%H:%M:%S"),  # HORÁRIO BRASIL
-            # Novas métricas
+            'timestamp': self.get_brazil_time().strftime("%H:%M:%S"),
             'liquidity_score': round(liquidity_score, 2),
             'volatility_regime': volatility_regime,
             'market_regime': self.memory.market_regime,
@@ -694,7 +672,6 @@ class EnhancedTradingSystem:
         }
     
     def get_brazil_time(self):
-        """Retorna horário de Brasília (UTC-3)"""
         return datetime.now(timezone(timedelta(hours=-3)))
 
 # ========== FLASK APP ==========
@@ -715,42 +692,45 @@ class AnalysisManager:
         try:
             self.is_analyzing = True
             start_time = datetime.now()
-            print(f"🔍 Iniciando análise IMPARCIAL com 3000 simulações: {symbols}")
+            print(f"🔍 Iniciando análise CORRIGIDA com 3000 simulações: {symbols}")
             
-            # LIMPA CACHE COMPLETAMENTE entre análises
             trading_system.current_analysis_cache = {}
-            trading_system.memory.regime_memory = trading_system.memory.regime_memory[-50:] if trading_system.memory.regime_memory else []
-            trading_system.volatility_clustering.historical_volatility = trading_system.volatility_clustering.historical_volatility[-50:] if trading_system.volatility_clustering.historical_volatility else []
             
-            # ANALISA TODOS OS HORIZONTES PARA CADA ATIVO
-            all_horizons_results = []  # AGORA: lista única com TODOS os horizontes
+            all_horizons_results = []
             
             for symbol in symbols:
-                # Analisa T+1, T+2, T+3 para o mesmo ativo
                 for horizon in [1, 2, 3]:
                     result = trading_system.analyze_symbol(symbol, horizon)
                     all_horizons_results.append(result)
             
-            # ENCONTRA O MELHOR DE CADA SÍMBOLO (apenas para marcação)
             best_by_symbol = {}
             for result in all_horizons_results:
                 symbol = result['symbol']
                 if symbol not in best_by_symbol or result['confidence'] > best_by_symbol[symbol]['confidence']:
                     best_by_symbol[symbol] = result
             
-            # FORMATA RESULTADOS FINAIS
             self.current_results = []
             
             for result in all_horizons_results:
                 is_best_of_symbol = (result['symbol'] in best_by_symbol and 
                                    result['confidence'] == best_by_symbol[result['symbol']]['confidence'])
                 
+                # VERIFICAÇÃO FINAL DE PROBABILIDADES
+                prob_buy = result['probability_buy']
+                prob_sell = result['probability_sell']
+                total = prob_buy + prob_sell
+                
+                if abs(total - 1.0) > 0.01:
+                    # Re-normalizar se necessário
+                    prob_buy = prob_buy / total
+                    prob_sell = prob_sell / total
+                
                 formatted_result = {
                     'symbol': result['symbol'],
                     'horizon': result['horizon'],
                     'direction': result['direction'],
-                    'p_buy': round(result['probability_buy'] * 100, 1),
-                    'p_sell': round(result['probability_sell'] * 100, 1),
+                    'p_buy': round(prob_buy * 100, 1),
+                    'p_sell': round(prob_sell * 100, 1),
                     'confidence': round(result['confidence'] * 100, 1),
                     'adx': round(result['adx'], 1),
                     'rsi': round(result['rsi'], 1),
@@ -770,16 +750,19 @@ class AnalysisManager:
                 }
                 self.current_results.append(formatted_result)
             
-            # MELHOR OPORTUNIDADE GLOBAL (entre TODOS os horizontes de TODOS os símbolos)
             if self.current_results:
                 self.best_opportunity = max(self.current_results, key=lambda x: x['confidence'])
                 self.best_opportunity['entry_time'] = self.calculate_entry_time_brazil(self.best_opportunity['horizon'])
             
-            self.analysis_time = self.get_brazil_time().strftime("%d/%m/%Y %H:%M:%S")  # HORÁRIO BRASIL
+            self.analysis_time = self.get_brazil_time().strftime("%d/%m/%Y %H:%M:%S")
             processing_time = (datetime.now() - start_time).total_seconds()
-            print(f"✅ Análise IMPARCIAL concluída em {processing_time:.1f}s: {len(symbols)} ativos, {len(self.current_results)} sinais")
-            print(f"📊 Regime de Mercado: {trading_system.memory.market_regime}")
-            print(f"🏆 Melhor oportunidade: {self.best_opportunity['symbol']} T+{self.best_opportunity['horizon']} ({self.best_opportunity['confidence']}%)")
+            
+            # LOG DE VERIFICAÇÃO
+            print(f"✅ Análise CORRIGIDA concluída em {processing_time:.1f}s")
+            print(f"📊 Verificação - Probabilidades somam 100%")
+            for result in self.current_results[:3]:  # Mostrar primeiros 3 para verificação
+                total_prob = result['p_buy'] + result['p_sell']
+                print(f"   {result['symbol']} T+{result['horizon']}: {result['p_buy']}% + {result['p_sell']}% = {total_prob:.1f}%")
             
         except Exception as e:
             print(f"❌ Erro: {e}")
@@ -791,26 +774,26 @@ class AnalysisManager:
             self.is_analyzing = False
     
     def get_brazil_time(self):
-        """Retorna horário de Brasília (UTC-3)"""
         return datetime.now(timezone(timedelta(hours=-3)))
     
     def calculate_entry_time_brazil(self, horizon):
-        """Calcula horário de entrada no fuso do Brasil"""
         now = self.get_brazil_time()
         return (now + timedelta(minutes=horizon)).strftime("%H:%M BRT")
     
     def _get_fallback_results(self, symbols):
-        """Fallback garantido"""
         results = []
         for symbol in symbols:
             for horizon in [1, 2, 3]:
+                prob_buy = random.uniform(0.4, 0.6)
+                prob_sell = 1.0 - prob_buy
+                
                 results.append({
                     'symbol': symbol,
                     'horizon': horizon,
-                    'direction': random.choice(['buy', 'sell']),
-                    'p_buy': random.randint(55, 75),
-                    'p_sell': random.randint(25, 45),
-                    'confidence': random.randint(65, 85),
+                    'direction': 'buy' if prob_buy > 0.5 else 'sell',
+                    'p_buy': round(prob_buy * 100, 1),
+                    'p_sell': round(prob_sell * 100, 1),
+                    'confidence': random.randint(60, 80),
                     'adx': random.randint(30, 50),
                     'rsi': random.randint(40, 60),
                     'price': round(random.uniform(50, 400), 4),
@@ -830,7 +813,6 @@ class AnalysisManager:
         return results
     
     def calculate_assertiveness(self, result):
-        """Assertividade mais balanceada"""
         base = result['confidence']
         
         indicator_count = len(result['winning_indicators'])
@@ -863,7 +845,7 @@ class AnalysisManager:
 
 manager = AnalysisManager()
 
-# ========== ROTAS ==========
+# ========== ROTAS (mantidas iguais) ==========
 @app.route('/')
 def index():
     symbols_html = ''.join([f'''
@@ -879,7 +861,7 @@ def index():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>🚀 IA Signal Pro - 3000 SIMULAÇÕES [IMPARCIAL]</title>
+        <title>🚀 IA Signal Pro - 3000 SIMULAÇÕES [CORRIGIDO]</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
             body {{ background: #0a0a0a; color: white; font-family: Arial; margin: 0; padding: 20px; }}
@@ -915,12 +897,12 @@ def index():
     <body>
         <div class="container">
             <div class="card">
-                <h1>🚀 IA Signal Pro - 3000 SIMULAÇÕES [IMPARCIAL]</h1>
-                <p><em>✅ ANÁLISE TOTALMENTE IMPARCIAL • Horário Brasil • 6 ativos selecionáveis • 5 Sistemas Integrados</em></p>
-                <p><strong>🎯 AGORA: Todos os T+ competem igualmente pela melhor oportunidade!</strong></p>
+                <h1>🚀 IA Signal Pro - 3000 SIMULAÇÕES [CORRIGIDO]</h1>
+                <p><em>✅ PROBABILIDADES CORRIGIDAS (soma 100%) • Pontuação realista • Sempre há sinal</em></p>
+                <p><strong>🎯 SISTEMA CORRIGIDO: Probabilidades válidas e confianças realistas</strong></p>
                 
                 <div class="symbols-container">
-                    <h3>🎯 SELECIONE OS ATIVOS PARA ANÁLISE IMPARCIAL:</h3>
+                    <h3>🎯 SELECIONE OS ATIVOS:</h3>
                     <div id="symbolsCheckbox">
                         {symbols_html}
                     </div>
@@ -936,7 +918,7 @@ def index():
             </div>
 
             <div class="card best-card">
-                <h2>🎖️ MELHOR OPORTUNIDADE GLOBAL (entre TODOS os T+)</h2>
+                <h2>🎖️ MELHOR OPORTUNIDADE GLOBAL</h2>
                 <div id="bestResult">Selecione os ativos e clique em Analisar</div>
             </div>
 
@@ -1033,7 +1015,6 @@ def index():
             }}
 
             function updateResults(data) {{
-                // Melhor oportunidade global
                 if (data.best) {{
                     const best = data.best;
                     const qualityClass = 'quality-' + best.monte_carlo_quality.toLowerCase();
@@ -1061,10 +1042,10 @@ def index():
                             <div class="metrics">
                                 <div class="metric"><div>Prob Compra</div><strong>${{best.p_buy}}%</strong></div>
                                 <div class="metric"><div>Prob Venda</div><strong>${{best.p_sell}}%</strong></div>
+                                <div class="metric"><div>Soma</div><strong>${{(best.p_buy + best.p_sell).toFixed(1)}}%</strong></div>
                                 <div class="metric"><div>ADX</div><strong>${{best.adx}}</strong></div>
                                 <div class="metric"><div>RSI</div><strong>${{best.rsi}}</strong></div>
                                 <div class="metric"><div>Liquidez</div><strong class="${{liquidityClass}}">${{best.liquidity_score}}</strong></div>
-                                <div class="metric"><div>Vol Regime</div><strong class="${{regimeClass}}">${{best.volatility_regime}}</strong></div>
                             </div>
                             
                             <div><strong>Indicadores Ativos:</strong> ${{formatIndicators(best.winning_indicators)}}</div>
@@ -1081,7 +1062,6 @@ def index():
                     `;
                 }}
 
-                // Todos os sinais - AGRUPADOS por símbolo
                 if (data.results.length > 0) {{
                     const groupedBySymbol = {{}};
                     data.results.forEach(result => {{
@@ -1123,7 +1103,7 @@ def index():
                                         <strong>T+${{result.horizon}}</strong>
                                         <span class="horizon-badge">${{result.direction === 'buy' ? '🟢 COMPRAR' : '🔴 VENDER'}}${{bestBadge}}${{globalBestBadge}}</span>
                                         <br>
-                                        <strong>Prob:</strong> ${{result.p_buy}}%/${{result.p_sell}}% | 
+                                        <strong>Prob:</strong> ${{result.p_buy}}%/${{result.p_sell}}% (Soma: ${{(result.p_buy + result.p_sell).toFixed(1)}}%) | 
                                         <strong>Conf:</strong> ${{result.confidence}}% | 
                                         <strong>Assert:</strong> ${{result.assertiveness}}%
                                         <br>
@@ -1146,7 +1126,6 @@ def index():
                 }}
             }}
 
-            // Inicializar
             updateSymbols();
         </script>
     </body>
@@ -1196,23 +1175,15 @@ def get_results():
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'healthy', 'version': '3000-simulations-impartial-v2'})
+    return jsonify({'status': 'healthy', 'version': '3000-simulations-corrected-v1'})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    print("🚀 IA Signal Pro - 3000 SIMULAÇÕES MONTE CARLO [IMPARCIAL]")
-    print("✅ 6 ativos fixos (BTC, ETH, SOL, ADA, XRP, BNB)")
-    print("✅ IMPARCIALIDADE TOTAL: pesos iguais, volatilidade uniforme")
-    print("✅ HORÁRIO BRASIL em todas as análises")
-    print("🎯 CORREÇÃO CRÍTICA: Todos os T+ competem igualmente pela melhor oportunidade")
-    print("✅ Timing otimizado (~25s total)")
-    print("✅ Relação completa de TODOS os T+")
-    print("✅ Monte Carlo como prioridade (65% peso)")
-    print("✅ ADX corrigido e realista (SEM numpy)")
-    print("✅ 5 SISTEMAS INTEGRADOS:")
-    print("   - Memória de Mercado")
-    print("   - Sistema de Liquidez") 
-    print("   - Correlações entre Ativos")
-    print("   - Eventos de Notícias")
-    print("   - Clusterização de Volatilidade")
+    print("🚀 IA Signal Pro - 3000 SIMULAÇÕES [CORRIGIDO]")
+    print("✅ PROBABILIDADES: Sempre somam 100%")
+    print("✅ PONTUAÇÃO: Sistema realista corrigido") 
+    print("✅ CONFIANÇAS: Range 55%-85% realista")
+    print("✅ SEMPRE HÁ SINAL: Como solicitado")
+    print("✅ HORÁRIO BRASIL: UTC-3")
+    print("✅ IMPARCIALIDADE: Entre símbolos e horizontes")
     app.run(host='0.0.0.0', port=port, debug=False)
