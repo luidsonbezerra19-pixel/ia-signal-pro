@@ -484,13 +484,17 @@ class MultiTimeframeAnalyzer:
 class MonteCarloSimulator:
     @staticmethod
     def generate_price_paths(base_price: float, volatility: float, num_paths: int = 1800, steps: int = 4) -> List[List[float]]:
+        # piso de volatilidade para evitar dispersão ~zero em mercado calmo
+        vol = max(volatility, 0.006)  # ~0.6% / passo
+
         paths = []
         for _ in range(num_paths):
             prices = [base_price]
             current = base_price
             for step in range(steps - 1):
-                adjusted_volatility = volatility * (1 + (step * 0.05))
-                trend = random.uniform(-volatility, volatility)
+                # leve aumento de vol ao longo dos passos
+                adjusted_volatility = vol * (1 + (step * 0.05))
+                trend = random.uniform(-vol, vol)
                 change = trend + random.gauss(0, 1) * adjusted_volatility
                 new_price = current * (1 + change)
                 new_price = max(new_price, base_price * 0.7)
@@ -499,34 +503,47 @@ class MonteCarloSimulator:
             paths.append(prices)
         return paths
     
-    @staticmethod
+        @staticmethod
     def calculate_probability_distribution(paths: List[List[float]]) -> Dict:
         if not paths or len(paths) < 200:
             return {'probability_buy': 0.5, 'probability_sell': 0.5, 'quality': 'LOW'}
+
         initial_price = paths[0][0]
-        final_prices = [path[-1] for path in paths]
-        higher_prices = sum(1 for price in final_prices if price > initial_price * 1.01)
-        lower_prices = sum(1 for price in final_prices if price < initial_price * 0.99)
-        neutral_prices = len(final_prices) - higher_prices - lower_prices
-        total_paths = len(final_prices)
-        probability_buy = (higher_prices + (neutral_prices * 0.5)) / total_paths
-        probability_sell = (lower_prices + (neutral_prices * 0.5)) / total_paths
-        total = probability_buy + probability_sell
+        finals = [p[-1] for p in paths]
+        # retornos finais
+        rets = [(f / initial_price) - 1.0 for f in finals]
+
+        # desvio-padrão empírico para definir limiar adaptativo
+        n = len(rets)
+        mean = sum(rets) / n
+        var = sum((r - mean) ** 2 for r in rets) / max(1, n)
+        sigma = var ** 0.5
+
+        # limiar dinâmico: metade do sigma ou 0.3% (o que for maior)
+        thr = max(0.003, 0.5 * sigma)
+
+        higher = sum(1 for r in rets if r >  thr)
+        lower  = sum(1 for r in rets if r < -thr)
+        neutral = n - higher - lower
+
+        pb = (higher + 0.5 * neutral) / n
+        ps = (lower  + 0.5 * neutral) / n
+
+        total = pb + ps
         if total > 0:
-            probability_buy /= total
-            probability_sell /= total
-        prob_strength = max(probability_buy, probability_sell) - 0.5
+            pb /= total
+            ps /= total
+
+        # qualidade baseada no afastamento do 0.5
+        prob_strength = abs(pb - 0.5)
         if prob_strength > 0.15:
             quality = 'HIGH'
         elif prob_strength > 0.08:
             quality = 'MEDIUM'
         else:
             quality = 'LOW'
-        return {
-            'probability_buy': probability_buy,
-            'probability_sell': probability_sell,
-            'quality': quality
-        }
+
+        return {'probability_buy': pb, 'probability_sell': ps, 'quality': quality}
 
 # ========== SISTEMA PRINCIPAL ==========
 class EnhancedTradingSystem:
@@ -570,7 +587,7 @@ class EnhancedTradingSystem:
         real_volatility = sum(returns) / len(returns) if returns else 0.01
         
         # Monte Carlo: steps por horizonte (T+1 => 2, T+3 => 4)
-        steps = max(2, horizon + 1)
+        steps = max(3, horizon + 3)
         future_paths = self.monte_carlo.generate_price_paths(
             historical_prices[-1], 
             volatility=real_volatility,
@@ -578,9 +595,15 @@ class EnhancedTradingSystem:
             steps=steps
         )
         mc_result = self.monte_carlo.calculate_probability_distribution(future_paths)
-        prob_buy = mc_result['probability_buy']
+        prob_buy  = mc_result['probability_buy']
         prob_sell = mc_result['probability_sell']
-        
+
+        # normalização leve (sem reset)
+        total = prob_buy + prob_sell
+        if total > 0:
+        prob_buy  /= total
+        prob_sell /= total
+
         # INDICADORES (reais)
         rsi = self.indicators.calculate_rsi(historical_prices)
         adx = self.indicators.calculate_adx(historical_prices)
