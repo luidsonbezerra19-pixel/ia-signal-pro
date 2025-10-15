@@ -674,6 +674,11 @@ class EnhancedTradingSystem:
 
 
 app = Flask(__name__)
+
+def _br_time_str(dt=None):
+    tz = datetime.timezone(datetime.timedelta(hours=-3))
+    dt = dt or datetime.datetime.now(tz)
+    return dt.strftime('%d/%m/%Y %H:%M:%S')
 CORS(app)
 
 trading_system = EnhancedTradingSystem()
@@ -1184,19 +1189,33 @@ def analyze():
         log.exception("erro no /api/analyze")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
 @app.route('/api/results')
 def get_results():
     with manager._lock:
+        best = manager.best_opportunity
+        # Guarantee entry_time on best
+        try:
+            if best and not best.get('entry_time'):
+                # Fallback: compute from horizon now (Brazil time)
+                from datetime import datetime, timedelta, timezone
+                now = datetime.now(timezone(timedelta(hours=-3)))
+                mins = int(best.get('horizon', 1))
+                best['entry_time'] = (now + timedelta(minutes=mins)).strftime('%H:%M BRT')
+        except Exception:
+            pass
+
+        analysis_time = manager.analysis_time or _br_time_str()
+
         payload = {
             'success': True,
-            'results': manager.current_results,
-            'best': manager.best_opportunity,
-            'analysis_time': manager.analysis_time,
-            'total_signals': len(manager.current_results),
+            'results': manager.current_results or [],
+            'best': best,
+            'analysis_time': analysis_time,
+            'total_signals': len(manager.current_results or []),
             'is_analyzing': manager.is_analyzing
         }
     return jsonify(payload)
-
 @app.route('/api/best_signal')
 def best_signal():
     with manager._lock:
