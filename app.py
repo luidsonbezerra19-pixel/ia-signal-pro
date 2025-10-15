@@ -1,3 +1,26 @@
+# ==== HOTFIX HEADER (coloque isso NA LINHA 1 do app.py) ====
+from datetime import datetime, timezone, timedelta
+
+# Garante o Flask app antes de qualquer @app.route
+try:
+    app  # type: ignore[name-defined]
+except NameError:
+    from flask import Flask
+    from flask_cors import CORS
+    app = Flask(__name__)
+    CORS(app)
+
+# Garante a função de horário local (usada por /api/results)
+try:
+    _br_time_str  # type: ignore[name-defined]
+except NameError:
+    def _br_time_str():
+        """Hora local America/Maceio (UTC-03) dd/mm/YYYY HH:MM:SS."""
+        try:
+            return datetime.now(timezone(timedelta(hours=-3))).strftime("%d/%m/%Y %H:%M:%S")
+        except Exception:
+            return datetime.utcnow().strftime("%d/%m/%Y %H:%M:%S")
+
 from flask import Flask, render_template, jsonify, request
 from flask_cors import CORS
 import threading
