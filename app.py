@@ -484,17 +484,13 @@ class MultiTimeframeAnalyzer:
 class MonteCarloSimulator:
     @staticmethod
     def generate_price_paths(base_price: float, volatility: float, num_paths: int = 1800, steps: int = 4) -> List[List[float]]:
-        # piso de volatilidade para evitar dispersão ~zero em mercado calmo
-        vol = max(volatility, 0.006)  # ~0.6% / passo
-
         paths = []
         for _ in range(num_paths):
             prices = [base_price]
             current = base_price
             for step in range(steps - 1):
-                # leve aumento de vol ao longo dos passos
-                adjusted_volatility = vol * (1 + (step * 0.05))
-                trend = random.uniform(-vol, vol)
+                adjusted_volatility = volatility * (1 + (step * 0.05))
+                trend = random.uniform(-volatility, volatility)
                 change = trend + random.gauss(0, 1) * adjusted_volatility
                 new_price = current * (1 + change)
                 new_price = max(new_price, base_price * 0.7)
@@ -503,238 +499,99 @@ class MonteCarloSimulator:
             paths.append(prices)
         return paths
     
-        @staticmethod
+    @staticmethod
     def calculate_probability_distribution(paths: List[List[float]]) -> Dict:
         if not paths or len(paths) < 200:
             return {'probability_buy': 0.5, 'probability_sell': 0.5, 'quality': 'LOW'}
-
         initial_price = paths[0][0]
-        finals = [p[-1] for p in paths]
-        # retornos finais
-        rets = [(f / initial_price) - 1.0 for f in finals]
-
-        # desvio-padrão empírico para definir limiar adaptativo
-        n = len(rets)
-        mean = sum(rets) / n
-        var = sum((r - mean) ** 2 for r in rets) / max(1, n)
-        sigma = var ** 0.5
-
-        # limiar dinâmico: metade do sigma ou 0.3% (o que for maior)
-        thr = max(0.003, 0.5 * sigma)
-
-        higher = sum(1 for r in rets if r >  thr)
-        lower  = sum(1 for r in rets if r < -thr)
-        neutral = n - higher - lower
-
-        pb = (higher + 0.5 * neutral) / n
-        ps = (lower  + 0.5 * neutral) / n
-
-        total = pb + ps
+        final_prices = [path[-1] for path in paths]
+        higher_prices = sum(1 for price in final_prices if price > initial_price * 1.01)
+        lower_prices = sum(1 for price in final_prices if price < initial_price * 0.99)
+        neutral_prices = len(final_prices) - higher_prices - lower_prices
+        total_paths = len(final_prices)
+        probability_buy = (higher_prices + (neutral_prices * 0.5)) / total_paths
+        probability_sell = (lower_prices + (neutral_prices * 0.5)) / total_paths
+        total = probability_buy + probability_sell
         if total > 0:
-            pb /= total
-            ps /= total
-
-        # qualidade baseada no afastamento do 0.5
-        prob_strength = abs(pb - 0.5)
+            probability_buy /= total
+            probability_sell /= total
+        prob_strength = max(probability_buy, probability_sell) - 0.5
         if prob_strength > 0.15:
             quality = 'HIGH'
         elif prob_strength > 0.08:
             quality = 'MEDIUM'
         else:
             quality = 'LOW'
-
-        return {'probability_buy': pb, 'probability_sell': ps, 'quality': quality}
+        return {
+            'probability_buy': probability_buy,
+            'probability_sell': probability_sell,
+            'quality': quality
+        }
 
 # ========== SISTEMA PRINCIPAL ==========
 class EnhancedTradingSystem:
     def __init__(self):
-        self.memory = MemorySystem()
-        self.monte_carlo = MonteCarloSimulator()
-        self.indicators = TechnicalIndicators()
-        self.multi_tf = MultiTimeframeAnalyzer()
-        self.liquidity = LiquiditySystem()
-        self.correlation = CorrelationSystem()
-        self.news_events = NewsEventSystem()
-        self.volatility_clustering = VolatilityClustering()
-        self.price_fetcher = RealPriceFetcher()
-        self.current_analysis_cache = {}
-        # cache de preços com TTL
-        self._price_cache: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        """
+        Evita 50/50 distribuindo a parte neutra conforme o *viés médio* dos caminhos.
+        Usa múltiplos limiares (0.3%, 0.7%, 1.0%) e um 'z-edge' com base no desvio padrão.
+        """
+        if not paths or len(paths) < 200:
+            return {'probability_buy': 0.52, 'probability_sell': 0.48, 'quality': 'LOW'}
 
-    def _get_prices_cached(self, symbol: str, interval: str = '1m', limit: int = 50) -> List[float]:
-        key = (symbol, interval)
-        now = time.time()
-        hit = self._price_cache.get(key)
-        if hit and now - hit["ts"] < CACHE_TTL_S:
-            return hit["prices"]
-        prices = self.price_fetcher.get_historical_prices(symbol, interval, limit)
-        self._price_cache[key] = {"ts": now, "prices": prices}
-        return prices
-    
-    def analyze_symbol(self, symbol: str, horizon: int) -> Dict:
-        # PREÇOS REAIS COM CACHE
-        historical_prices = self._get_prices_cached(symbol)
-        if not historical_prices or len(historical_prices) < 10:
-            log.warning(f"[analyze] dados insuficientes para {symbol}, usando análise básica")
-            return self.get_basic_analysis(symbol, horizon)
-        
-        # Volatilidade REAL
-        returns = []
-        for i in range(1, len(historical_prices)):
-            if historical_prices[i-1] != 0:
-                ret = (historical_prices[i] - historical_prices[i-1]) / historical_prices[i-1]
-                returns.append(abs(ret))
-        real_volatility = sum(returns) / len(returns) if returns else 0.01
-        
-        # Monte Carlo: steps por horizonte (T+1 => 2, T+3 => 4)
-        steps = max(3, horizon + 3)
-        future_paths = self.monte_carlo.generate_price_paths(
-            historical_prices[-1], 
-            volatility=real_volatility,
-            num_paths=SIMS, 
-            steps=steps
-        )
-        mc_result = self.monte_carlo.calculate_probability_distribution(future_paths)
-        prob_buy  = mc_result['probability_buy']
-        prob_sell = mc_result['probability_sell']
+        initial = paths[0][0]
+        finals = [p[-1] for p in paths if len(p) > 0]
+        total = len(finals)
 
-        # normalização leve (sem reset)
-        total = prob_buy + prob_sell
-        if total > 0:
-        prob_buy  /= total
-        prob_sell /= total
+        # Contagens por faixas de ganho/perda
+        up_03 = sum(1 for x in finals if x > initial * 1.003)
+        down_03 = sum(1 for x in finals if x < initial * 0.997)
+        up_07 = sum(1 for x in finals if x > initial * 1.007)
+        down_07 = sum(1 for x in finals if x < initial * 0.993)
+        up_10 = sum(1 for x in finals if x > initial * 1.010)
+        down_10 = sum(1 for x in finals if x < initial * 0.990)
 
-        # INDICADORES (reais)
-        rsi = self.indicators.calculate_rsi(historical_prices)
-        adx = self.indicators.calculate_adx(historical_prices)
-        macd = self.indicators.calculate_macd(historical_prices)
-        bollinger = self.indicators.calculate_bollinger_bands(historical_prices)
-        volume = self.indicators.calculate_volume_profile(historical_prices)
-        fibonacci = self.indicators.calculate_fibonacci(historical_prices)
-        multi_tf_consensus = self.multi_tf.analyze_consensus(historical_prices)
-        
-        liquidity_score = self.liquidity.calculate_liquidity_score(symbol, historical_prices)
-        volatility_regime = self.volatility_clustering.detect_volatility_clusters(historical_prices, symbol)
-        
-        # Atualiza regime mercado
-        self.memory.update_market_regime(
-            volatility=real_volatility, 
-            adx_values=[adx] if adx else [25]
-        )
-        
-        # Eventos (opcional)
-        self.news_events.generate_market_events()
-        
-        # PESOS (mantém essência)
-        weights = self.memory.get_symbol_weights(symbol)
-        
-        # SISTEMA DE PONTUAÇÃO
-        base_score = 50.0
-        factors = []
-        winning_indicators = []
-        
-        # 1. MONTE CARLO (peso principal)
-        mc_direction_strength = abs(prob_buy - 0.5) * 2
-        mc_score = mc_direction_strength * 30.0
-        if mc_result['quality'] == 'HIGH':
-            mc_score *= 1.2
-        elif mc_result['quality'] == 'MEDIUM':
-            mc_score *= 1.1
-        base_score += mc_score if prob_buy > 0.5 else -mc_score
-        factors.append(f"MC:{mc_score:.1f}")
-        
-        # 2. INDICADORES TÉCNICOS
-        indicator_score = 0.0
-        if 30 < rsi < 70:
-            indicator_score += 6; winning_indicators.append('RSI')
-        if adx > 25:
-            indicator_score += 5; winning_indicators.append('ADX')
-        if (prob_buy > 0.5 and macd['signal'] == 'bullish') or (prob_buy < 0.5 and macd['signal'] == 'bearish'):
-            indicator_score += 5 * macd['strength']; winning_indicators.append('MACD')
-        if (prob_buy > 0.5 and bollinger['signal'] in ['oversold', 'bullish']) or (prob_buy < 0.5 and bollinger['signal'] in ['overbought', 'bearish']):
-            indicator_score += 4; winning_indicators.append('BB')
-        if (prob_buy > 0.5 and volume['signal'] in ['oversold', 'neutral']) or (prob_buy < 0.5 and volume['signal'] in ['overbought', 'neutral']):
-            indicator_score += 3; winning_indicators.append('VOL')
-        if (prob_buy > 0.5 and fibonacci['signal'] == 'support') or (prob_buy < 0.5 and fibonacci['signal'] == 'resistance'):
-            indicator_score += 2; winning_indicators.append('FIB')
-        if multi_tf_consensus == ('buy' if prob_buy > 0.5 else 'sell'):
-            indicator_score += 4; winning_indicators.append('MultiTF')
-        base_score += indicator_score if prob_buy > 0.5 else -indicator_score
-        factors.append(f"IND:{indicator_score:.1f}")
-        
-        # 3. AJUSTES FINAIS
-        liquidity_adjustment = 0.95 + (liquidity_score * 0.1)
-        base_score *= liquidity_adjustment
-        factors.append(f"LIQ:{liquidity_adjustment:.2f}")
-        
-        volatility_adjustment = self.volatility_clustering.get_regime_adjustment(symbol)
-        base_score *= volatility_adjustment
-        factors.append(f"VOL:{volatility_adjustment:.2f}")
-        
-        # Converter para confiança final (faixa mais aberta 45–95%)
-        raw_confidence = (base_score / 100.0)
-        final_confidence = min(0.95, max(0.45, raw_confidence))
-        
-        # Eventos de notícias
-        final_confidence = self.news_events.adjust_confidence_for_events(final_confidence)
-        
-        # DIREÇÃO FINAL
-        direction = 'buy' if prob_buy > 0.5 else 'sell'
-        
-        # Cache p/ correlações (primeira passada)
-        self.current_analysis_cache[symbol] = {
-            'direction': direction,
-            'confidence': final_confidence,
-            'timestamp': datetime.now()
-        }
-        
-        return {
-            'symbol': symbol,
-            'horizon': horizon,
-            'direction': direction,
-            'probability_buy': prob_buy,
-            'probability_sell': prob_sell,
-            'confidence': final_confidence,
-            'rsi': rsi,
-            'adx': adx,
-            'multi_timeframe': multi_tf_consensus,
-            'monte_carlo_quality': mc_result['quality'],
-            'winning_indicators': winning_indicators,
-            'score_factors': factors,
-            'price': historical_prices[-1],
-            'timestamp': self.get_brazil_time().strftime("%H:%M:%S"),
-            'liquidity_score': round(liquidity_score, 2),
-            'volatility_regime': volatility_regime,
-            'market_regime': self.memory.market_regime,
-            'volatility_multiplier': self.news_events.get_volatility_multiplier(),
-            'real_data': True
-        }
-    
-    def get_basic_analysis(self, symbol: str, horizon: int) -> Dict:
-        return {
-            'symbol': symbol,
-            'horizon': horizon,
-            'direction': random.choice(['buy', 'sell']),
-            'probability_buy': 0.5,
-            'probability_sell': 0.5,
-            'confidence': 0.6,
-            'rsi': 50,
-            'adx': 25,
-            'multi_timeframe': 'neutral',
-            'monte_carlo_quality': 'LOW',
-            'winning_indicators': [],
-            'score_factors': ['BASIC:0.0'],
-            'price': 100,
-            'timestamp': self.get_brazil_time().strftime("%H:%M:%S"),
-            'liquidity_score': 0.7,
-            'volatility_regime': 'MEDIUM',
-            'market_regime': 'NORMAL',
-            'volatility_multiplier': 1.0,
-            'real_data': False
-        }
-    
-    def get_brazil_time(self):
-        return datetime.now(timezone(timedelta(hours=-3)))
+        # Média e desvio p/ viés
+        mean_f = sum(finals)/total
+        var = sum((x-mean_f)**2 for x in finals)/total
+        std = (var ** 0.5) if var > 0 else 1e-12
+        # z-edge mede o deslocamento relativo da média vs preço inicial
+        z_edge = (mean_f - initial) / (std + initial*0.001)
+
+        # pesos crescentes para faixas maiores
+        w03, w07, w10 = 1.0, 1.6, 2.2
+        score_up = w03*up_03 + w07*up_07 + w10*up_10
+        score_dn = w03*down_03 + w07*down_07 + w10*down_10
+
+        # parte neutra vai para o lado do score maior + viés do z_edge
+        neutral = total - up_03 - down_03
+        # viés suave: 0.5% * tanh(z_edge)
+        import math
+        bias = 0.005 * math.tanh(z_edge)
+
+        denom = (score_up + score_dn + neutral + 1e-9)
+        p_buy_raw = (score_up + (neutral * (0.5 + bias))) / denom
+        p_sell_raw = (score_dn + (neutral * (0.5 - bias))) / denom
+
+        # normaliza
+        s = p_buy_raw + p_sell_raw
+        p_buy = p_buy_raw / s
+        p_sell = p_sell_raw / s
+
+        # qualidade baseada no "edge" efetivo
+        edge = abs(p_buy - 0.5)
+        if edge > 0.18:
+            quality = 'HIGH'
+        elif edge > 0.10:
+            quality = 'MEDIUM'
+        else:
+            quality = 'LOW'
+
+        # evita empate perfeito
+        if abs(p_buy - p_sell) < 1e-6:
+            p_buy += 0.001
+            p_sell -= 0.001
+
+        return {'probability_buy': p_buy, 'probability_sell': p_sell, 'quality': quality}
 
 # ========== FLASK APP ==========
 app = Flask(__name__)
