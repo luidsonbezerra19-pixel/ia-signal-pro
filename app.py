@@ -1,10 +1,9 @@
-# app.py — App completo (Railway-friendly + UI com seleção e polling)
-# - ccxt Spot (com fallback HTTP)
-# - Monte Carlo empírico (MC_PATHS=3000)
-# - T+1..T+3 por ativo
-# - Indicadores -> ajustam confiança (prob. bruta = MC)
-# - Ranking + Melhor Geral
-# - Selecionar/Limpar ativos; polling até terminar; no-store nas APIs
+# app.py — IA Signal Pro (Binance OHLCV + RSI/ADX Wilder + Liquidez/ATR% + Relógio BRT)
+# - ccxt Spot (fallback HTTP)
+# - Monte Carlo empírico (MC_PATHS)
+# - T+1..T+3 por ativo (1m)
+# - Indicadores Wilder (TradingView-like) com candles FECHADOS
+# - Selecionar/Limpar ativos; polling sem cache; relógio ao vivo (BRT)
 
 from __future__ import annotations
 import os, re, time, math, random, threading, json
@@ -18,6 +17,8 @@ from flask_cors import CORS
 # =========================
 TZ_STR = os.getenv("TZ", "America/Maceio")
 MC_PATHS = int(os.getenv("MC_PATHS", "3000"))  # nº caminhos Monte Carlo
+USE_CLOSED_ONLY = os.getenv("USE_CLOSED_ONLY", "1") == "1"  # usar apenas candles fechados para indicadores
+
 DEFAULT_SYMBOLS = os.getenv(
     "SYMBOLS",
     "BTC/USDT,ETH/USDT,SOL/USDT,ADA/USDT,XRP/USDT,BNB/USDT"
@@ -31,6 +32,7 @@ CORS(app)
 # Tempo (Brasil)
 # =========================
 def brazil_now() -> datetime:
+    # Usa -03:00 BRT fixo; se desejar horário de verão no futuro, ajustar aqui.
     return datetime.now(timezone(timedelta(hours=-3)))
 
 def br_full(dt: datetime) -> str:
@@ -46,12 +48,12 @@ def _to_binance_symbol(sym: str) -> str:
     s = sym.strip().upper().replace(" ", "")
     if "/" in s:
         base, quote = s.split("/", 1)
-        return f"{base}{quote}"
+        return f\"{base}{quote}\"
     return re.sub(r'[^A-Z0-9]', '', s)
 
 class SpotMarket:
     def __init__(self) -> None:
-        self._cache: Dict[Tuple[str,str,int], Tuple[float, List[float]]] = {}
+        self._cache: Dict[Tuple[str, str, int], Tuple[float, List[List[float]]]] = {}
         self._session = __import__("requests").Session()
         self._has_ccxt = False
         self._ccxt = None
@@ -68,86 +70,130 @@ class SpotMarket:
             print("[spot] ccxt indisponível, fallback HTTP:", e)
             self._has_ccxt = False
 
-    def _fetch_http(self, symbol: str, timeframe: str = "1m", limit: int = 240) -> List[float]:
+    def _fetch_http_ohlcv(self, symbol: str, timeframe: str = "1m", limit: int = 240) -> List[List[float]]:
         url = "https://api.binance.com/api/v3/klines"
         params = {"symbol": _to_binance_symbol(symbol), "interval": timeframe, "limit": limit}
         try:
             r = self._session.get(url, params=params, timeout=10)
             r.raise_for_status()
             data = r.json()
-            return [float(k[4]) for k in data if k and len(k) >= 5]
+            # kline: [openTime, open, high, low, close, volume, closeTime, ...]
+            ohlcv = [[float(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])] for k in data]
+            return ohlcv
         except Exception:
             return []
 
-    def fetch_prices(self, symbol: str, timeframe: str = "1m", limit: int = 240) -> List[float]:
-        key = (symbol, timeframe, limit)
+    def fetch_ohlcv(self, symbol: str, timeframe: str = "1m", limit: int = 240) -> List[List[float]]:
+        \"\"\"Retorna lista de candles [ts, open, high, low, close, volume].\"\"\"
+        key = (symbol.upper(), timeframe, limit)
         now = time.time()
-        # cache leve 20s
-        if key in self._cache and (now - self._cache[key][0]) < 20:
+        # cache leve 15s
+        if key in self._cache and (now - self._cache[key][0]) < 15:
             return self._cache[key][1]
 
-        closes: List[float] = []
-        # 1) ccxt (primário)
+        ohlcv: List[List[float]] = []
+        # 1) ccxt preferencial
         if self._has_ccxt and self._ccxt is not None:
-            for tf in (timeframe, "5m"):
-                try:
-                    ohlcv = self._ccxt.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
-                    closes = [c[4] for c in ohlcv if c and len(c) >= 5]
-                    if len(closes) >= min(60, max(20, limit // 3)):
-                        self._cache[key] = (now, closes)
-                        return closes
-                except Exception:
-                    time.sleep(0.25)
+            try:
+                raw = self._ccxt.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+                ohlcv = [[float(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])] for c in raw]
+            except Exception:
+                ohlcv = []
         # 2) fallback HTTP
-        for tf in (timeframe, "5m"):
-            closes = self._fetch_http(symbol, timeframe=tf, limit=limit)
-            if len(closes) >= min(60, max(20, limit // 3)):
-                self._cache[key] = (now, closes)
-                return closes
-        return []
+        if not ohlcv or len(ohlcv) < 60:
+            ohlcv = self._fetch_http_ohlcv(symbol, timeframe=timeframe, limit=limit)
+
+        if ohlcv:
+            self._cache[key] = (now, ohlcv)
+        return ohlcv
 
 # =========================
-# Indicadores (leves)
+# Indicadores (Wilder/TV-like)
 # =========================
 class TechnicalIndicators:
-    def calculate_rsi(self, prices: List[float], period: int = 14) -> float:
-        if len(prices) <= period: return 50.0
+    @staticmethod
+    def _wilder_smooth(prev: float, cur: float, period: int) -> float:
+        alpha = 1.0 / period
+        return prev + alpha * (cur - prev)
+
+    def rsi_wilder(self, closes: List[float], period: int = 14) -> float:
+        if len(closes) < period + 1:
+            return 50.0
         gains, losses = [], []
-        for i in range(1, len(prices)):
-            ch = prices[i] - prices[i-1]
-            gains.append(max(0.0, ch)); losses.append(max(0.0, -ch))
-        avg_gain = sum(gains[-period:]) / period
-        avg_loss = sum(losses[-period:]) / period
-        if avg_loss == 0: return 70.0
+        for i in range(1, len(closes)):
+            ch = closes[i] - closes[i - 1]
+            gains.append(max(0.0, ch))
+            losses.append(max(0.0, -ch))
+        avg_gain = sum(gains[:period]) / period
+        avg_loss = sum(losses[:period]) / period
+        for i in range(period, len(gains)):
+            avg_gain = self._wilder_smooth(avg_gain, gains[i], period)
+            avg_loss = self._wilder_smooth(avg_loss, losses[i], period)
+        if avg_loss == 0:
+            return 100.0
         rs = avg_gain / avg_loss
         rsi = 100.0 - (100.0 / (1.0 + rs))
         return max(0.0, min(100.0, rsi))
 
-    def calculate_adx(self, prices: List[float], period: int = 14) -> float:
-        if len(prices) <= period+1: return 20.0
-        diffs = [abs(prices[i]-prices[i-1]) for i in range(1, len(prices))]
-        avg = sum(diffs[-period:]) / period
-        base = sum(abs(p) for p in prices[-period:]) / period
-        if base == 0: return 20.0
-        val = (avg/base) * 1000.0
-        return max(5.0, min(45.0, val))
+    def adx_wilder(self, highs: List[float], lows: List[float], closes: List[float], period: int = 14) -> float:
+        n = len(closes)
+        if n < period + 2:
+            return 20.0
+        tr_list, pdm_list, ndm_list = [], [], []
+        for i in range(1, n):
+            high, low, close_prev = highs[i], lows[i], closes[i - 1]
+            prev_high, prev_low = highs[i - 1], lows[i - 1]
+            tr = max(high - low, abs(high - close_prev), abs(low - close_prev))
+            up_move = high - prev_high
+            down_move = prev_low - low
+            pdm = up_move if (up_move > down_move and up_move > 0) else 0.0
+            ndm = down_move if (down_move > up_move and down_move > 0) else 0.0
+            tr_list.append(tr); pdm_list.append(pdm); ndm_list.append(ndm)
 
-    def calculate_macd(self, prices: List[float]) -> Dict[str, Any]:
-        def ema(vals, n):
+        # médias iniciais (SMA)
+        atr = sum(tr_list[:period]) / period
+        pdi = sum(pdm_list[:period]) / period
+        ndi = sum(ndm_list[:period]) / period
+
+        dx_vals = []
+        for i in range(period, len(tr_list)):
+            # Wilder smoothing equivalente
+            atr = self._wilder_smooth(atr, tr_list[i], period)
+            pdi = self._wilder_smooth(pdi, pdm_list[i], period)
+            ndi = self._wilder_smooth(ndi, ndm_list[i], period)
+            plus_di = 100.0 * (pdi / max(1e-12, atr))
+            minus_di = 100.0 * (ndi / max(1e-12, atr))
+            dx = 100.0 * abs(plus_di - minus_di) / max(1e-12, (plus_di + minus_di))
+            dx_vals.append(dx)
+
+        if not dx_vals:
+            return 20.0
+        adx = sum(dx_vals[:period]) / period if len(dx_vals) >= period else sum(dx_vals) / len(dx_vals)
+        for i in range(period, len(dx_vals)):
+            adx = self._wilder_smooth(adx, dx_vals[i], period)
+        return max(5.0, min(65.0, adx))
+
+    def macd(self, closes: List[float]) -> Dict[str, Any]:
+        def ema(vals: List[float], n: int) -> List[float]:
             if not vals: return []
-            k = 2/(n+1); e=[vals[0]]
-            for v in vals[1:]: e.append(e[-1] + k*(v-e[-1]))
+            k = 2 / (n + 1)
+            e = [vals[0]]
+            for v in vals[1:]:
+                e.append(e[-1] + k * (v - e[-1]))
             return e
-        if len(prices) < 35: return {"signal":"neutral","strength":0.0}
-        ema12 = ema(prices,12); ema26 = ema(prices,26)
-        macd_line = [a-b for a,b in zip(ema12[-len(ema26):], ema26)]
-        signal_line = ema(macd_line,9)
-        if not signal_line: return {"signal":"neutral","strength":0.0}
-        hist = macd_line[-1]-signal_line[-1]
-        if hist>0: return {"signal":"bullish","strength":min(1.0, abs(hist)/max(1e-9, prices[-1]*0.002))}
-        if hist<0: return {"signal":"bearish","strength":min(1.0, abs(hist)/max(1e-9, prices[-1]*0.002))}
-        return {"signal":"neutral","strength":0.0}
+        if len(closes) < 35:
+            return {"signal": "neutral", "strength": 0.0}
+        ema12 = ema(closes, 12); ema26 = ema(closes, 26)
+        macd_line = [a - b for a, b in zip(ema12[-len(ema26):], ema26)]
+        signal_line = ema(macd_line, 9)
+        if not signal_line:
+            return {"signal": "neutral", "strength": 0.0}
+        hist = macd_line[-1] - signal_line[-1]
+        if hist > 0:  return {"signal": "bullish", "strength": min(1.0, abs(hist) / max(1e-9, closes[-1] * 0.002))}
+        if hist < 0:  return {"signal": "bearish", "strength": min(1.0, abs(hist) / max(1e-9, closes[-1] * 0.002))}
+        return {"signal": "neutral", "strength": 0.0}
 
+    # Mantemos BB/Volume/Fibo simples como antes
     def calculate_bollinger_bands(self, prices: List[float], period: int = 20) -> Dict[str,str]:
         if len(prices) < period: return {"signal":"neutral"}
         win = prices[-period:]; ma = sum(win)/period
@@ -173,17 +219,28 @@ class TechnicalIndicators:
         return {"signal":"neutral"}
 
 class MultiTimeframeAnalyzer:
-    def analyze_consensus(self, prices: List[float]) -> str:
-        if len(prices) < 60: return "neutral"
-        ma9=sum(prices[-9:])/9
-        ma21=sum(prices[-21:])/21 if len(prices)>=21 else ma9
-        return "buy" if ma9>ma21 else ("sell" if ma9<ma21 else "neutral")
+    def analyze_consensus(self, closes: List[float]) -> str:
+        if len(closes) < 60: return "neutral"
+        ma9 = sum(closes[-9:]) / 9
+        ma21 = sum(closes[-21:]) / 21 if len(closes) >= 21 else ma9
+        return "buy" if ma9 > ma21 else ("sell" if ma9 < ma21 else "neutral")
 
 class LiquiditySystem:
-    def calculate_liquidity_score(self, symbol: str, prices: List[float]) -> float:
-        if len(prices)<60: return 0.5
-        vol=sum(abs(prices[i]-prices[i-1]) for i in range(1,len(prices[-60:]))) / max(1e-9, prices[-1])
-        return max(0.0, min(1.0, 1.0 - min(0.05, vol)/0.05))
+    def calculate_liquidity_score(self, highs: List[float], lows: List[float], closes: List[float], period: int = 14) -> float:
+        n = len(closes)
+        if n < period + 2:
+            return 0.5
+        trs = []
+        for i in range(1, n):
+            tr = max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
+            trs.append(tr)
+        atr = sum(trs[:period]) / period
+        for i in range(period, len(trs)):
+            atr = (atr * (period - 1) + trs[i]) / period  # Wilder
+        atr_pct = atr / max(1e-12, closes[-1])
+        LIM = 0.02  # 2% de faixa ~ baixa liquidez para 1m
+        score = 1.0 - min(1.0, atr_pct / LIM)
+        return round(max(0.0, min(1.0, score)), 3)
 
 class CorrelationSystem:
     def get_correlation_adjustment(self, symbol: str, cache: Dict[str,Any]) -> float:
@@ -276,41 +333,59 @@ class EnhancedTradingSystem:
         return brazil_now()
 
     def analyze_symbol(self, symbol: str, horizon: int)->Dict[str,Any]:
-        # 1) preços reais (spot)
-        historical=self.spot.fetch_prices(symbol,"1m",240)
-        if len(historical)<60:
-            base=random.uniform(50,400); historical=[base]
-            for _ in range(239):
-                historical.append(historical[-1]*(1.0+random.gauss(0,0.003)))
+        # 1) OHLCV 1m da Binance
+        raw = self.spot.fetch_ohlcv(symbol, "1m", 240)
+        if len(raw) < 60:
+            # fallback sintético mínimo
+            base = random.uniform(50, 400)
+            raw = []
+            t = int(time.time() * 1000)
+            for i in range(240):
+                if not raw:
+                    o, h, l, c = base * 0.999, base * 1.001, base * 0.999, base
+                else:
+                    c_prev = raw[-1][4]
+                    c = max(1e-9, c_prev * (1.0 + random.gauss(0, 0.003)))
+                    o = c_prev; h = max(o, c) * (1.0 + 0.0007); l = min(o, c) * (1.0 - 0.0007)
+                raw.append([t + i * 60000, o, h, l, c, 0.0])
 
-        # 2) retornos empíricos
-        empirical=_safe_returns_from_prices(historical) or [random.gauss(0,0.003) for _ in range(120)]
+        # usar candles FECHADOS para indicadores (descarta o último em formação)
+        ohlcv_closed = raw[:-1] if (USE_CLOSED_ONLY and len(raw) >= 2) else raw
+
+        highs  = [x[2] for x in ohlcv_closed]
+        lows   = [x[3] for x in ohlcv_closed]
+        closes = [x[4] for x in ohlcv_closed]
+        price_display = raw[-1][4]  # preço mais recente para UI
+
+        # 2) retornos empíricos (para MC)
+        empirical=_safe_returns_from_prices(closes) or [random.gauss(0,0.003) for _ in range(120)]
 
         # 3) eventos/regime (placeholders estáveis)
         self.news_events.generate_market_events()
         vol_mult=self.news_events.get_volatility_multiplier()
 
-        # 4) Monte Carlo: SOMENTE T+1..T+3
-        steps=max(1,min(3,int(horizon))); base_price=historical[-1]
+        # 4) Monte Carlo: T+1..T+3
+        steps=max(1,min(3,int(horizon)))
+        base_price=closes[-1] if closes else price_display
         paths=self.monte_carlo.generate_price_paths_empirical(base_price, empirical, steps, num_paths=MC_PATHS)
         mc=self.monte_carlo.calculate_probability_distribution(paths)
 
-        # 5) Indicadores: ajustam CONFIANÇA (probabilidade vem do MC)
-        rsi=self.indicators.calculate_rsi(historical)
-        adx=self.indicators.calculate_adx(historical)
-        macd=self.indicators.calculate_macd(historical)
-        boll=self.indicators.calculate_bollinger_bands(historical)
-        volp=self.indicators.calculate_volume_profile(historical)
-        fibo=self.indicators.calculate_fibonacci(historical)
-        tf_cons=self.multi_tf.analyze_consensus(historical)
-        liq=self.liquidity.calculate_liquidity_score(symbol,historical)
-        regime=self.volatility_clustering.detect_volatility_clusters(historical,symbol)
+        # 5) Indicadores
+        rsi=self.indicators.rsi_wilder(closes)
+        adx=self.indicators.adx_wilder(highs, lows, closes)
+        macd=self.indicators.macd(closes)
+        boll=self.indicators.calculate_bollinger_bands(closes)
+        volp=self.indicators.calculate_volume_profile(closes)
+        fibo=self.indicators.calculate_fibonacci(closes)
+        tf_cons=self.multi_tf.analyze_consensus(closes)
+        liq=self.liquidity.calculate_liquidity_score(highs,lows,closes)
+        regime=self.volatility_clustering.detect_volatility_clusters(closes, symbol)
 
         # 6) regime global (informativo)
         base_vol=max(0.001, sum(abs(r) for r in empirical[-60:])/max(1,min(60,len(empirical))))
         self.memory.update_market_regime(volatility=base_vol, adx_values=[adx])
 
-        # 7) pesos iguais (sem prioridade pra nenhum)
+        # 7) pesos iguais
         weights=self.memory.get_symbol_weights(symbol)
 
         # 8) direção pelo MC; confiança pelos indicadores
@@ -320,48 +395,47 @@ class EnhancedTradingSystem:
         score=0.0; factors=[]
         mc_score=prob_dir*weights['monte_carlo']*100.0
         mc_score*=self.volatility_clustering.get_regime_adjustment(symbol)
-        score+=mc_score; factors.append(f"MC:{mc_score:.1f}")
+        score+=mc_score; factors.append(f\"MC:{mc_score:.1f}\")
 
-        if 30<rsi<70: s=weights['rsi']*12.0; score+=s; factors.append(f"RSI:{s:.1f}")
-        if adx>25: s=weights['adx']*12.0; score+=s; factors.append(f"ADX:{s:.1f}")
+        if 30<rsi<70: s=weights['rsi']*12.0; score+=s; factors.append(f\"RSI:{s:.1f}\")
+        if adx>25:    s=weights['adx']*12.0; score+=s; factors.append(f\"ADX:{s:.1f}\")
         if (direction=='buy' and macd['signal']=='bullish') or (direction=='sell' and macd['signal']=='bearish'):
-            s=weights['macd']*10.0*max(0.3, macd.get('strength',0.3)); score+=s; factors.append(f"MACD:{s:.1f}")
+            s=weights['macd']*10.0*max(0.3, macd.get('strength',0.3)); score+=s; factors.append(f\"MACD:{s:.1f}\")
         if (direction=='buy' and boll['signal'] in ['oversold','bullish']) or (direction=='sell' and boll['signal'] in ['overbought','bearish']):
-            s=weights['bollinger']*8.0; score+=s; factors.append(f"BB:{s:.1f}")
+            s=weights['bollinger']*8.0; score+=s; factors.append(f\"BB:{s:.1f}\")
         if (direction=='buy' and volp['signal'] in ['oversold','neutral']) or (direction=='sell' and volp['signal'] in ['overbought','neutral']):
-            s=weights['volume']*6.0; score+=s; factors.append(f"VOL:{s:.1f}")
+            s=weights['volume']*6.0; score+=s; factors.append(f\"VOL:{s:.1f}\")
         if (direction=='buy' and fibo['signal']=='support') or (direction=='sell' and fibo['signal']=='resistance'):
-            s=weights['fibonacci']*5.0; score+=s; factors.append(f"FIB:{s:.1f}")
+            s=weights['fibonacci']*5.0; score+=s; factors.append(f\"FIB:{s:.1f}\")
         if tf_cons==direction:
-            s=weights['multi_tf']*8.0; score+=s; factors.append(f"TF:{s:.1f}")
+            s=weights['multi_tf']*8.0; score+=s; factors.append(f\"TF:{s:.1f}\")
 
         score*=(0.95 + (liq*0.1))
         corr_adj=self.correlation.get_correlation_adjustment(symbol,self.current_analysis_cache)
-        score*=corr_adj; factors.append(f"CORR:{corr_adj:.2f}")
+        score*=corr_adj; factors.append(f\"CORR:{corr_adj:.2f}\")
 
         conf=min(0.95, max(0.50, score/100.0))
         conf=self.news_events.adjust_confidence_for_events(conf)
 
-        # cache simbólico multi-ativo
         self.current_analysis_cache[symbol]={'direction':direction,'confidence':conf,'timestamp':datetime.now()}
 
         return {
             'symbol':symbol,
-            'horizon':steps,   # T+1..T+3
+            'horizon':steps,
             'direction':direction,
             'probability_buy':mc['probability_buy'],
             'probability_sell':mc['probability_sell'],
-            'confidence':conf,                     # ajustada por indicadores
+            'confidence':conf,
             'rsi':rsi,'adx':adx,'multi_timeframe':tf_cons,
             'monte_carlo_quality':mc['quality'],
-            'price':base_price,
+            'price':price_display,
             'winning_indicators':[],
             'score_factors':factors,
-            'liquidity_score':round(liq,2),
+            'liquidity_score':liq,
             'volatility_regime':regime,
             'market_regime':self.memory.market_regime,
             'volatility_multiplier':round(vol_mult,2),
-            'timestamp': self.get_brazil_time().strftime("%H:%M:%S")  # para UI
+            'timestamp': self.get_brazil_time().strftime("%H:%M:%S")
         }
 
     def scan_symbols_tplus(self, symbols: List[str])->Dict[str,Any]:
@@ -371,13 +445,13 @@ class EnhancedTradingSystem:
             for h in (1,2,3):
                 try:
                     r=self.analyze_symbol(sym,h)
-                    r['label']=f"{sym} T+{h}"
+                    r['label']=f\"{sym} T+{h}\"
                     tplus.append(r); candidatos.append(r)
                 except Exception as e:
                     tplus.append({
                         "symbol":sym,"horizon":h,"error":str(e),
                         "direction":"buy","probability_buy":0.5,"probability_sell":0.5,
-                        "confidence":0.5,"label":f"{sym} T+{h}",
+                        "confidence":0.5,"label":f\"{sym} T+{h}\",
                         "timestamp": self.get_brazil_time().strftime("%H:%M:%S")
                     })
             por_ativo[sym]={"tplus":tplus,"best_for_symbol":max(tplus,key=_rank_key)}
@@ -385,7 +459,7 @@ class EnhancedTradingSystem:
         return {"por_ativo":por_ativo,"best_overall":best_overall}
 
 # =========================
-# Manager (compatível layout antigo)
+# Manager
 # =========================
 class AnalysisManager:
     def __init__(self)->None:
@@ -431,7 +505,7 @@ class AnalysisManager:
 manager=AnalysisManager()
 
 # =========================
-# Rotas API (com no-store)
+# Rotas API (no-store)
 # =========================
 @app.post("/api/analyze")
 def api_analyze():
@@ -462,9 +536,9 @@ def api_analyze():
 def api_results():
     resp = jsonify({
         "success": True,
-        "results": manager.current_results,      # lista FLAT
-        "best": manager.best_opportunity,        # inclui best.entry_time
-        "analysis_time": manager.analysis_time,  # horário da pesquisa
+        "results": manager.current_results,
+        "best": manager.best_opportunity,
+        "analysis_time": manager.analysis_time,
         "total_signals": len(manager.current_results),
         "is_analyzing": manager.is_analyzing
     })
@@ -478,21 +552,23 @@ def health():
     return resp, 200
 
 # =========================
-# UI (HTML sem f-string; com seleção, limpar/selecionar, polling)
+# UI (HTML com seleção/limpar/polling + RELÓGIO BRT)
 # =========================
 @app.get("/")
 def index():
     symbols_js = json.dumps(DEFAULT_SYMBOLS)
-    HTML = """<!doctype html>
+    HTML = \"\"\"<!doctype html>
 <html lang="pt-br"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>IA Signal Pro - PREÇOS REAIS + 3000 SIMULAÇÕES</title>
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0"/>
 <style>
 :root{--bg:#0f1120;--panel:#181a2e;--panel2:#223148;--tx:#dfe6ff;--muted:#9fb4ff;--accent:#2aa9ff;--gold:#f2a93b;--ok:#29d391;--err:#ff5b5b;}
 *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,"Helvetica Neue",Arial}
 .wrap{max-width:1120px;margin:22px auto;padding:0 16px}
-.hline{border:2px solid var(--accent);border-radius:12px;background:var(--panel);padding:18px}
+.hline{border:2px solid var(--accent);border-radius:12px;background:var(--panel);padding:18px;position:relative}
 h1{margin:0 0 8px;font-size:22px} .sub{color:#8ccf9d;font-size:13px;margin:6px 0 0}
+.clock{position:absolute;right:18px;top:18px;background:#0d2033;border:1px solid #3e6fa8;border-radius:10px;padding:8px 10px;color:#cfe2ff;font-weight:600}
 .controls{margin-top:14px;background:var(--panel2);border-radius:12px;padding:14px}
 .chips{display:flex;flex-wrap:wrap;gap:10px} .chip{border:2px solid var(--accent);border-radius:12px;padding:8px 12px;cursor:pointer;user-select:none}
 .chip input{margin-right:8px}
@@ -519,7 +595,8 @@ button{background:#2a9df4;cursor:pointer} button:disabled{opacity:.6;cursor:not-
 <div class="wrap">
   <div class="hline">
     <h1>IA Signal Pro - PREÇOS REAIS + 3000 SIMULAÇÕES</h1>
-    <div class="sub">✅ Dados reais da Binance · Monte Carlo com retornos empíricos · Imparcialidade garantida</div>
+    <div class="clock" id="clock">--:--:-- BRT</div>
+    <div class="sub">✅ Dados reais da Binance · Monte Carlo (retornos empíricos) · Indicadores Wilder (RSI/ADX) · Sem cache</div>
     <div class="controls">
       <div class="chips" id="chips"></div>
       <div class="row">
@@ -548,12 +625,24 @@ button{background:#2a9df4;cursor:pointer} button:disabled{opacity:.6;cursor:not-
 
 <script>
 const SYMS_DEFAULT = __SYMS__; // injetado pelo backend via json.dumps
-
 const chipsEl = document.getElementById('chips');
 const gridEl  = document.getElementById('grid');
 const bestEl  = document.getElementById('bestCard');
 const bestSec = document.getElementById('bestSec');
 const allSec  = document.getElementById('allSec');
+const clockEl = document.getElementById('clock');
+
+// Relógio ao vivo (BRT: -03:00)
+function tickClock(){
+  const now = new Date();
+  // Ajusta para -03:00 (BRT) sem depender do fuso local
+  const utc = now.getTime() + (now.getTimezoneOffset()*60000);
+  const brt = new Date(utc - 3*60*60000);
+  const pad = (n)=> n.toString().padStart(2,'0');
+  clockEl.textContent = pad(brt.getHours())+':'+pad(brt.getMinutes())+':'+pad(brt.getSeconds())+' BRT';
+}
+setInterval(tickClock, 500);
+tickClock();
 
 let pollTimer = null;
 let lastAnalysisTime = null;
@@ -561,7 +650,6 @@ let lastAnalysisTime = null;
 function mkChip(sym){
   const label = document.createElement('label');
   label.className = 'chip active';
-
   const input = document.createElement('input');
   input.type = 'checkbox';
   input.checked = true;
@@ -569,7 +657,6 @@ function mkChip(sym){
   input.addEventListener('change', () => {
     label.classList.toggle('active', input.checked);
   });
-
   label.appendChild(input);
   label.append(sym);
   chipsEl.appendChild(label);
@@ -598,18 +685,14 @@ async function runAnalyze(){
   const btn = document.getElementById('go');
   btn.disabled = true;
   btn.textContent = '⏳ Analisando...';
-
   const syms = selSymbols();
   if(!syms.length){ alert('Selecione pelo menos um ativo.'); btn.disabled=false; btn.textContent='🔎 Analisar com dados reais'; return; }
-
-  // disparamos a análise
   await fetch('/api/analyze', {
     method:'POST',
     headers:{'Content-Type':'application/json','Cache-Control':'no-store'},
     cache:'no-store',
     body: JSON.stringify({ symbols: syms })
   });
-
   startPollingResults();
 }
 
@@ -624,19 +707,16 @@ function startPollingResults(){
       btn.disabled = false;
       btn.textContent = '🔎 Analisar com dados reais';
     }
-  }, 800);
+  }, 700);
 }
 
 async function fetchAndRenderResults(){
   const r = await fetch('/api/results', { cache: 'no-store', headers: {'Cache-Control':'no-store'} });
   const data = await r.json();
 
-  // Enquanto está analisando, não finalize
   if (data.is_analyzing) {
-    // opcional: render parcial do best anterior
     return false;
   }
-  // Garante que recebemos dados novos
   if (lastAnalysisTime && data.analysis_time === lastAnalysisTime) {
     return false;
   }
@@ -656,7 +736,7 @@ async function fetchAndRenderResults(){
       <div class="card">
         <div class="sym-head"><b>${sym}</b>
           <span class="tag">Regime: ${bestLocal?.volatility_regime||'normal'}</span>
-          <span class="tag">Liquidez: ${Number(bestLocal?.liquidity_score||0).toFixed(1)}</span>
+          <span class="tag">Liquidez: ${Number(bestLocal?.liquidity_score||0).toFixed(2)}</span>
           <span class="tag">Mercado: ${bestLocal?.multi_timeframe||'neutral'}</span>
           <span class="tag">🗲 DADOS REAIS</span>
         </div>
@@ -683,7 +763,7 @@ function renderBest(best, analysisTime){
       <div class="kpi"><b>Soma</b>100.0%</div>
       <div class="kpi"><b>ADX</b>${(best.adx||0).toFixed(1)}</div>
       <div class="kpi"><b>RSI</b>${(best.rsi||0).toFixed(1)}</div>
-      <div class="kpi"><b>Liquidez</b>${Number(best.liquidity_score||0).toFixed(1)}</div>
+      <div class="kpi"><b>Liquidez</b>${Number(best.liquidity_score||0).toFixed(2)}</div>
     </div>
     <div class="small" style="margin-top:8px;">
       Pontuação: <span class="ok">${(best.confidence*100).toFixed(1)}%</span> · Mercado: <b>${best.multi_timeframe||'neutral'}</b> · Price: <b>${Number(best.price||0).toFixed(6)}</b>
@@ -707,11 +787,11 @@ function renderTbox(it, bestLocal){
     </div>`;
 }
 </script>
-</body></html>"""
+</body></html>\"\"\"
     return Response(HTML.replace("__SYMS__", symbols_js), mimetype="text/html")
 
 # =========================
-# Execução (PORT do Railway; local 5000)
+# Execução
 # =========================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), threaded=True, debug=False)
