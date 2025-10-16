@@ -20,7 +20,6 @@ USE_WS = 1                 # 1=ligado (CoinAPI), 0=desligado
 WS_BUFFER_MINUTES = 720    # ~12h em memória (compatível com RSI reversão)
 WS_SYMBOLS = DEFAULT_SYMBOLS[:]  # símbolos monitorados
 REALTIME_PROVIDER = "okx"    # informativo
-
 OKX_URL = "wss://ws.okx.com:8443/ws/v5/business"
 OKX_CHANNEL = "candle1m"
 
@@ -87,109 +86,91 @@ def _iso_to_ms(iso_str: str) -> int:
 # WebSocket CoinAPI (OHLCV 1m em tempo real)
 # =========================
 
-# =========================
-# WebSocket OKX (OHLCV 1m em tempo real)
-# =========================
 class WSRealtimeFeed:
     def __init__(self):
         self.enabled = bool(USE_WS)
         self.buf_minutes = int(WS_BUFFER_MINUTES)
         self.symbols = [s.strip().upper() for s in WS_SYMBOLS if s.strip()]
         self._lock = threading.Lock()
-        self._buffers: Dict[str, List[List[float]]] = {s: [] for s in self.symbols}
-        self._thread: Optional[threading.Thread] = None
+        self._buffers = {s: [] for s in self.symbols}
+        self._thread = None
         self._ws = None
         self._running = False
         self._ws_available = False
         try:
-            import websocket  # noqa: F401
+            import websocket  # noqa
             self._ws_available = True
         except Exception:
             print("[ws] 'websocket-client' não está instalado; WS desativado.")
             self.enabled = False
-
     def _on_open(self, ws):
         try:
-            args = [{"channel": OKX_CHANNEL, "instId": s.replace("/", "-")} for s in self.symbols]
+            args=[{"channel": OKX_CHANNEL, "instId": s.replace("/", "-")} for s in self.symbols]
             ws.send(json.dumps({"op":"subscribe","args":args}))
             print("[ws] subscribe enviado para OKX; subs:", len(args))
         except Exception as e:
             print("[ws] erro ao enviar subscribe:", e)
-
-    def _on_message(self, _, msg: str):
+    def _on_message(self, _, msg:str):
         try:
-            data = json.loads(msg)
-            if data.get("event") in ("subscribe", "error"):
-                if data.get("event") == "error":
-                    print("[ws] erro OKX:", data)
+            data=json.loads(msg)
+            if data.get("event") in ("subscribe","error"):
+                if data.get("event")=="error": print("[ws] erro OKX:", data)
                 return
-            arg = data.get("arg", {})
-            if arg.get("channel") != OKX_CHANNEL:
-                return
-            sym = arg.get("instId","").replace("-", "/")
+            arg=data.get("arg",{})
+            if arg.get("channel")!=OKX_CHANNEL: return
+            sym=arg.get("instId","").replace("-","/")
             for row in (data.get("data") or []):
-                ts = int(row[0]); o=float(row[1]); h=float(row[2]); l=float(row[3]); c=float(row[4])
-                v = float(row[5]) if len(row)>5 else 0.0
-                rec = [ts,o,h,l,c,v]
+                ts=int(row[0]); o=float(row[1]); h=float(row[2]); l=float(row[3]); c=float(row[4])
+                v=float(row[5]) if len(row)>5 else 0.0
+                rec=[ts,o,h,l,c,v]
                 with self._lock:
-                    buf = self._buffers.setdefault(sym, [])
-                    if buf and buf[-1][0] == ts:
-                        buf[-1] = rec
+                    buf=self._buffers.setdefault(sym,[])
+                    if buf and buf[-1][0]==ts: buf[-1]=rec
                     else:
                         buf.append(rec)
-                        if len(buf) > self.buf_minutes + 5:
-                            del buf[:len(buf)-(self.buf_minutes+5)]
+                        if len(buf)>self.buf_minutes+5: del buf[:len(buf)-(self.buf_minutes+5)]
         except Exception:
             pass
-
-    def _on_error(self, _, err): print("[ws] error:", err)
-    def _on_close(self, *_):    print("[ws] closed")
-
+    def _on_error(self,_,err): print("[ws] error:", err)
+    def _on_close(self,*_): print("[ws] closed")
     def _run(self):
         from websocket import WebSocketApp
         while self._running:
             try:
-                self._ws = WebSocketApp(OKX_URL, on_open=self._on_open, on_message=self._on_message,
-                                        on_error=self._on_error, on_close=self._on_close)
-                self._ws.run_forever(ping_interval=25, ping_timeout=10)
+                self._ws=WebSocketApp(OKX_URL,on_open=self._on_open,on_message=self._on_message,on_error=self._on_error,on_close=self._on_close)
+                self._ws.run_forever(ping_interval=25,ping_timeout=10)
             except Exception as e:
                 print("[ws] run_forever exception:", e)
             if self._running: time.sleep(3)
-
     def start(self):
         if not self.enabled or not self._ws_available: return
-        if self._thread and self._thread.is_alive():    return
-        self._running = True
-        self._thread = threading.Thread(target=self._run, daemon=True); self._thread.start()
-
+        if self._thread and self._thread.is_alive(): return
+        self._running=True
+        self._thread=threading.Thread(target=self._run,daemon=True); self._thread.start()
     def stop(self):
-        self._running = False
+        self._running=False
         try:
             if self._ws: self._ws.close()
         except Exception: pass
         if self._thread: self._thread.join(timeout=2)
-
-    def get_ohlcv(self, symbol: str, limit: int = 1000, use_closed_only: bool = True) -> List[List[float]]:
+    def get_ohlcv(self, symbol:str, limit:int=1000, use_closed_only:bool=True):
         if not (self.enabled and self._ws_available): return []
-        sym = symbol.strip().upper()
+        sym=symbol.strip().upper()
         with self._lock:
-            buf = self._buffers.get(sym, [])
-            data = buf[-min(len(buf), limit):]
+            buf=self._buffers.get(sym,[])
+            data=buf[-min(len(buf),limit):]
         if not data: return []
-        if use_closed_only and len(data) >= 1:
-            now_min  = int(time.time() // 60)
-            last_min = int((data[-1][0] // 1000) // 60)
-            if last_min == now_min: data = data[:-1]
+        if use_closed_only and len(data)>=1:
+            now_min=int(time.time()//60); last_min=int((data[-1][0]//1000)//60)
+            if last_min==now_min: data=data[:-1]
         return data[:]
-
-    def get_last_candle(self, symbol: str) -> Optional[List[float]]:
+    def get_last_candle(self, symbol:str):
         if not (self.enabled and self._ws_available): return None
-        sym = symbol.strip().upper()
+        sym=symbol.strip().upper()
         with self._lock:
-            buf = self._buffers.get(sym, [])
+            buf=self._buffers.get(sym,[])
             return buf[-1][:] if buf else None
-
-WS_FEED = WSRealtimeFeed()
+WS_FEED=WSRealtimeFeed()
 WS_FEED.start()
 
 
@@ -439,48 +420,43 @@ class ReversalDetector:
 # =========================
 
 class MonteCarloSimulator:
-    """Substituído por GARCH(1,1) Light mantendo a mesma interface (simulate_auto)."""
     def _garch_calibrate(self, rets, alpha=0.06, beta=0.94):
         if not rets: return None
-        mu = sum(rets)/len(rets)
-        var = sum((x-mu)**2 for x in rets)/(len(rets)-1 if len(rets)>1 else 1)
-        var = max(var, 1e-12)
-        alpha = max(1e-6, min(alpha, 0.999))
-        beta  = max(1e-6, min(beta,  0.999))
-        if alpha + beta >= 0.9999: beta = 0.9998 - alpha
-        omega = var * (1 - alpha - beta)
-        h = var
+        mu=sum(rets)/len(rets)
+        var=sum((x-mu)**2 for x in rets)/(len(rets)-1 if len(rets)>1 else 1)
+        var=max(var,1e-12)
+        alpha=max(1e-6,min(alpha,0.999)); beta=max(1e-6,min(beta,0.999))
+        if alpha+beta>=0.9999: beta=0.9998-alpha
+        omega=var*(1-alpha-beta)
+        h=var
         for r in rets:
-            h = omega + alpha*(r*r) + beta*h
-        return omega, alpha, beta, h
-
+            h=omega+alpha*(r*r)+beta*h
+        return omega,alpha,beta,h
     def _prob_up(self, p0, rets_hist, steps, paths=3000):
-        calib = self._garch_calibrate(rets_hist)
+        calib=self._garch_calibrate(rets_hist)
         if not calib: return 0.5
-        omega, alpha, beta, h_last = calib
-        import random, math
+        omega,alpha,beta,h_last = calib
         up=0; tot=0
+        import random, math
         for _ in range(paths):
             h=h_last; price=p0; r_prev=0.0
             for _s in range(steps):
-                h = omega + alpha*(r_prev*r_prev) + beta*h
-                sigma = (h if h>0 else 1e-18) ** 0.5
-                r = sigma * random.gauss(0.0,1.0)
-                price *= math.exp(r)
-                r_prev = r
-            tot += 1
-            if price>p0: up += 1
-        p = up/max(1,tot)
-        if abs(p-0.5)<1e-9: p += 0.001
-        return min(0.99, max(0.01, p))
-
-    def simulate_auto(self, base_price: float, empirical_returns, steps: int, num_paths: int = 3000):
+                h=omega+alpha*(r_prev*r_prev)+beta*h
+                sigma=(h if h>0 else 1e-18)**0.5
+                r=sigma*random.gauss(0.0,1.0)
+                price*=math.exp(r)
+                r_prev=r
+            tot+=1
+            if price>p0: up+=1
+        p=up/max(1,tot)
+        if abs(p-0.5)<1e-9: p+=0.001
+        return min(0.99,max(0.01,p))
+    def simulate_auto(self, base_price, empirical_returns, steps, num_paths=3000):
         import math, random
         if not empirical_returns or len(empirical_returns)<10:
-            empirical_returns = [random.gauss(0.0, 0.001) for _ in range(200)]
-        # esperava retorno em pct => converter para log-return
-        rets = [math.log(1+x) for x in empirical_returns if x is not None]
-        p_up = self._prob_up(base_price, rets, steps, num_paths)
+            empirical_returns=[random.gauss(0.0,0.001) for _ in range(200)]
+        rets=[math.log(1+x) for x in empirical_returns if x is not None]
+        p_up=self._prob_up(base_price, rets, steps, num_paths)
         return {"probability_buy": p_up, "probability_sell": 1.0-p_up, "quality":"garch11", "sim_model":"garch11"}
 
 class EnhancedTradingSystem:
@@ -549,8 +525,10 @@ class EnhancedTradingSystem:
         mc=self.monte_carlo.simulate_auto(base_price, empirical, steps, num_paths=MC_PATHS)
 
         # direção primária pelo MC
-        direction = 'buy' if mc['probability_buy']>mc['probability_sell'] else 'sell'
-        prob_dir  = mc['probability_buy'] if direction=='buy' else mc['probability_sell']
+        p_base = mc['probability_buy']
+        p_adj = _confirm_prob(p_base, rsi, (macd['hist'][-1] if macd.get('hist') else 0.0), adx)
+        direction = 'buy' if p_adj>=0.5 else 'sell'
+        prob_dir = p_adj if direction=='buy' else (1.0 - p_adj)
 
         # confiança base + boosts
         score=prob_dir*100.0
@@ -570,8 +548,8 @@ class EnhancedTradingSystem:
             'symbol':symbol,
             'horizon':steps,
             'direction':direction,
-            'probability_buy':mc['probability_buy'],
-            'probability_sell':mc['probability_sell'],
+            'probability_buy': (p_adj if direction=='buy' else (1.0 - p_adj)) ,
+            'probability_sell': (1.0 - (p_adj if direction=='buy' else (1.0 - p_adj))) ,
             'confidence':confidence,
             'rsi':rsi,'adx':adx,'multi_timeframe':tf_cons,
             'monte_carlo_quality':mc['quality'],
@@ -944,5 +922,4 @@ def _confirm_prob(prob_up: float, rsi: float, macd_hist: float, adx: float) -> f
     elif bullish>bearish:            adj = 0.04
     elif bearish>bullish and strong: adj = -0.07
     elif bearish>bullish:            adj = -0.04
-    res = prob_up + adj
-    return min(0.99, max(0.01, res))
+    return min(0.99, max(0.01, prob_up + adj))
