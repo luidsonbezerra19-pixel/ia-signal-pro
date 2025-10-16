@@ -657,11 +657,10 @@ function renderTbox(it, bestLocal){
     
 # Execução (porta intacta)
 if __name__ == "__main__":
-    try:
-        port = int(os.getenv("PORT")) if os.getenv("PORT") else None
-    except Exception:
-        port = 5000
-    if port:
-        app.run(host="0.0.0.0", port=5000, threaded=True, debug=False)
-    else:
-        app.run(threaded=True, debug=False)
+    import os
+    app.run(
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", "5000")),  # Railway usa PORT; local fica 5000
+        threaded=True,
+        debug=False
+    )
