@@ -11,7 +11,7 @@ from flask_cors import CORS
 # =========================
 TZ_STR = "America/Maceio"
 MC_PATHS = 3000
-USE_CLOSED_ONLY = false  # usar apenas candles fechados p/ indicadores (mude para False se quiser intrabar)
+USE_CLOSED_ONLY = False  # usar apenas candles fechados p/ indicadores (mude para False se quiser intrabar)
 DEFAULT_SYMBOLS = "BTC/USDT,ETH/USDT,SOL/USDT,ADA/USDT,XRP/USDT,BNB/USDT".split(",")
 DEFAULT_SYMBOLS = [s.strip().upper() for s in DEFAULT_SYMBOLS if s.strip()]
 
