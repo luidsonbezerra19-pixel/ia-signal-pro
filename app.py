@@ -190,26 +190,123 @@ def _safe_returns_from_prices(prices: List[float]) -> List[float]:
             returns.append(ret)
     return returns
 
-def _rank_key(x: Dict[str, Any]) -> float:
-    """Função para ranking das oportunidades"""
-    if "confidence" not in x or "probability_buy" not in x:
-        return 0.0
+def _rank_key_directional(x: Dict[str, Any]) -> float:
+    """Ranking que considera a melhor probabilidade NA DIREÇÃO escolhida"""
     direction = x.get("direction", "buy")
-    prob = x["probability_buy"] if direction == "buy" else x["probability_sell"]
-    return (x["confidence"] * 1000) + (prob * 100)
+    
+    # Probabilidade na direção escolhida (não sempre prob_buy)
+    prob_directional = x["probability_buy"] if direction == "buy" else x["probability_sell"]
+    
+    # Score prioriza confiança + probabilidade na direção
+    return (x["confidence"] * 1000) + (prob_directional * 100)
 
-def _confirm_prob(prob_up: float, rsi: float, macd_hist: float, adx: float) -> float:
-    """Ajusta probabilidade base com confirmação de indicadores"""
-    bullish = (1 if rsi >= 55 else 0) + (1 if macd_hist > 0 else 0)
-    bearish = (1 if rsi <= 45 else 0) + (1 if macd_hist < 0 else 0)
-    strong = (adx >= 25)
-    adj = 0.0
-    if bullish > bearish and strong:   adj = 0.07
-    elif bullish > bearish:            adj = 0.04
-    elif bearish > bullish and strong: adj = -0.07
-    elif bearish > bullish:            adj = -0.04
-    res = prob_up + adj
-    return min(0.99, max(0.01, res))
+def _confirm_prob_neutral_zone(prob_up: float, rsi: float, macd_hist: float, adx: float, 
+                              boll_signal: str, tf_consensus: str) -> float:
+    """Ajuste de probabilidade com zona neutra e pesos direcionais"""
+    
+    # ZONAS NEUTRAS - sinais só contam quando fortes
+    rsi_zone = "bullish" if rsi > 58 else "bearish" if rsi < 42 else "neutral"
+    macd_zone = "bullish" if macd_hist > 0.001 else "bearish" if macd_hist < -0.001 else "neutral"
+    adx_strength = "strong" if adx > 25 else "weak"
+    
+    # CONFIRMAÇÕES FORTES (fora da zona neutra)
+    strong_bullish = (rsi_zone == "bullish" and macd_zone == "bullish" and 
+                     boll_signal in ["oversold", "bullish"] and tf_consensus == "buy")
+    
+    strong_bearish = (rsi_zone == "bearish" and macd_zone == "bearish" and 
+                     boll_signal in ["overbought", "bearish"] and tf_consensus == "sell")
+    
+    # CONFIRMAÇÕES MODERADAS (alguns sinais fortes)
+    moderate_bullish = ((rsi_zone == "bullish" and boll_signal == "bullish") or
+                       (macd_zone == "bullish" and tf_consensus == "buy"))
+    
+    moderate_bearish = ((rsi_zone == "bearish" and boll_signal == "bearish") or
+                       (macd_zone == "bearish" and tf_consensus == "sell"))
+    
+    # AJUSTE BASEADO NA FORÇA E DIREÇÃO
+    adjustment = 0.0
+    
+    if strong_bullish and adx_strength == "strong":
+        adjustment = 0.10
+    elif strong_bearish and adx_strength == "strong":
+        adjustment = -0.10
+    elif moderate_bullish:
+        adjustment = 0.05
+    elif moderate_bearish:
+        adjustment = -0.05
+    # Zona neutra: adjustment = 0.0 (mantém probabilidade GARCH)
+    
+    # Aplicar ajuste
+    adjusted_prob = prob_up + adjustment
+    
+    # Limites rigorosos
+    return min(0.85, max(0.15, adjusted_prob))
+
+def _calculate_directional_confidence(prob_direction: float, direction: str, rsi: float, 
+                                    adx: float, macd_signal: str, boll_signal: str,
+                                    tf_consensus: str, reversal_signal: dict,
+                                    liquidity_score: float) -> float:
+    """Calcula confiança direcional com pesos inteligentes"""
+    
+    base_confidence = prob_direction * 100.0
+    
+    # BOOSTS DIRECIONAIS (só aplicam quando confirmam a direção)
+    directional_boosts = 0.0
+    
+    # 1. CONFIRMAÇÃO TENDÊNCIA (ADX + TF) - peso alto
+    if adx > 25:
+        if (direction == 'buy' and tf_consensus == 'buy') or (direction == 'sell' and tf_consensus == 'sell'):
+            directional_boosts += 15.0
+    
+    # 2. CONFIRMAÇÃO MOMENTO (RSI zonas fortes) - peso médio
+    if (direction == 'buy' and rsi < 40) or (direction == 'sell' and rsi > 60):
+        directional_boosts += 10.0
+    
+    # 3. CONFIRMAÇÃO BOLLINGER (extremidades) - peso alto
+    if (direction == 'buy' and boll_signal == 'oversold') or (direction == 'sell' and boll_signal == 'overbought'):
+        directional_boosts += 12.0
+    
+    # 4. REVERSÃO (quando alinhada) - peso muito alto
+    if reversal_signal["reversal"] and reversal_signal["side"] == direction:
+        directional_boosts += 18.0 * reversal_signal["proximity"]
+    
+    # 5. CONFIRMAÇÃO MACD (apenas sinais fortes) - peso médio
+    if (direction == 'buy' and macd_signal == 'bullish') or (direction == 'sell' and macd_signal == 'bearish'):
+        directional_boosts += 8.0
+    
+    # APLICAR BOOSTS E LIQUIDEZ
+    total_score = base_confidence + directional_boosts
+    total_score *= (0.90 + (liquidity_score * 0.15))  # Liquidez tem peso moderado
+    
+    return min(95.0, max(30.0, total_score)) / 100.0
+
+def _break_tie(prob_up: float, indicators: dict) -> str:
+    """Desempate inteligente na zona neutra"""
+    rsi, adx, macd_signal, boll_signal, tf_consensus = indicators.values()
+    
+    # Coletar votos direcionais
+    bullish_votes = 0
+    bearish_votes = 0
+    
+    # Votos com pesos
+    if rsi > 55: bullish_votes += 1
+    elif rsi < 45: bearish_votes += 1
+    
+    if macd_signal == "bullish": bullish_votes += 1
+    elif macd_signal == "bearish": bearish_votes += 1
+    
+    if boll_signal in ["oversold", "bullish"]: bullish_votes += 1
+    elif boll_signal in ["overbought", "bearish"]: bearish_votes += 1
+    
+    if tf_consensus == "buy": bullish_votes += 1
+    elif tf_consensus == "sell": bearish_votes += 1
+    
+    if adx > 25:  # Tendência forte, votos valem mais
+        if bullish_votes > bearish_votes: return "buy"
+        elif bearish_votes > bullish_votes: return "sell"
+    
+    # Empate ou tendência fraca - volta ao GARCH bruto
+    return "buy" if prob_up > 0.5 else "sell"
 
 # =========================
 # WebSocket OKX (OHLCV 1m em tempo real)
@@ -849,7 +946,7 @@ class EnhancedTradingSystem:
             num_paths=MC_PATHS
         )
 
-        # Aplicar confirmação de probabilidade com indicadores
+        # Aplicar confirmação de probabilidade com indicadores (SEM VIÉS)
         prob_buy_original = mc['probability_buy']
         prob_sell_original = mc['probability_sell']
 
@@ -864,31 +961,32 @@ class EnhancedTradingSystem:
         except:
             macd_hist = 0.0
 
-        # Ajustar probabilidade GARCH com confirmação técnica
-        prob_buy_adjusted = _confirm_prob(prob_buy_original, rsi, macd_hist, adx)
+        # Ajustar probabilidade GARCH com confirmação técnica (ZONA NEUTRA)
+        prob_buy_adjusted = _confirm_prob_neutral_zone(
+            prob_buy_original, rsi, macd_hist, adx, 
+            boll['signal'], tf_cons
+        )
         prob_sell_adjusted = 1.0 - prob_buy_adjusted
 
-        # direção primária pelo GARCH ajustado
-        direction = 'buy' if prob_buy_adjusted > prob_sell_adjusted else 'sell'
-        prob_dir = prob_buy_adjusted if direction == 'buy' else prob_sell_adjusted
+        # DIREÇÃO com desempate inteligente
+        if 0.48 <= prob_buy_adjusted <= 0.52:  # Zona de empate
+            direction = _break_tie(prob_buy_adjusted, {
+                'rsi': rsi, 'adx': adx, 'macd_signal': macd['signal'],
+                'boll_signal': boll['signal'], 'tf_consensus': tf_cons
+            })
+        else:
+            direction = 'buy' if prob_buy_adjusted > 0.52 else 'sell'
 
         # Atualizar o resultado GARCH com as probabilidades ajustadas
         mc['probability_buy'] = prob_buy_adjusted
         mc['probability_sell'] = prob_sell_adjusted
 
-        # confiança base + boosts
-        score=prob_dir*100.0
-        if 30<rsi<70: score+=12.0
-        if adx>25:    score+=12.0
-        if (direction=='buy' and macd['signal']=='bullish') or (direction=='sell' and macd['signal']=='bearish'):
-            score+=8.0
-        if (direction=='sell' and boll['signal'] in ['overbought','bearish']) or (direction=='buy' and boll['signal'] in ['oversold','bullish']):
-            score+=6.0
-        if rev_sig["reversal"]:
-            score += 10.0 * rev_sig["proximity"]
-
-        score *= (0.95 + (liq*0.1))
-        confidence = min(0.95, max(0.50, score/100.0))
+        # CONFIANÇA DIRECIONAL INTELIGENTE
+        prob_dir = prob_buy_adjusted if direction == 'buy' else prob_sell_adjusted
+        confidence = _calculate_directional_confidence(
+            prob_dir, direction, rsi, adx, macd['signal'], boll['signal'], 
+            tf_cons, rev_sig, liq
+        )
 
         analysis_duration = (time.time() - start_time) * 1000
         logger.info("analysis_completed", 
@@ -943,8 +1041,8 @@ class EnhancedTradingSystem:
                         "confidence":0.5,"label":f"{sym} T+{h}",
                         "timestamp": datetime.now().strftime("%H:%M:%S")
                     })
-            por_ativo[sym]={"tplus":tplus,"best_for_symbol":max(tplus,key=_rank_key)}
-        best_overall=max(candidatos,key=_rank_key) if candidatos else None
+            por_ativo[sym]={"tplus":tplus,"best_for_symbol":max(tplus,key=_rank_key_directional)}
+        best_overall=max(candidatos,key=_rank_key_directional) if candidatos else None
         return {"por_ativo":por_ativo,"best_overall":best_overall}
 
 # =========================
@@ -976,7 +1074,7 @@ class AnalysisManager:
                 flat.extend(bloco["tplus"])
             self.current_results = flat
             if flat:
-                best=max(flat, key=_rank_key)
+                best=max(flat, key=_rank_key_directional)
                 best=dict(best)
                 best["entry_time"]=self.calculate_entry_time_brazil(best.get("horizon",1))
                 self.best_opportunity=best
@@ -1276,7 +1374,11 @@ async function fetchAndRenderResults(){
   return true;
 }
 
-function rank(it){ const pd = it.direction==='buy' ? it.probability_buy : it.probability_sell; return (it.confidence*1000)+(pd*100); }
+function rank(it){ 
+  const direction = it.direction || 'buy';
+  const prob_directional = direction === 'buy' ? it.probability_buy : it.probability_sell;
+  return (it.confidence * 1000) + (prob_directional * 100);
+}
 
 function renderBest(best, analysisTime){
   if(!best) return '<div class="small">Sem oportunidade no momento.</div>';
