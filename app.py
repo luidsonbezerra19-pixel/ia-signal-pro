@@ -205,7 +205,7 @@ def _confirm_prob_neutral_zone(prob_up: float, rsi: float, macd_hist: float, adx
     """Ajuste de probabilidade com zona neutra e pesos direcionais"""
     
     # ZONAS NEUTRAS - sinais só contam quando fortes
-    rsi_zone = "bullish" if rsi > 58 else "bearish" if rsi < 42 else "neutral"
+    rsi_zone = "bullish" if rsi > 60 else "bearish" if rsi < 40 else "neutral"
     macd_zone = "bullish" if macd_hist > 0.001 else "bearish" if macd_hist < -0.001 else "neutral"
     adx_strength = "strong" if adx > 25 else "weak"
     
@@ -969,13 +969,13 @@ class EnhancedTradingSystem:
         prob_sell_adjusted = 1.0 - prob_buy_adjusted
 
         # DIREÇÃO com desempate inteligente
-        if 0.48 <= prob_buy_adjusted <= 0.52:  # Zona de empate
+        if 0.47 <= prob_buy_adjusted <= 0.53:  # Zona de indecisão
             direction = _break_tie(prob_buy_adjusted, {
                 'rsi': rsi, 'adx': adx, 'macd_signal': macd['signal'],
                 'boll_signal': boll['signal'], 'tf_consensus': tf_cons
             })
         else:
-            direction = 'buy' if prob_buy_adjusted > 0.52 else 'sell'
+            direction = 'buy' if prob_buy_adjusted > 0.53 else 'sell'
 
         # Atualizar o resultado GARCH com as probabilidades ajustadas
         mc['probability_buy'] = prob_buy_adjusted
