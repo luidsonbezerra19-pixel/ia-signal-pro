@@ -394,16 +394,15 @@ class AnalysisManager:
                 # Ajuste por indicadores
                 adjusted = {}
                 for h in HORIZONS:
-            p_base = probs_up[h]
-            # break exact 50/50 ties using last price move
-            if abs(p_base - 0.5) < 1e-9:
-                p_base += 0.001 if ind["closes"][-1] > ind["closes"][-2] else -0.001
-            p_adj = apply_indicator_confirmation(p_base, ind["rsi"], ind["macd_hist"], ind["adx"])
-            action, prob_act = decide_from_prob(p_adj)
+                    p_base = probs_up[h]
+                    # break exact 50/50 ties using last price move
+                    if abs(p_base - 0.5) < 1e-9:
+                        p_base += 0.001 if ind["closes"][-1] > ind["closes"][-2] else -0.001
+                    p_adj = apply_indicator_confirmation(p_base, ind["rsi"], ind["macd_hist"], ind["adx"])
+                    action, prob_act = decide_from_prob(p_adj)
                     p_buy = p_adj if action=="buy" else (1.0 - prob_act)
                     p_sell = 1.0 - p_buy
                     adjusted[h] = (action, p_buy, p_sell, prob_act)
-
                 # Criar itens T+1..T+3
                 per_asset = []
                 for h in HORIZONS:
@@ -694,4 +693,3 @@ def compute_indicators_for(sym: str):
         "macd_hist": float(macd_hist_v),
         "adx": float(adx_v)
     }
-
