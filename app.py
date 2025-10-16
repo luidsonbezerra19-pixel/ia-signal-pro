@@ -1,4 +1,4 @@
-# app.py — IA Signal Pro (Binance OHLCV + RSI/ADX Wilder + Liquidez/ATR% + Reversão RSI 12h + Relógio BRT)
+# app.py — IA Signal Pro (CoinAPI WS OHLCV + Binance REST fallback) + RSI/ADX/MACD/Liquidez + AR(1)-GARCH Light
 from __future__ import annotations
 import os, re, time, math, random, threading, json, statistics as stats
 from typing import Any, Dict, List, Tuple, Optional
@@ -11,20 +11,20 @@ from flask_cors import CORS
 # =========================
 TZ_STR = "America/Maceio"
 MC_PATHS = 3000
-USE_CLOSED_ONLY = False  # usar apenas candles fechados p/ indicadores (mude para False se quiser intrabar)
+USE_CLOSED_ONLY = True  # usar apenas candles fechados p/ indicadores (coloque False para intrabar)
 DEFAULT_SYMBOLS = "BTC/USDT,ETH/USDT,SOL/USDT,ADA/USDT,XRP/USDT,BNB/USDT".split(",")
 DEFAULT_SYMBOLS = [s.strip().upper() for s in DEFAULT_SYMBOLS if s.strip()]
 
-# WebSocket (tempo real)
-USE_WS = 1  # 1=ligado, 0=desligado
-WS_BUFFER_MINUTES = 720  # ~12h em memória (compatível com janela do RSI de reversão)
-WS_SYMBOLS = DEFAULT_SYMBOLS[:]  # pode ajustar a lista aqui
+# Provedor de tempo real
+USE_WS = 1                 # 1=ligado (CoinAPI), 0=desligado
+WS_BUFFER_MINUTES = 720    # ~12h em memória (compatível com RSI reversão)
+WS_SYMBOLS = DEFAULT_SYMBOLS[:]  # símbolos monitorados
+REALTIME_PROVIDER = "coinapi"    # informativo
 
-# Reversão por RSI (parâmetros)
-RSI_PERIOD = 14
-RSI_REV_WINDOW_MINUTES = 720  # 12h em 1m
-RSI_REV_EXTREMES = 6          # média dos N extremos
-RSI_REV_TOL = 2.5             # tolerância (pontos RSI)
+# >>>>>>>> COLOQUE SUA CHAVE AQUI <<<<<<<<
+COINAPI_KEY = "b79c76a2-1809-44fe-a9a3-f514dfb945b8"  # obtenha em https://www.coinapi.io/
+COINAPI_URL = "wss://ws.coinapi.io/v1/"    # endpoint WS da CoinAPI
+COINAPI_PERIOD = "1MIN"                    # período do OHLCV
 
 app = Flask(__name__)
 CORS(app)
@@ -43,7 +43,45 @@ def br_hm_brt(dt: datetime) -> str:
     return dt.strftime("%H:%M BRT")
 
 # =========================
-# WebSocket Binance (kline 1m em tempo real)
+# Utils
+# =========================
+def _to_binance_symbol(sym: str) -> str:
+    s = sym.strip().upper().replace(" ", "")
+    if "/" in s:
+        base, quote = s.split("/", 1)
+        return f"{base}{quote}"
+    return re.sub(r'[^A-Z0-9]', '', s)
+
+def _to_coinapi_symbol(sym: str) -> str:
+    """Converte 'BTC/USDT' -> 'BINANCE_SPOT_BTC_USDT'"""
+    s = sym.strip().upper().replace(" ", "")
+    if "/" in s:
+        base, quote = s.split("/", 1)
+    else:
+        # tenta deduzir
+        if s.endswith("USDT"): base, quote = s[:-4], "USDT"
+        elif s.endswith("USD"): base, quote = s[:-3], "USD"
+        else: base, quote = s, "USDT"
+    return f"BINANCE_SPOT_{base}_{quote}"
+
+def _iso_to_ms(iso_str: str) -> int:
+    # CoinAPI manda "2025-01-01T00:00:00.0000000Z"
+    z = iso_str.endswith("Z")
+    s = iso_str[:-1] if z else iso_str
+    # corta casas a mais em micros
+    if '.' in s:
+        head, tail = s.split('.', 1)
+        tail = ''.join(ch for ch in tail if ch.isdigit())
+        tail = (tail + "000000")[:6]
+        s = head + "." + tail
+        fmt = "%Y-%m-%dT%H:%M:%S.%f"
+    else:
+        fmt = "%Y-%m-%dT%H:%M:%S"
+    dt = datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
+    return int(dt.timestamp() * 1000)
+
+# =========================
+# WebSocket CoinAPI (OHLCV 1m em tempo real)
 # =========================
 class WSRealtimeFeed:
     def __init__(self):
@@ -62,45 +100,67 @@ class WSRealtimeFeed:
             import websocket  # noqa: F401
             self._ws_available = True
         except Exception:
-            print("[ws] 'websocket-client' não está instalado; WebSocket desativado.")
+            print("[ws] 'websocket-client' não está instalado; WS desativado.")
             self.enabled = False
 
-    @staticmethod
-    def _to_stream_symbol(sym: str) -> str:
-        return sym.replace("/", "").lower()
+        if not COINAPI_KEY or COINAPI_KEY == "COLE_SUA_COINAPI_KEY_AQUI":
+            print("[ws] CoinAPI KEY ausente. Defina COINAPI_KEY no app.py")
+            self.enabled = False
+
+    def _on_open(self, ws):
+        # Mensagem de hello/subscribe (CoinAPI)
+        try:
+            subs = [ _to_coinapi_symbol(s) for s in self.symbols ]
+            hello = {
+                "type": "hello",
+                "apikey": COINAPI_KEY,
+                "heartbeat": False,
+                "subscribe_data_type": ["ohlcv"],
+                "subscribe_filter_period_id": [COINAPI_PERIOD],
+                "subscribe_filter_symbol_id": subs
+            }
+            ws.send(json.dumps(hello))
+            print("[ws] hello enviado para CoinAPI; subs:", len(subs))
+        except Exception as e:
+            print("[ws] erro ao enviar hello:", e)
 
     def _on_message(self, _, msg: str):
+        # Esperamos mensagens com "type": "ohlcv"
         try:
             data = json.loads(msg)
-            payload = data.get("data") or data
-            k = payload.get("k")
-            if not k:
+            t = data.get("type")
+            if t == "error":
+                print("[ws] erro CoinAPI:", data.get("message"))
                 return
-            s = payload.get("s")
-            if not s:
+            if t != "ohlcv":
                 return
-            syml = s.upper()  # "BTCUSDT"
-            # mapeia "BTCUSDT" -> "BTC/USDT" (funciona p/ *USDT)
-            sym = f"{syml[:-4]}/{syml[-4:]}" if "/" not in syml else syml
+            symbol_id = data.get("symbol_id")      # ex: BINANCE_SPOT_BTC_USDT
+            period_id = data.get("period_id")      # 1MIN
+            if symbol_id is None or period_id != COINAPI_PERIOD:
+                return
 
-            ts_open = int(k["t"])  # open time ms
-            o = float(k["o"]); h = float(k["h"]); l = float(k["l"]); c = float(k["c"]); v = float(k["v"])
+            # Converte p/ nosso formato ([ts,o,h,l,c,v])
+            sym = symbol_id.replace("BINANCE_SPOT_", "").replace("_", "/")  # BTC/USDT
+            ts_open = _iso_to_ms(data["time_period_start"])
+            o = float(data["price_open"])
+            h = float(data["price_high"])
+            l = float(data["price_low"])
+            c = float(data["price_close"])
+            v = float(data.get("volume_traded", 0.0))
             row = [ts_open, o, h, l, c, v]
 
             with self._lock:
                 buf = self._buffers.get(sym)
                 if buf is None:
                     self._buffers[sym] = buf = []
-                # substitui o último candle se timestamps coincidirem, senão anexa
                 if buf and buf[-1][0] == ts_open:
                     buf[-1] = row
                 else:
                     buf.append(row)
-                # janela máxima
                 if len(buf) > self.buf_minutes:
                     del buf[: len(buf) - self.buf_minutes]
-        except Exception:
-            # ignora mensagens quebradas sem derrubar o feed
+        except Exception as e:
+            # não derruba por mensagens avulsas
             pass
 
     def _on_error(self, _, err):
@@ -111,21 +171,26 @@ class WSRealtimeFeed:
 
     def _run(self):
         import websocket
-        streams = "/".join([f"{self._to_stream_symbol(s)}@kline_1m" for s in self.symbols])
-        url = f"wss://stream.binance.com:9443/stream?streams={streams}"
+        url = COINAPI_URL
         delay = 2
         while self._running:
             try:
                 ws = websocket.WebSocketApp(
                     url,
+                    on_open=self._on_open,
                     on_message=self._on_message,
                     on_error=self._on_error,
                     on_close=self._on_close,
                 )
                 self._ws = ws
                 ws.run_forever(ping_interval=30, ping_timeout=10)
-                delay = 2  # reset após sessão OK
+                delay = 2
             except Exception as e:
+                msg = str(e).lower()
+                if "apikey" in msg or "unauthorized" in msg or "forbidden" in msg:
+                    print("[ws] CoinAPI KEY inválida ou permissão negada. Desativando WS.")
+                    self.enabled = False
+                    return
                 print(f"[ws] reconectando em {delay}s, motivo:", e)
                 time.sleep(delay)
                 delay = min(delay * 2, 60)
@@ -136,7 +201,7 @@ class WSRealtimeFeed:
         self._running = True
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
-        print(f"[ws] feed iniciado para {len(self.symbols)} símbolos.")
+        print(f"[ws] feed CoinAPI iniciado para {len(self.symbols)} símbolos.")
 
     def stop(self):
         self._running = False
@@ -173,15 +238,8 @@ WS_FEED = WSRealtimeFeed()
 WS_FEED.start()
 
 # =========================
-# Mercado Spot (ccxt + fallback HTTP) — agora com WS primeiro
+# Mercado Spot (ccxt + fallback HTTP) — continua usando Binance REST
 # =========================
-def _to_binance_symbol(sym: str) -> str:
-    s = sym.strip().upper().replace(" ", "")
-    if "/" in s:
-        base, quote = s.split("/", 1)
-        return f"{base}{quote}"
-    return re.sub(r'[^A-Z0-9]', '', s)
-
 class SpotMarket:
     def __init__(self) -> None:
         self._cache: Dict[Tuple[str, str, int], Tuple[float, List[List[float]]]] = {}
@@ -219,13 +277,12 @@ class SpotMarket:
     def fetch_ohlcv(self, symbol: str, timeframe: str = "1m", limit: int = 1000) -> List[List[float]]:
         key = (symbol.upper(), timeframe, limit)
         now = time.time()
-        # cache curto (WS atualiza muito)
         if key in self._cache and (now - self._cache[key][0]) < 2:
             return self._cache[key][1]
 
         ohlcv: List[List[float]] = []
 
-        # 1) WebSocket — preferido para 1m
+        # 1) WebSocket CoinAPI — preferido para 1m
         try:
             if timeframe == "1m":
                 ws_data = WS_FEED.get_ohlcv(symbol, limit=limit, use_closed_only=USE_CLOSED_ONLY)
@@ -272,7 +329,7 @@ class TechnicalIndicators:
         alpha = 1.0 / period
         return prev + alpha * (cur - prev)
 
-    def rsi_series_wilder(self, closes: List[float], period: int = RSI_PERIOD) -> List[float]:
+    def rsi_series_wilder(self, closes: List[float], period: int = 14) -> List[float]:
         if len(closes) < period + 1:
             return []
         gains, losses = [], []
@@ -297,7 +354,7 @@ class TechnicalIndicators:
                 rsis.append(100.0 - (100.0 / (1.0 + rs)))
         return [max(0.0, min(100.0, r)) for r in rsis]
 
-    def rsi_wilder(self, closes: List[float], period: int = RSI_PERIOD) -> float:
+    def rsi_wilder(self, closes: List[float], period: int = 14) -> float:
         s = self.rsi_series_wilder(closes, period)
         return s[-1] if s else 50.0
 
@@ -396,7 +453,7 @@ class LiquiditySystem:
 # Reversão (extremos RSI 12h)
 # =========================
 class ReversalDetector:
-    def compute_extremes_levels(self, rsi_series: List[float], window: int = RSI_REV_WINDOW_MINUTES, n_extremes: int = RSI_REV_EXTREMES) -> Dict[str, float]:
+    def compute_extremes_levels(self, rsi_series: List[float], window: int = 720, n_extremes: int = 6) -> Dict[str, float]:
         if not rsi_series:
             return {"avg_peak": 70.0, "avg_trough": 30.0}
         rs = rsi_series[-window:] if len(rsi_series) > window else rsi_series[:]
@@ -412,7 +469,7 @@ class ReversalDetector:
         avg_trough = stats.mean(troughs) if troughs else 30.0
         return {"avg_peak": float(avg_peak), "avg_trough": float(avg_trough)}
 
-    def signal_from_levels(self, current_rsi: float, levels: Dict[str,float], tol: float = RSI_REV_TOL) -> Dict[str, Any]:
+    def signal_from_levels(self, current_rsi: float, levels: Dict[str,float], tol: float = 2.5) -> Dict[str, Any]:
         peak, trough = levels["avg_peak"], levels["avg_trough"]
         out = {"reversal": False, "side": None, "proximity": 0.0, "levels": levels}
         if abs(current_rsi - peak) <= tol:
@@ -425,124 +482,66 @@ class ReversalDetector:
 # Simulador 100% paramétrico (AR(1)-GARCH "light" + backup EWMA-GBM)
 # =========================
 class MonteCarloSimulator:
-    """
-    Simulador 100% paramétrico (sem empírico):
-      - Preferência: AR(1) + GARCH(1,1) "light" (inovações ~ N(0,1)).
-      - Backup só-modelo: EWMA-GBM (RiskMetrics) quando histórico for curto/ruidoso.
-    """
-
-    # ===== utilidades =====
     @staticmethod
     def _mean(x: List[float]) -> float:
         return sum(x)/len(x) if x else 0.0
-
     @staticmethod
     def _var(x: List[float]) -> float:
         n = len(x)
         if n <= 1: return 0.0
         m = sum(x)/n
         return sum((v-m)*(v-m) for v in x) / (n-1)
-
-    @staticmethod
-    def _std(x: List[float]) -> float:
-        return math.sqrt(max(0.0, MonteCarloSimulator._var(x)))
-
-    # ===== AR(1) =====
     @staticmethod
     def _estimate_ar1_params(returns: List[float]) -> Tuple[float, float]:
-        """
-        Estima mu (média) e phi (AR(1)) via fórmulas fechadas simples (OLS):
-          r_t = mu + phi*(r_{t-1}-mu) + eps_t
-        """
         n = len(returns)
         if n < 60:
-            return (0.0, 0.0)  # histórico insuficiente → sem memória
+            return (0.0, 0.0)
         mu = MonteCarloSimulator._mean(returns)
-        num = 0.0
-        den = 0.0
+        num = 0.0; den = 0.0
         for t in range(1, n):
             x_t1 = returns[t-1] - mu
             x_t  = returns[t]   - mu
-            num += x_t1 * x_t
-            den += x_t1 * x_t1
-        phi = (num/den) if den != 0.0 else 0.0
-        # estabiliza phi para |phi| < 0.98
+            num += x_t1 * x_t; den += x_t1 * x_t1
+        phi = (num/den) if den != 0 else 0.0
         phi = max(-0.98, min(0.98, phi))
         return (mu, phi)
-
-    # ===== GARCH(1,1) "light" =====
     @staticmethod
     def _estimate_garch11_params(returns: List[float]) -> Tuple[float, float, float]:
-        """
-        Estima (omega, alpha, beta) de forma robusta sem otimização numérica:
-          - sigma2_bar = var_amostral
-          - alpha ~ peso do choque; beta ~ persistência
-          - omega = sigma2_bar * (1 - alpha - beta), garantindo estacionaridade (alpha+beta<1)
-        Heurísticas seguras para M1 cripto; ajuste fino se quiser.
-        """
         sigma2_bar = max(1e-10, MonteCarloSimulator._var(returns))
-        alpha = 0.07
-        beta  = 0.90
-        if alpha + beta >= 0.98:
-            beta = 0.98 - alpha
+        alpha = 0.07; beta = 0.90
+        if alpha + beta >= 0.98: beta = 0.98 - alpha
         omega = sigma2_bar * (1.0 - alpha - beta)
         omega = max(1e-12, omega)
         return (omega, alpha, beta)
-
     @staticmethod
     def _simulate_ar1_garch_paths(base_price: float, returns: List[float], steps: int, num_paths: int) -> List[List[float]]:
-        if steps < 1 or not returns:
-            return []
+        if steps < 1 or not returns: return []
         mu, phi = MonteCarloSimulator._estimate_ar1_params(returns)
         omega, alpha, beta = MonteCarloSimulator._estimate_garch11_params(returns)
-
-        # h0: variância de longo prazo
         h_prev = max(1e-10, omega / max(1e-12, (1.0 - alpha - beta)))
         r_prev = returns[-1] if returns else 0.0
-
         paths = []
         for _ in range(num_paths):
-            p = base_price
-            seq = [p]
-            r_tm1 = r_prev
-            h_tm1 = h_prev
+            p = base_price; seq = [p]; r_tm1 = r_prev; h_tm1 = h_prev
             for _s in range(steps):
-                # evolução da variância condicional
                 h_t = omega + alpha * (r_tm1*r_tm1) + beta * h_tm1
                 h_t = max(h_t, 1e-12)
-                # AR(1) na média + choque com vol condicional
                 eps = random.gauss(0.0, 1.0)
                 r_t = (mu + phi * (r_tm1 - mu)) + eps * math.sqrt(h_t)
                 p   = max(1e-9, p * (1.0 + r_t))
-                seq.append(p)
-                # avança estado
-                r_tm1 = r_t
-                h_tm1 = h_t
+                seq.append(p); r_tm1 = r_t; h_tm1 = h_t
             paths.append(seq)
         return paths
-
-    # ===== EWMA-GBM (backup paramétrico) =====
     @staticmethod
     def _simulate_ewma_gbm_paths(base_price: float, returns: List[float], steps: int, num_paths: int, lam: float = 0.94) -> List[List[float]]:
-        """
-        EWMA (RiskMetrics) para sigma_t^2 e drift ~ média simples.
-        r_t ~ N(mu, sigma_t);  sigma_t^2 = (1-lam)*r_{t-1}^2 + lam*sigma_{t-1}^2
-        """
-        if steps < 1 or not returns:
-            return []
+        if steps < 1 or not returns: return []
         mu = MonteCarloSimulator._mean(returns)
-        # inicializa sigma2 com variância amostral
         sigma2 = max(1e-10, MonteCarloSimulator._var(returns))
         r_prev2 = returns[-1]**2 if returns else 0.0
-
         paths = []
         for _ in range(num_paths):
-            p = base_price
-            seq = [p]
-            sigma2_t = sigma2
-            r2_tm1   = r_prev2
+            p = base_price; seq = [p]; sigma2_t = sigma2; r2_tm1 = r_prev2
             for _s in range(steps):
-                # atualiza vol condicional por EWMA
                 sigma2_t = (1.0 - lam) * r2_tm1 + lam * sigma2_t
                 sigma_t  = math.sqrt(max(1e-12, sigma2_t))
                 r_t = random.gauss(mu, sigma_t)
@@ -551,8 +550,6 @@ class MonteCarloSimulator:
                 r2_tm1 = r_t*r_t
             paths.append(seq)
         return paths
-
-    # ===== agregador de probabilidade =====
     @staticmethod
     def _to_distribution(paths: List[List[float]]) -> Dict[str, Any]:
         if not paths:
@@ -561,39 +558,21 @@ class MonteCarloSimulator:
         ups   = sum(1 for seq in paths if seq[-1] > start)
         downs = sum(1 for seq in paths if seq[-1] < start)
         total = max(1, ups + downs)
-        p_buy = ups/total
-        p_sell= downs/total
-        strength = abs(p_buy - 0.5)
-        clarity  = total/len(paths)
+        p_buy = ups/total; p_sell = downs/total
+        strength = abs(p_buy - 0.5); clarity = total/len(paths)
         quality  = "HIGH" if (strength>=0.20 and clarity>=0.70) else ("MEDIUM" if (strength>=0.10 and clarity>=0.50) else "LOW")
         return {"probability_buy":round(p_buy,4), "probability_sell":round(p_sell,4), "quality":quality, "clarity_ratio":round(clarity,3)}
-
-    # ===== interface pública (sem empírico) =====
     def simulate_auto(self, base_price: float, empirical_returns: List[float], steps: int, num_paths: int = MC_PATHS) -> Dict[str, Any]:
-        """
-        Sempre tenta um modelo paramétrico:
-          1) AR(1)-GARCH(1,1) "light" (preferido).
-          2) Se histórico < 60 → EWMA-GBM (paramétrico).
-        Nunca usa bootstrap nem choice() de retornos.
-        """
         rets = empirical_returns[:] if empirical_returns else []
         if len(rets) < 60:
-            # histórico curto → usa EWMA-GBM
             paths = self._simulate_ewma_gbm_paths(base_price, rets, steps, num_paths, lam=0.94)
-            out = self._to_distribution(paths)
-            out.update({"sim_model":"ewma_gbm"})
-            return out
-
+            out = self._to_distribution(paths); out.update({"sim_model":"ewma_gbm"}); return out
         try:
             paths = self._simulate_ar1_garch_paths(base_price, rets, steps, num_paths)
-            out = self._to_distribution(paths)
-            out.update({"sim_model":"ar1_garch11"})
-            return out
+            out = self._to_distribution(paths); out.update({"sim_model":"ar1_garch11"}); return out
         except Exception:
             paths = self._simulate_ewma_gbm_paths(base_price, rets, steps, num_paths, lam=0.94)
-            out = self._to_distribution(paths)
-            out.update({"sim_model":"ewma_gbm"})
-            return out
+            out = self._to_distribution(paths); out.update({"sim_model":"ewma_gbm"}); return out
 
 # =========================
 # Helpers
@@ -627,7 +606,7 @@ class EnhancedTradingSystem:
 
     def analyze_symbol(self, symbol: str, horizon: int)->Dict[str,Any]:
         # OHLCV 1m (~12h+ para reversões)
-        raw = self.spot.fetch_ohlcv(symbol, "1m", max(800, RSI_REV_WINDOW_MINUTES + 50))
+        raw = self.spot.fetch_ohlcv(symbol, "1m", max(800, 720 + 50))
         if len(raw) < 60:
             # fallback sintético mínimo
             base = random.uniform(50, 400)
@@ -658,8 +637,8 @@ class EnhancedTradingSystem:
         except Exception:
             pass
 
-        # Indicadores (sobre WS/ccxt/HTTP conforme disponível)
-        rsi_series = self.indicators.rsi_series_wilder(closes, RSI_PERIOD)
+        # Indicadores
+        rsi_series = self.indicators.rsi_series_wilder(closes, 14)
         rsi = rsi_series[-1] if rsi_series else 50.0
         adx = self.indicators.adx_wilder(highs, lows, closes)
         macd = self.indicators.macd(closes)
@@ -668,8 +647,8 @@ class EnhancedTradingSystem:
         liq = self.liquidity.calculate_liquidity_score(highs, lows, closes)
 
         # Reversão por RSI (12h)
-        levels = self.revdet.compute_extremes_levels(rsi_series, RSI_REV_WINDOW_MINUTES, RSI_REV_EXTREMES) if rsi_series else {"avg_peak":70.0,"avg_trough":30.0}
-        rev_sig = self.revdet.signal_from_levels(rsi, levels, RSI_REV_TOL)
+        levels = self.revdet.compute_extremes_levels(rsi_series, 720, 6) if rsi_series else {"avg_peak":70.0,"avg_trough":30.0}
+        rev_sig = self.revdet.signal_from_levels(rsi, levels, 2.5)
 
         # Simulador paramétrico
         empirical=_safe_returns_from_prices(closes) or [random.gauss(0,0.003) for _ in range(120)]
@@ -690,7 +669,7 @@ class EnhancedTradingSystem:
         if (direction=='sell' and boll['signal'] in ['overbought','bearish']) or (direction=='buy' and boll['signal'] in ['oversold','bullish']):
             score+=6.0
         if rev_sig["reversal"]:
-            score += 10.0 * rev_sig["proximity"]  # peso da reversão
+            score += 10.0 * rev_sig["proximity"]
 
         score *= (0.95 + (liq*0.1))
         confidence = min(0.95, max(0.50, score/100.0))
@@ -715,7 +694,7 @@ class EnhancedTradingSystem:
             # Extras úteis
             'sim_model': mc.get('sim_model','ar1_garch11'),
             'last_volume_1m': round(volume_display, 8),
-            'data_source': 'WS' if WS_FEED.enabled else ('CCXT' if self.spot._has_ccxt else 'HTTP')
+            'data_source': 'WS_COINAPI' if WS_FEED.enabled else ('CCXT' if self.spot._has_ccxt else 'HTTP')
         }
 
     def scan_symbols_tplus(self, symbols: List[str])->Dict[str,Any]:
@@ -782,6 +761,8 @@ class AnalysisManager:
 
 manager=AnalysisManager()
 
+from flask import jsonify
+
 @app.post("/api/analyze")
 def api_analyze():
     if manager.is_analyzing:
@@ -822,7 +803,7 @@ def api_results():
 
 @app.get("/health")
 def health():
-    resp = jsonify({"ok": True, "ws": WS_FEED.enabled, "ts": datetime.now(timezone.utc).isoformat()})
+    resp = jsonify({"ok": True, "ws": WS_FEED.enabled, "provider": REALTIME_PROVIDER, "ts": datetime.now(timezone.utc).isoformat()})
     resp.headers["Cache-Control"] = "no-store"
     return resp, 200
 
@@ -868,7 +849,7 @@ button{background:#2a9df4;cursor:pointer} button:disabled{opacity:.6;cursor:not-
   <div class="hline">
     <h1>IA Signal Pro - PREÇOS REAIS + 3000 SIMULAÇÕES</h1>
     <div class="clock" id="clock">--:--:-- BRT</div>
-    <div class="sub">✅ Binance OHLCV · RSI/ADX (Wilder) · Liquidez (ATR%) · Reversão por extremos de RSI (12h)</div>
+    <div class="sub">✅ CoinAPI (WS) · Binance REST fallback · RSI/ADX (Wilder) · Liquidez (ATR%) · Reversão RSI (12h)</div>
     <div class="controls">
       <div class="chips" id="chips"></div>
       <div class="row">
@@ -1058,6 +1039,5 @@ function renderTbox(it, bestLocal){
 # Execução
 # =========================
 if __name__ == "__main__":
-    # Em Railway, o PORT vem de env; aqui mantenho compatível sem depender dele
     port = int(os.getenv("PORT", "5000"))
     app.run(host="0.0.0.0", port=port, threaded=True, debug=False)
