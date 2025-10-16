@@ -1,11 +1,23 @@
 # app.py — IA Signal Pro (CoinAPI WS OHLCV + Binance REST fallback) + RSI/ADX/MACD/Liquidez + GARCH(1,1) Light
 from __future__ import annotations
-import os, re, time, math, random, threading, json, statistics as stats
+import os, re, time, math, random, threading, json, statistics as stats, logging
 from typing import Any, Dict, List, Tuple, Optional
 from datetime import datetime, timezone, timedelta
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
-import structlog
+
+# =========================
+# Configuração de Logging
+# =========================
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('app.log', encoding='utf-8')
+    ]
+)
+logger = logging.getLogger('ia_signal_pro')
 
 # =========================
 # Config (sem ENV — tudo aqui)
@@ -32,11 +44,6 @@ COINAPI_PERIOD = "1MIN"                    # período do OHLCV
 
 app = Flask(__name__)
 CORS(app)
-
-# =========================
-# Logging Estruturado
-# =========================
-logger = structlog.get_logger()
 
 # =========================
 # Feature Flags
@@ -86,12 +93,15 @@ class CircuitBreaker:
     def record_success(self):
         self.failures = 0
         self.state = "CLOSED"
+        logger.info("Circuit breaker: CLOSED - failures reset")
         
     def record_failure(self):
         self.failures += 1
         self.last_failure_time = time.time()
+        logger.warning(f"Circuit breaker: failure recorded - {self.failures}/{self.failure_threshold}")
         if self.failures >= self.failure_threshold:
             self.state = "OPEN"
+            logger.error("Circuit breaker: OPEN - too many failures")
             
     def can_execute(self) -> bool:
         if self.state == "CLOSED":
@@ -99,6 +109,7 @@ class CircuitBreaker:
         elif self.state == "OPEN":
             if time.time() - self.last_failure_time > self.recovery_timeout:
                 self.state = "HALF_OPEN"
+                logger.info("Circuit breaker: HALF_OPEN - recovery timeout reached")
                 return True
             return False
         else:  # HALF_OPEN
@@ -207,23 +218,23 @@ class WSRealtimeFeed:
             import websocket  # noqa: F401
             self._ws_available = True
         except Exception:
-            logger.warning("websocket_client_not_available", ws_disabled=True)
+            logger.warning("'websocket-client' não está instalado; WS desativado.")
             self.enabled = False
 
     def _on_open(self, ws):
         try:
             args = [{"channel": OKX_CHANNEL, "instId": s.replace("/", "-")} for s in self.symbols]
             ws.send(json.dumps({"op":"subscribe","args":args}))
-            logger.info("websocket_subscribed", provider="okx", symbols_count=len(args))
+            logger.info(f"WebSocket subscribe enviado para OKX; {len(args)} símbolos")
         except Exception as e:
-            logger.error("websocket_subscribe_error", error=str(e))
+            logger.error(f"Erro ao enviar subscribe: {e}")
 
     def _on_message(self, _, msg: str):
         try:
             data = json.loads(msg)
             if data.get("event") in ("subscribe", "error"):
                 if data.get("event") == "error":
-                    logger.error("websocket_error", error=data)
+                    logger.error(f"Erro OKX: {data}")
                 return
             arg = data.get("arg", {})
             if arg.get("channel") != OKX_CHANNEL:
@@ -242,13 +253,13 @@ class WSRealtimeFeed:
                         if len(buf) > self.buf_minutes + 5:
                             del buf[:len(buf)-(self.buf_minutes+5)]
         except Exception as e:
-            logger.error("websocket_message_error", error=str(e))
+            logger.error(f"Erro processando mensagem WebSocket: {e}")
 
     def _on_error(self, _, err): 
-        logger.error("websocket_error", error=str(err))
+        logger.error(f"WebSocket error: {err}")
     
     def _on_close(self, *_):    
-        logger.warning("websocket_closed")
+        logger.warning("WebSocket closed")
 
     def _run(self):
         from websocket import WebSocketApp
@@ -258,7 +269,7 @@ class WSRealtimeFeed:
                                         on_error=self._on_error, on_close=self._on_close)
                 self._ws.run_forever(ping_interval=25, ping_timeout=10)
             except Exception as e:
-                logger.error("websocket_run_forever_error", error=str(e))
+                logger.error(f"WebSocket run_forever exception: {e}")
             if self._running: 
                 time.sleep(3)
 
@@ -270,7 +281,7 @@ class WSRealtimeFeed:
         self._running = True
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
-        logger.info("websocket_started")
+        logger.info("WebSocket started")
 
     def stop(self):
         self._running = False
@@ -278,10 +289,10 @@ class WSRealtimeFeed:
             if self._ws: 
                 self._ws.close()
         except Exception as e:
-            logger.error("websocket_stop_error", error=str(e))
+            logger.error(f"WebSocket stop error: {e}")
         if self._thread: 
             self._thread.join(timeout=2)
-        logger.info("websocket_stopped")
+        logger.info("WebSocket stopped")
 
     def get_ohlcv(self, symbol: str, limit: int = 1000, use_closed_only: bool = True) -> List[List[float]]:
         if not (self.enabled and self._ws_available): 
@@ -364,20 +375,20 @@ class SpotMarket:
         self._ccxt = None
         try:
             import ccxt
-            self._ccxt = ccxt.binace({
+            self._ccxt = ccxt.binance({
                 "enableRateLimit": True,
                 "timeout": 12000,
                 "options": {"defaultType": "spot"}
             })
             self._has_ccxt = True
-            logger.info("ccxt_initialized", version=getattr(ccxt, '__version__', 'unknown'))
+            logger.info(f"ccxt inicializado - versão: {getattr(ccxt, '__version__', 'unknown')}")
         except Exception as e:
-            logger.warning("ccxt_unavailable", error=str(e))
+            logger.warning(f"ccxt indisponível, fallback HTTP: {e}")
             self._has_ccxt = False
 
     def _fetch_http_ohlcv(self, symbol: str, timeframe: str = "1m", limit: int = 1000) -> List[List[float]]:
         if not binance_circuit_breaker.can_execute():
-            logger.warning("circuit_breaker_open", provider="binance_http")
+            logger.warning("Circuit breaker OPEN - pulando HTTP request para Binance")
             return []
             
         url = "https://api.binance.com/api/v3/klines"
@@ -390,11 +401,11 @@ class SpotMarket:
             r.raise_for_status()
             data = r.json()
             binance_circuit_breaker.record_success()
-            logger.debug("http_fetch_success", symbol=symbol, candles_count=len(data))
+            logger.debug(f"HTTP fetch success - {symbol}: {len(data)} candles")
             return [[float(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])] for k in data]
         except Exception as e:
             binance_circuit_breaker.record_failure()
-            logger.error("http_fetch_error", symbol=symbol, error=str(e))
+            logger.error(f"HTTP fetch error - {symbol}: {e}")
             return []
 
     def fetch_ohlcv(self, symbol: str, timeframe: str = "1m", limit: int = 1000) -> List[List[float]]:
@@ -417,14 +428,14 @@ class SpotMarket:
                 ws_data = WS_FEED.get_ohlcv(symbol, limit=limit, use_closed_only=USE_CLOSED_ONLY)
                 if ws_data and len(ws_data) >= 10:
                     ohlcv = ws_data
-                    logger.debug("websocket_data_used", symbol=symbol, candles_count=len(ws_data))
+                    logger.debug(f"WebSocket data usado - {symbol}: {len(ws_data)} candles")
         except Exception as e:
-            logger.error("websocket_fetch_error", symbol=symbol, error=str(e))
+            logger.error(f"WebSocket fetch error - {symbol}: {e}")
 
         # 2) ccxt (se faltar)
         if (not ohlcv or len(ohlcv) < 60) and self._has_ccxt and self._ccxt is not None:
             if not binance_circuit_breaker.can_execute():
-                logger.warning("circuit_breaker_open", provider="binance_ccxt")
+                logger.warning("Circuit breaker OPEN - pulando CCXT request")
             else:
                 try:
                     raw = self._ccxt.fetch_ohlcv(symbol, timeframe=timeframe, limit=min(1000, int(limit)))
@@ -436,10 +447,10 @@ class SpotMarket:
                     else:
                         ohlcv = cc
                     binance_circuit_breaker.record_success()
-                    logger.debug("ccxt_fetch_success", symbol=symbol, candles_count=len(ohlcv))
+                    logger.debug(f"CCXT fetch success - {symbol}: {len(ohlcv)} candles")
                 except Exception as e:
                     binance_circuit_breaker.record_failure()
-                    logger.error("ccxt_fetch_error", symbol=symbol, error=str(e))
+                    logger.error(f"CCXT fetch error - {symbol}: {e}")
 
         # 3) HTTP público (fallback final)
         if not ohlcv or len(ohlcv) < 60:
@@ -451,7 +462,7 @@ class SpotMarket:
                     ohlcv = sorted(ohlcv + http, key=lambda x: x[0])[-limit:]
                 else:
                     ohlcv = http
-                logger.debug("http_fallback_used", symbol=symbol, candles_count=len(ohlcv))
+                logger.debug(f"HTTP fallback usado - {symbol}: {len(ohlcv)} candles")
 
         if ohlcv:
             self._cache.set(key, ohlcv)
@@ -730,12 +741,7 @@ class AdaptiveGARCH11Simulator:
         prob_buy = min(0.95, max(0.05, prob_buy))
         prob_sell = 1.0 - prob_buy
         
-        logger.debug("garch_simulation_completed", 
-                    paths=total_count, 
-                    duration_ms=duration_ms,
-                    regime=regime,
-                    fit_quality=fit_quality,
-                    probability_buy=prob_buy)
+        logger.info(f"GARCH simulation - paths: {total_count}, regime: {regime}, fit_quality: {fit_quality:.2f}, prob_buy: {prob_buy:.3f}")
         
         return {
             "probability_buy": prob_buy,
@@ -767,7 +773,7 @@ class EnhancedTradingSystem:
 
     def analyze_symbol(self, symbol: str, horizon: int)->Dict[str,Any]:
         start_time = time.time()
-        logger.info("analysis_started", symbol=symbol, horizon=horizon)
+        logger.info(f"Análise iniciada - {symbol} T+{horizon}")
         
         # OHLCV 1m (~12h+ para reversões)
         raw = self.spot.fetch_ohlcv(symbol, "1m", max(800, 720 + 50))
@@ -869,12 +875,7 @@ class EnhancedTradingSystem:
         confidence = min(0.95, max(0.50, score/100.0))
 
         analysis_duration = (time.time() - start_time) * 1000
-        logger.info("analysis_completed", 
-                   symbol=symbol, 
-                   horizon=horizon, 
-                   duration_ms=analysis_duration,
-                   direction=direction,
-                   confidence=confidence)
+        logger.info(f"Análise completada - {symbol} T+{horizon}: {direction} (conf: {confidence:.2f}) em {analysis_duration:.0f}ms")
 
         return {
             'symbol':symbol,
@@ -914,7 +915,7 @@ class EnhancedTradingSystem:
                     r['label']=f"{sym} T+{h}"
                     tplus.append(r); candidatos.append(r)
                 except Exception as e:
-                    logger.error("symbol_analysis_error", symbol=sym, horizon=h, error=str(e))
+                    logger.error(f"Erro análise {sym} T+{h}: {e}")
                     tplus.append({
                         "symbol":sym,"horizon":h,"error":str(e),
                         "direction":"buy","probability_buy":0.5,"probability_sell":0.5,
@@ -946,7 +947,7 @@ class AnalysisManager:
 
     def analyze_symbols_thread(self, symbols: List[str], sims: int, _unused=None)->None:
         self.is_analyzing=True
-        logger.info("batch_analysis_started", symbols_count=len(symbols), simulations=sims)
+        logger.info(f"Iniciando análise em lote - {len(symbols)} símbolos, {sims} simulações")
         try:
             result = self.system.scan_symbols_tplus(symbols)
             flat=[]
@@ -958,16 +959,13 @@ class AnalysisManager:
                 best=dict(best)
                 best["entry_time"]=self.calculate_entry_time_brazil(best.get("horizon",1))
                 self.best_opportunity=best
-                logger.info("best_opportunity_found", 
-                           symbol=best['symbol'], 
-                           direction=best['direction'],
-                           confidence=best['confidence'])
+                logger.info(f"Melhor oportunidade: {best['symbol']} T+{best['horizon']} - {best['direction']} (conf: {best['confidence']:.2f})")
             else:
                 self.best_opportunity=None
             self.analysis_time = br_full(self.get_brazil_time())
-            logger.info("batch_analysis_completed", results_count=len(flat))
+            logger.info(f"Análise em lote completada - {len(flat)} resultados")
         except Exception as e:
-            logger.error("batch_analysis_error", error=str(e))
+            logger.error(f"Erro análise em lote: {e}")
             self.current_results=[]
             self.best_opportunity={"error":str(e)}
             self.analysis_time = br_full(self.get_brazil_time())
@@ -983,7 +981,7 @@ def api_analyze():
         
     client_id = request.remote_addr or "unknown"
     if not rate_limiter.is_allowed(client_id, max_requests=30, window_seconds=60):
-        logger.warning("rate_limit_exceeded", client_id=client_id)
+        logger.warning(f"Rate limit excedido - {client_id}")
         return jsonify({"success": False, "error": "Limite de requisições excedido. Tente novamente em 1 minuto."}), 429
         
     if manager.is_analyzing:
@@ -1000,14 +998,14 @@ def api_analyze():
         th.daemon = True
         th.start()
         
-        logger.info("analysis_request", client_id=client_id, symbols_count=len(symbols))
+        logger.info(f"Requisição análise - {client_id}: {len(symbols)} símbolos")
         return jsonify({
             "success": True, 
             "message": f"Analisando {len(symbols)} ativos com {sims} simulações.", 
             "symbols_count": len(symbols)
         })
     except Exception as e:
-        logger.error("analysis_request_error", error=str(e), client_id=client_id)
+        logger.error(f"Erro requisição análise - {client_id}: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 @app.get("/api/results")
@@ -1050,7 +1048,6 @@ def deep_health():
             },
             "cache": {
                 "size": len(manager.system.spot._cache._cache),
-                "hit_rate": "N/A",  # Poderia ser implementado
                 "volatility_tracking": len(manager.system.spot._cache._volatility_cache)
             },
             "circuit_breaker": {
@@ -1302,5 +1299,5 @@ function renderTbox(it, bestLocal){
 # =========================
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
-    logger.info("application_starting", port=port, features_enabled=FEATURE_FLAGS)
+    logger.info(f"Aplicação iniciando na porta {port} - features: {FEATURE_FLAGS}")
     app.run(host="0.0.0.0", port=port, threaded=True, debug=False)
