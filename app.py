@@ -7,7 +7,7 @@
 # - Campos esperados pelo seu front: timestamp por sinal, best.entry_time, analysis_time
 
 from __future__ import annotations
-import os, re, time, math, random, threading
+import os, re, time, math, random, threading, json 
 from typing import Any, Dict, List, Tuple, Optional
 from datetime import datetime, timezone, timedelta
 from flask import Flask, jsonify, request, Response
