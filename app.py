@@ -202,45 +202,40 @@ def _rank_key_directional(x: Dict[str, Any]) -> float:
 
 def _confirm_prob_neutral_zone(prob_up: float, rsi: float, macd_hist: float, adx: float, 
                               boll_signal: str, tf_consensus: str) -> float:
-    """Ajuste de probabilidade com zona neutra e pesos direcionais"""
+    """USE SEU CÓDIGO ANTIGO QUE FUNCIONA - SIMPLES E BALANCEADO"""
     
-    # ZONAS NEUTRAS - sinais só contam quando fortes
-    rsi_zone = "bullish" if rsi > 60 else "bearish" if rsi < 40 else "neutral"
-    macd_zone = "bullish" if macd_hist > 0.001 else "bearish" if macd_hist < -0.001 else "neutral"
-    adx_strength = "strong" if adx > 25 else "weak"
+    # Sistema de votos simples e balanceado
+    bullish = 0
+    bearish = 0
     
-    # CONFIRMAÇÕES FORTES (fora da zona neutra)
-    strong_bullish = (rsi_zone == "bullish" and macd_zone == "bullish" and 
-                     boll_signal in ["oversold", "bullish"] and tf_consensus == "buy")
+    # RSI
+    if rsi >= 55: bullish += 1
+    if rsi <= 45: bearish += 1
     
-    strong_bearish = (rsi_zone == "bearish" and macd_zone == "bearish" and 
-                     boll_signal in ["overbought", "bearish"] and tf_consensus == "sell")
+    # MACD
+    if macd_hist > 0.001: bullish += 1
+    if macd_hist < -0.001: bearish += 1
     
-    # CONFIRMAÇÕES MODERADAS (alguns sinais fortes)
-    moderate_bullish = ((rsi_zone == "bullish" and boll_signal == "bullish") or
-                       (macd_zone == "bullish" and tf_consensus == "buy"))
+    # Bollinger
+    if boll_signal in ["oversold", "bullish"]: bullish += 1
+    if boll_signal in ["overbought", "bearish"]: bearish += 1
     
-    moderate_bearish = ((rsi_zone == "bearish" and boll_signal == "bearish") or
-                       (macd_zone == "bearish" and tf_consensus == "sell"))
+    # Timeframe
+    if tf_consensus == "buy": bullish += 1
+    if tf_consensus == "sell": bearish += 1
     
-    # AJUSTE BASEADO NA FORÇA E DIREÇÃO
-    adjustment = 0.0
+    strong = (adx >= 25)
     
-    if strong_bullish and adx_strength == "strong":
-        adjustment = 0.10
-    elif strong_bearish and adx_strength == "strong":
-        adjustment = -0.10
-    elif moderate_bullish:
-        adjustment = 0.05
-    elif moderate_bearish:
-        adjustment = -0.05
-    # Zona neutra: adjustment = 0.0 (mantém probabilidade GARCH)
+    # MESMA LÓGICA DO SEU CÓDIGO ANTIGO (que funcionava)
+    if bullish > bearish and strong:   adj = 0.07
+    elif bullish > bearish:            adj = 0.04
+    elif bearish > bullish and strong: adj = -0.07
+    elif bearish > bullish:            adj = -0.04
+    else: 
+        adj = 0.0  # Empate = sem ajuste
     
-    # Aplicar ajuste
-    adjusted_prob = prob_up + adjustment
-    
-    # Limites rigorosos
-    return min(0.85, max(0.15, adjusted_prob))
+    adjusted_prob = prob_up + adj
+    return min(0.90, max(0.10, adjusted_prob))
 
 def _calculate_directional_confidence(prob_direction: float, direction: str, rsi: float, 
                                     adx: float, macd_signal: str, boll_signal: str,
@@ -279,35 +274,7 @@ def _calculate_directional_confidence(prob_direction: float, direction: str, rsi
     total_score *= (0.90 + (liquidity_score * 0.15))  # Liquidez tem peso moderado
     
     return min(95.0, max(30.0, total_score)) / 100.0
-
-def _break_tie(prob_up: float, indicators: dict) -> str:
-    """Desempate inteligente na zona neutra"""
-    rsi, adx, macd_signal, boll_signal, tf_consensus = indicators.values()
-    
-    # Coletar votos direcionais
-    bullish_votes = 0
-    bearish_votes = 0
-    
-    # Votos com pesos
-    if rsi > 55: bullish_votes += 1
-    elif rsi < 45: bearish_votes += 1
-    
-    if macd_signal == "bullish": bullish_votes += 1
-    elif macd_signal == "bearish": bearish_votes += 1
-    
-    if boll_signal in ["oversold", "bullish"]: bullish_votes += 1
-    elif boll_signal in ["overbought", "bearish"]: bearish_votes += 1
-    
-    if tf_consensus == "buy": bullish_votes += 1
-    elif tf_consensus == "sell": bearish_votes += 1
-    
-    if adx > 25:  # Tendência forte, votos valem mais
-        if bullish_votes > bearish_votes: return "buy"
-        elif bearish_votes > bullish_votes: return "sell"
-    
-    # Empate ou tendência fraca - volta ao GARCH bruto
-    return "buy" if prob_up > 0.5 else "sell"
-
+                                        
 # =========================
 # WebSocket OKX (OHLCV 1m em tempo real)
 # =========================
@@ -969,13 +936,8 @@ class EnhancedTradingSystem:
         prob_sell_adjusted = 1.0 - prob_buy_adjusted
 
         # DIREÇÃO com desempate inteligente
-        if 0.47 <= prob_buy_adjusted <= 0.53:  # Zona de indecisão
-            direction = _break_tie(prob_buy_adjusted, {
-                'rsi': rsi, 'adx': adx, 'macd_signal': macd['signal'],
-                'boll_signal': boll['signal'], 'tf_consensus': tf_cons
-            })
-        else:
-            direction = 'buy' if prob_buy_adjusted > 0.53 else 'sell'
+        # DIREÇÃO simples e direta como no código antigo
+        direction = 'buy' if prob_buy_adjusted > 0.5 else 'sell'
 
         # Atualizar o resultado GARCH com as probabilidades ajustadas
         mc['probability_buy'] = prob_buy_adjusted
