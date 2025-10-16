@@ -11,7 +11,7 @@ from flask_cors import CORS
 # =========================
 TZ_STR = "America/Maceio"
 SIM_PATHS = 3000
-USE_CLOSED_ONLY = True  # usar apenas candles fechados p/ indicadores
+USE_CLOSED_ONLY = False  # usar apenas candles fechados p/ indicadores
 DEFAULT_SYMBOLS = "BTC/USDT,ETH/USDT,SOL/USDT,ADA/USDT,XRP/USDT,BNB/USDT".split(",")
 DEFAULT_SYMBOLS = [s.strip().upper() for s in DEFAULT_SYMBOLS if s.strip()]
 
@@ -394,7 +394,11 @@ class AnalysisManager:
                 # Ajuste por indicadores
                 adjusted = {}
                 for h in HORIZONS:
-                    p_adj = apply_indicator_confirmation(probs_up[h], ind["rsi"], ind["macd_hist"], ind["adx"])
+                    p_base = probs_up[h]
+            # break exact 50/50 ties using last price move
+            if abs(p_base - 0.5) < 1e-9:
+                p_base += 0.001 if ind["closes"][-1] > ind["closes"][-2] else -0.001
+            p_adj = apply_indicator_confirmation(p_base, ind["rsi"], ind["macd_hist"], ind["adx"])
                     action, prob_act = decide_from_prob(p_adj)
                     p_buy = p_adj if action=="buy" else (1.0 - prob_act)
                     p_sell = 1.0 - p_buy
@@ -411,7 +415,7 @@ class AnalysisManager:
                 # Melhor do ativo
                 best_local = max(per_asset, key=lambda it: it["confidence"])
                 # Candidato a melhor global
-                if (best_global is None) or (best_local["confidence"] > best_global["confidence"]):
+                if (best_global is None) or (best_local["confidence"] >= best_global["confidence"]):
                     best_global = best_local
 
             self.current_results = results
@@ -656,3 +660,37 @@ btnAnalyze.onclick = analyze;
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
     app.run(host="0.0.0.0", port=port, threaded=True, debug=False)
+def compute_indicators_for(sym: str):
+    ser = WS_FEED.get_series(sym)
+    if len(ser) < 5:
+        return None
+    closes = [x[4] for x in ser]
+    highs  = [x[2] for x in ser]
+    lows   = [x[3] for x in ser]
+
+    # Adaptive periods to avoid zeros
+    rsi_period = min(14, max(3, len(closes)//6))
+    macd_fast, macd_slow, macd_sig = 12, 26, 9
+    if len(closes) < macd_slow + macd_sig:
+        # shrink MACD when history is short
+        macd_slow = max(6, len(closes)//3)
+        macd_fast = max(4, macd_slow//2)
+        macd_sig  = max(3, macd_fast//2)
+
+    adx_period = min(14, max(5, len(closes)//6))
+
+    rsi_vals = rsi(closes, rsi_period)
+    macd_line, macd_sig_v, macd_hist = macd(closes, macd_fast, macd_slow, macd_sig)
+    adx_vals = adx(highs, lows, closes, adx_period)
+
+    rsi_v = (rsi_vals[-1] if rsi_vals else 50.0)
+    macd_hist_v = (macd_hist[-1] if macd_hist else 0.0)
+    adx_v = (adx_vals[-1] if adx_vals else 15.0)
+
+    return {
+        "price": closes[-1],
+        "closes": closes,
+        "rsi": float(rsi_v),
+        "macd_hist": float(macd_hist_v),
+        "adx": float(adx_v)
+    }
