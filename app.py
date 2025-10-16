@@ -254,7 +254,7 @@ def log_returns(closes: List[float]) -> List[float]:
             out.append(math.log(closes[i]/closes[i-1]))
     return out
 
-def garch_calibrate(rets: List[float], alpha=G_ALPHA, beta=BETA):
+def garch_calibrate(rets: List[float], alpha=G_ALPHA, beta=G_BETA):
     if not rets: return None
     mu = sum(rets)/len(rets)
     var = sum((x-mu)**2 for x in rets)/(len(rets)-1 if len(rets)>1 else 1)
