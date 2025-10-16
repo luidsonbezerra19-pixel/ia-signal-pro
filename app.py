@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Tuple, Optional
 from datetime import datetime, timezone, timedelta
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
+import structlog
 
 # =========================
 # Config (sem ENV — tudo aqui)
@@ -31,6 +32,79 @@ COINAPI_PERIOD = "1MIN"                    # período do OHLCV
 
 app = Flask(__name__)
 CORS(app)
+
+# =========================
+# Logging Estruturado
+# =========================
+logger = structlog.get_logger()
+
+# =========================
+# Feature Flags
+# =========================
+FEATURE_FLAGS = {
+    "enable_adaptive_garch": True,
+    "enable_smart_cache": True,
+    "enable_circuit_breaker": True,
+    "websocket_provider": "okx",
+    "maintenance_mode": False
+}
+
+# =========================
+# Rate Limiting Simples
+# =========================
+class RateLimiter:
+    def __init__(self):
+        self.requests = {}
+        
+    def is_allowed(self, identifier: str, max_requests: int = 30, window_seconds: int = 60) -> bool:
+        now = time.time()
+        if identifier not in self.requests:
+            self.requests[identifier] = []
+        
+        # Remove requests outside the window
+        self.requests[identifier] = [req_time for req_time in self.requests[identifier] 
+                                   if now - req_time < window_seconds]
+        
+        if len(self.requests[identifier]) < max_requests:
+            self.requests[identifier].append(now)
+            return True
+        return False
+
+rate_limiter = RateLimiter()
+
+# =========================
+# Circuit Breaker
+# =========================
+class CircuitBreaker:
+    def __init__(self, failure_threshold: int = 5, recovery_timeout: int = 120):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.failures = 0
+        self.last_failure_time = 0
+        self.state = "CLOSED"  # CLOSED, OPEN, HALF_OPEN
+        
+    def record_success(self):
+        self.failures = 0
+        self.state = "CLOSED"
+        
+    def record_failure(self):
+        self.failures += 1
+        self.last_failure_time = time.time()
+        if self.failures >= self.failure_threshold:
+            self.state = "OPEN"
+            
+    def can_execute(self) -> bool:
+        if self.state == "CLOSED":
+            return True
+        elif self.state == "OPEN":
+            if time.time() - self.last_failure_time > self.recovery_timeout:
+                self.state = "HALF_OPEN"
+                return True
+            return False
+        else:  # HALF_OPEN
+            return True
+
+binance_circuit_breaker = CircuitBreaker()
 
 # =========================
 # Tempo (Brasil)
@@ -133,23 +207,23 @@ class WSRealtimeFeed:
             import websocket  # noqa: F401
             self._ws_available = True
         except Exception:
-            print("[ws] 'websocket-client' não está instalado; WS desativado.")
+            logger.warning("websocket_client_not_available", ws_disabled=True)
             self.enabled = False
 
     def _on_open(self, ws):
         try:
             args = [{"channel": OKX_CHANNEL, "instId": s.replace("/", "-")} for s in self.symbols]
             ws.send(json.dumps({"op":"subscribe","args":args}))
-            print("[ws] subscribe enviado para OKX; subs:", len(args))
+            logger.info("websocket_subscribed", provider="okx", symbols_count=len(args))
         except Exception as e:
-            print("[ws] erro ao enviar subscribe:", e)
+            logger.error("websocket_subscribe_error", error=str(e))
 
     def _on_message(self, _, msg: str):
         try:
             data = json.loads(msg)
             if data.get("event") in ("subscribe", "error"):
                 if data.get("event") == "error":
-                    print("[ws] erro OKX:", data)
+                    logger.error("websocket_error", error=data)
                 return
             arg = data.get("arg", {})
             if arg.get("channel") != OKX_CHANNEL:
@@ -167,11 +241,14 @@ class WSRealtimeFeed:
                         buf.append(rec)
                         if len(buf) > self.buf_minutes + 5:
                             del buf[:len(buf)-(self.buf_minutes+5)]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error("websocket_message_error", error=str(e))
 
-    def _on_error(self, _, err): print("[ws] error:", err)
-    def _on_close(self, *_):    print("[ws] closed")
+    def _on_error(self, _, err): 
+        logger.error("websocket_error", error=str(err))
+    
+    def _on_close(self, *_):    
+        logger.warning("websocket_closed")
 
     def _run(self):
         from websocket import WebSocketApp
@@ -181,37 +258,50 @@ class WSRealtimeFeed:
                                         on_error=self._on_error, on_close=self._on_close)
                 self._ws.run_forever(ping_interval=25, ping_timeout=10)
             except Exception as e:
-                print("[ws] run_forever exception:", e)
-            if self._running: time.sleep(3)
+                logger.error("websocket_run_forever_error", error=str(e))
+            if self._running: 
+                time.sleep(3)
 
     def start(self):
-        if not self.enabled or not self._ws_available: return
-        if self._thread and self._thread.is_alive():    return
+        if not self.enabled or not self._ws_available: 
+            return
+        if self._thread and self._thread.is_alive():    
+            return
         self._running = True
-        self._thread = threading.Thread(target=self._run, daemon=True); self._thread.start()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        logger.info("websocket_started")
 
     def stop(self):
         self._running = False
         try:
-            if self._ws: self._ws.close()
-        except Exception: pass
-        if self._thread: self._thread.join(timeout=2)
+            if self._ws: 
+                self._ws.close()
+        except Exception as e:
+            logger.error("websocket_stop_error", error=str(e))
+        if self._thread: 
+            self._thread.join(timeout=2)
+        logger.info("websocket_stopped")
 
     def get_ohlcv(self, symbol: str, limit: int = 1000, use_closed_only: bool = True) -> List[List[float]]:
-        if not (self.enabled and self._ws_available): return []
+        if not (self.enabled and self._ws_available): 
+            return []
         sym = symbol.strip().upper()
         with self._lock:
             buf = self._buffers.get(sym, [])
             data = buf[-min(len(buf), limit):]
-        if not data: return []
+        if not data: 
+            return []
         if use_closed_only and len(data) >= 1:
             now_min  = int(time.time() // 60)
             last_min = int((data[-1][0] // 1000) // 60)
-            if last_min == now_min: data = data[:-1]
+            if last_min == now_min: 
+                data = data[:-1]
         return data[:]
 
     def get_last_candle(self, symbol: str) -> Optional[List[float]]:
-        if not (self.enabled and self._ws_available): return None
+        if not (self.enabled and self._ws_available): 
+            return None
         sym = symbol.strip().upper()
         with self._lock:
             buf = self._buffers.get(sym, [])
@@ -221,28 +311,75 @@ WS_FEED = WSRealtimeFeed()
 WS_FEED.start()
 
 # =========================
-# Mercado Spot (ccxt + fallback HTTP) — continua usando Binance REST
+# Mercado Spot com Cache Inteligente e Circuit Breaker
 # =========================
+class SmartCache:
+    def __init__(self):
+        self._cache: Dict[Tuple[str, str, int], Tuple[float, List[List[float]], float]] = {}
+        self._volatility_cache: Dict[str, float] = {}
+        
+    def _calculate_volatility(self, prices: List[float]) -> float:
+        """Calcula volatilidade baseada nos últimos preços"""
+        if len(prices) < 10:
+            return 0.0
+        returns = _safe_returns_from_prices(prices[-50:])  # Últimos 50 períodos
+        if not returns:
+            return 0.0
+        return stats.stdev(returns) if len(returns) > 1 else 0.0
+    
+    def _should_invalidate(self, symbol: str, current_prices: List[float]) -> bool:
+        """Decide se deve invalidar cache baseado na volatilidade"""
+        current_vol = self._calculate_volatility(current_prices)
+        cached_vol = self._volatility_cache.get(symbol, 0.0)
+        
+        # Se volatilidade aumentou significativamente, invalida cache
+        if current_vol > cached_vol * 1.5 and current_vol > 0.01:  # Threshold de 1%
+            return True
+        return False
+    
+    def get(self, key: Tuple[str, str, int]) -> Optional[Tuple[float, List[List[float]]]]:
+        if key in self._cache:
+            timestamp, data, _ = self._cache[key]
+            # Cache válido por 2-10 segundos baseado na volatilidade
+            symbol = key[0]
+            current_vol = self._volatility_cache.get(symbol, 0.0)
+            cache_ttl = 2 if current_vol > 0.02 else 5 if current_vol > 0.01 else 10
+            
+            if time.time() - timestamp < cache_ttl:
+                return (timestamp, data)
+        return None
+    
+    def set(self, key: Tuple[str, str, int], data: List[List[float]]):
+        symbol = key[0]
+        prices = [x[4] for x in data] if data else []  # Preços de fechamento
+        current_vol = self._calculate_volatility(prices)
+        self._volatility_cache[symbol] = current_vol
+        self._cache[key] = (time.time(), data, current_vol)
+
 class SpotMarket:
     def __init__(self) -> None:
-        self._cache: Dict[Tuple[str, str, int], Tuple[float, List[List[float]]]] = {}
+        self._cache = SmartCache()
         self._session = __import__("requests").Session()
         self._has_ccxt = False
         self._ccxt = None
         try:
             import ccxt
-            self._ccxt = ccxt.binance({
+            self._ccxt = ccxt.binace({
                 "enableRateLimit": True,
                 "timeout": 12000,
                 "options": {"defaultType": "spot"}
             })
             self._has_ccxt = True
-            print(f"[boot] ccxt version: {getattr(ccxt, '__version__', 'unknown')}")
+            logger.info("ccxt_initialized", version=getattr(ccxt, '__version__', 'unknown'))
         except Exception as e:
-            print("[spot] ccxt indisponível, fallback HTTP:", e)
+            logger.warning("ccxt_unavailable", error=str(e))
             self._has_ccxt = False
 
     def _fetch_http_ohlcv(self, symbol: str, timeframe: str = "1m", limit: int = 1000) -> List[List[float]]:
+        if not binance_circuit_breaker.can_execute():
+            logger.warning("circuit_breaker_open", provider="binance_http")
+            return []
+            
         url = "https://api.binance.com/api/v3/klines"
         params = {"symbol": _to_binance_symbol(symbol), "interval": timeframe, "limit": min(1000, int(limit))}
         try:
@@ -252,41 +389,57 @@ class SpotMarket:
                 r = self._session.get(url, params=params, timeout=10)
             r.raise_for_status()
             data = r.json()
-            # [openTime, open, high, low, close, volume, ...]
+            binance_circuit_breaker.record_success()
+            logger.debug("http_fetch_success", symbol=symbol, candles_count=len(data))
             return [[float(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])] for k in data]
-        except Exception:
+        except Exception as e:
+            binance_circuit_breaker.record_failure()
+            logger.error("http_fetch_error", symbol=symbol, error=str(e))
             return []
 
     def fetch_ohlcv(self, symbol: str, timeframe: str = "1m", limit: int = 1000) -> List[List[float]]:
         key = (symbol.upper(), timeframe, limit)
-        now = time.time()
-        if key in self._cache and (now - self._cache[key][0]) < 2:
-            return self._cache[key][1]
+        
+        # Verifica cache inteligente
+        if FEATURE_FLAGS["enable_smart_cache"]:
+            cached = self._cache.get(key)
+            if cached:
+                timestamp, data = cached
+                # Verifica se precisa invalidar por volatilidade
+                if not self._cache._should_invalidate(symbol, [x[4] for x in data]):
+                    return data
 
         ohlcv: List[List[float]] = []
 
-        # 1) WebSocket CoinAPI — preferido para 1m
+        # 1) WebSocket OKX — preferido para 1m
         try:
             if timeframe == "1m":
                 ws_data = WS_FEED.get_ohlcv(symbol, limit=limit, use_closed_only=USE_CLOSED_ONLY)
                 if ws_data and len(ws_data) >= 10:
                     ohlcv = ws_data
-        except Exception:
-            pass
+                    logger.debug("websocket_data_used", symbol=symbol, candles_count=len(ws_data))
+        except Exception as e:
+            logger.error("websocket_fetch_error", symbol=symbol, error=str(e))
 
         # 2) ccxt (se faltar)
         if (not ohlcv or len(ohlcv) < 60) and self._has_ccxt and self._ccxt is not None:
-            try:
-                raw = self._ccxt.fetch_ohlcv(symbol, timeframe=timeframe, limit=min(1000, int(limit)))
-                cc = [[float(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])] for c in raw]
-                if ohlcv:
-                    ts = {r[0] for r in ohlcv}
-                    cc = [r for r in cc if r[0] not in ts]
-                    ohlcv = sorted(ohlcv + cc, key=lambda x: x[0])[-limit:]
-                else:
-                    ohlcv = cc
-            except Exception:
-                pass
+            if not binance_circuit_breaker.can_execute():
+                logger.warning("circuit_breaker_open", provider="binance_ccxt")
+            else:
+                try:
+                    raw = self._ccxt.fetch_ohlcv(symbol, timeframe=timeframe, limit=min(1000, int(limit)))
+                    cc = [[float(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])] for c in raw]
+                    if ohlcv:
+                        ts = {r[0] for r in ohlcv}
+                        cc = [r for r in cc if r[0] not in ts]
+                        ohlcv = sorted(ohlcv + cc, key=lambda x: x[0])[-limit:]
+                    else:
+                        ohlcv = cc
+                    binance_circuit_breaker.record_success()
+                    logger.debug("ccxt_fetch_success", symbol=symbol, candles_count=len(ohlcv))
+                except Exception as e:
+                    binance_circuit_breaker.record_failure()
+                    logger.error("ccxt_fetch_error", symbol=symbol, error=str(e))
 
         # 3) HTTP público (fallback final)
         if not ohlcv or len(ohlcv) < 60:
@@ -298,9 +451,11 @@ class SpotMarket:
                     ohlcv = sorted(ohlcv + http, key=lambda x: x[0])[-limit:]
                 else:
                     ohlcv = http
+                logger.debug("http_fallback_used", symbol=symbol, candles_count=len(ohlcv))
 
         if ohlcv:
-            self._cache[key] = (now, ohlcv)
+            self._cache.set(key, ohlcv)
+            
         return ohlcv
 
 # =========================
@@ -462,82 +617,99 @@ class ReversalDetector:
         return out
 
 # =========================
-# Simulador GARCH(1,1) Light com 3000 simulações
+# GARCH(1,1) Light Adaptativo com 3000 simulações
 # =========================
 
-class GARCH11Simulator:
-    """GARCH(1,1) Light com 3000 simulações por padrão"""
+class AdaptiveGARCH11Simulator:
+    """GARCH(1,1) Light Adaptativo com detecção de regime"""
     
-    def _garch_calibrate(self, returns: List[float]) -> Tuple[float, float, float, float]:
-        """Calibra parâmetros GARCH(1,1) usando momentos"""
-        if len(returns) < 30:
-            # Valores padrão conservadores
+    def _detect_market_regime(self, returns: List[float]) -> str:
+        """Detecta o regime de mercado baseado na volatilidade"""
+        if not returns or len(returns) < 20:
+            return "normal"
+        
+        volatility = stats.stdev(returns) if len(returns) > 1 else 0.0
+        mean_abs_return = stats.mean([abs(r) for r in returns])
+        
+        if volatility > 0.03 or mean_abs_return > 0.02:  # 3% vol ou 2% retorno médio
+            return "high_volatility"
+        elif volatility < 0.005:  # 0.5% vol
+            return "low_volatility"
+        else:
+            return "normal"
+    
+    def _get_garch_params_for_regime(self, regime: str, returns: List[float]) -> Tuple[float, float, float, float]:
+        """Retorna parâmetros GARCH otimizados para o regime detectado"""
+        if not returns:
             return 1e-6, 0.1, 0.85, 1e-4
+            
+        mean_ret = sum(returns) / len(returns)
+        var = sum((r - mean_ret) ** 2 for r in returns) / len(returns)
         
-        # Converter returns para log-returns se necessário
-        log_returns = []
-        for i in range(1, len(returns)):
-            if returns[i-1] != 0:
-                log_ret = math.log(1 + returns[i])  # Assume que returns já são percentuais
-                log_returns.append(log_ret)
-        
-        if not log_returns:
-            return 1e-6, 0.1, 0.85, 1e-4
-        
-        # Estimar parâmetros GARCH(1,1) simplificado
-        mean_ret = sum(log_returns) / len(log_returns)
-        var = sum((r - mean_ret) ** 2 for r in log_returns) / len(log_returns)
-        
-        # Parâmetros GARCH(1,1) típicos para ativos financeiros
-        alpha = 0.08  # coeficiente dos choques recentes
-        beta = 0.90   # coeficiente da variância passada
-        omega = var * (1 - alpha - beta)  # variância de longo prazo
-        
-        # Garantir que omega seja positivo
+        if regime == "low_volatility":
+            # Mercado calmo: volatilidade mais persistente
+            alpha, beta = 0.05, 0.92
+        elif regime == "high_volatility":
+            # Mercado volátil: mais sensível a choques recentes
+            alpha, beta = 0.12, 0.80
+        else:  # normal
+            alpha, beta = 0.08, 0.90
+            
+        omega = var * (1 - alpha - beta)
         omega = max(1e-6, omega)
-        
-        # Última variância condicional
-        h_last = var
-        
-        return omega, alpha, beta, h_last
-
-    def simulate_garch11(self, base_price: float, returns: List[float], 
-                        steps: int, num_paths: int = 3000) -> Dict[str, Any]:
-        """Executa simulação GARCH(1,1) com num_paths caminhos"""
-        import math
-        import random
-        
-        if not returns or len(returns) < 10:
-            # Fallback: gera returns sintéticos se não houver dados suficientes
-            returns = [random.gauss(0.0, 0.002) for _ in range(100)]
-        
-        # Calibrar GARCH(1,1)
-        omega, alpha, beta, h_last = self._garch_calibrate(returns)
         
         # Garantir estabilidade
         if alpha + beta >= 0.999:
             alpha, beta = 0.08, 0.90
             omega = 1e-6
+            
+        return omega, alpha, beta, var
+    
+    def _calculate_garch_fit_quality(self, returns: List[float], omega: float, alpha: float, beta: float) -> float:
+        """Calcula qualidade do ajuste GARCH (simplificado)"""
+        if len(returns) < 30:
+            return 0.7
+            
+        try:
+            # Métrica simplificada de qualidade
+            predicted_var = omega / (1 - alpha - beta) if alpha + beta < 1 else 1e-4
+            actual_var = stats.variance(returns) if len(returns) > 1 else 1e-4
+            fit_quality = 1.0 - min(1.0, abs(predicted_var - actual_var) / actual_var)
+            return max(0.3, min(0.95, fit_quality))
+        except:
+            return 0.7
+
+    def simulate_garch11(self, base_price: float, returns: List[float], 
+                        steps: int, num_paths: int = 3000) -> Dict[str, Any]:
+        """Executa simulação GARCH(1,1) adaptativa"""
+        import math
+        import random
+        
+        if not returns or len(returns) < 10:
+            returns = [random.gauss(0.0, 0.002) for _ in range(100)]
+        
+        # Detectar regime e calibrar parâmetros
+        regime = self._detect_market_regime(returns) if FEATURE_FLAGS["enable_adaptive_garch"] else "normal"
+        omega, alpha, beta, h_last = self._get_garch_params_for_regime(regime, returns)
+        
+        # Calcular qualidade do ajuste
+        fit_quality = self._calculate_garch_fit_quality(returns, omega, alpha, beta)
         
         up_count = 0
         total_count = 0
         
-        # 3000 simulações GARCH(1,1)
+        # Simulações GARCH(1,1)
+        start_time = time.time()
         for _ in range(num_paths):
             try:
                 h = h_last
                 price = base_price
                 
                 for step in range(steps):
-                    # GARCH(1,1): h_t = omega + alpha * ε²_{t-1} + beta * h_{t-1}
                     epsilon = math.sqrt(h) * random.gauss(0.0, 1.0)
-                    
-                    # Atualizar preço
                     price *= math.exp(epsilon)
-                    
-                    # Atualizar variância condicional GARCH(1,1)
                     h = omega + alpha * (epsilon ** 2) + beta * h
-                    h = max(1e-12, h)  # Evitar variância negativa
+                    h = max(1e-12, h)
                 
                 total_count += 1
                 if price > base_price:
@@ -546,26 +718,39 @@ class GARCH11Simulator:
             except Exception:
                 continue
         
+        duration_ms = (time.time() - start_time) * 1000
+        
         if total_count == 0:
             prob_buy = 0.5
         else:
             prob_buy = up_count / total_count
         
-        # Suavizar probabilidades extremas
+        # Ajustar probabilidade baseado na qualidade do fit
+        prob_buy = prob_buy * 0.7 + 0.5 * (1 - fit_quality)  # Puxa para 0.5 se qualidade baixa
         prob_buy = min(0.95, max(0.05, prob_buy))
         prob_sell = 1.0 - prob_buy
+        
+        logger.debug("garch_simulation_completed", 
+                    paths=total_count, 
+                    duration_ms=duration_ms,
+                    regime=regime,
+                    fit_quality=fit_quality,
+                    probability_buy=prob_buy)
         
         return {
             "probability_buy": prob_buy,
             "probability_sell": prob_sell,
-            "quality": "garch11_light",
+            "quality": "garch11_adaptive",
             "sim_model": "garch11",
             "paths_used": total_count,
-            "garch_params": {"omega": omega, "alpha": alpha, "beta": beta}
+            "garch_params": {"omega": omega, "alpha": alpha, "beta": beta},
+            "market_regime": regime,
+            "fit_quality": fit_quality,
+            "calculation_time_ms": duration_ms
         }
 
-# Manter compatibilidade com código existente
-MonteCarloSimulator = GARCH11Simulator
+# Manter compatibilidade
+MonteCarloSimulator = AdaptiveGARCH11Simulator
 
 class EnhancedTradingSystem:
     def __init__(self)->None:
@@ -581,6 +766,9 @@ class EnhancedTradingSystem:
         return brazil_now()
 
     def analyze_symbol(self, symbol: str, horizon: int)->Dict[str,Any]:
+        start_time = time.time()
+        logger.info("analysis_started", symbol=symbol, horizon=horizon)
+        
         # OHLCV 1m (~12h+ para reversões)
         raw = self.spot.fetch_ohlcv(symbol, "1m", max(800, 720 + 50))
         if len(raw) < 60:
@@ -631,12 +819,12 @@ class EnhancedTradingSystem:
         steps = max(1, min(3, int(horizon)))
         base_price = closes[-1] if closes else price_display
 
-        # Usar GARCH(1,1) explicitamente com 3000 simulações
+        # Usar GARCH(1,1) adaptativo
         mc = self.monte_carlo.simulate_garch11(
             base_price, 
             empirical_returns, 
             steps, 
-            num_paths=MC_PATHS  # 3000 simulações
+            num_paths=MC_PATHS
         )
 
         # Aplicar confirmação de probabilidade com indicadores
@@ -647,7 +835,6 @@ class EnhancedTradingSystem:
         macd_hist = 0.0
         try:
             macd_result = self.indicators.macd(closes)
-            # Converter sinal MACD para valor numérico aproximado
             if macd_result["signal"] == "bullish":
                 macd_hist = macd_result["strength"]
             elif macd_result["signal"] == "bearish":
@@ -681,6 +868,14 @@ class EnhancedTradingSystem:
         score *= (0.95 + (liq*0.1))
         confidence = min(0.95, max(0.50, score/100.0))
 
+        analysis_duration = (time.time() - start_time) * 1000
+        logger.info("analysis_completed", 
+                   symbol=symbol, 
+                   horizon=horizon, 
+                   duration_ms=analysis_duration,
+                   direction=direction,
+                   confidence=confidence)
+
         return {
             'symbol':symbol,
             'horizon':steps,
@@ -692,6 +887,8 @@ class EnhancedTradingSystem:
             'monte_carlo_quality':mc['quality'],
             'garch_model': mc['sim_model'],
             'simulations_count': mc.get('paths_used', MC_PATHS),
+            'market_regime': mc.get('market_regime', 'normal'),
+            'fit_quality': mc.get('fit_quality', 0.7),
             'price':price_display,
             'liquidity_score':liq,
             'timestamp': datetime.now().strftime("%H:%M:%S"),
@@ -703,7 +900,8 @@ class EnhancedTradingSystem:
             # Extras úteis
             'sim_model': mc.get('sim_model', 'garch11'),
             'last_volume_1m': round(volume_display, 8),
-            'data_source': 'WS_COINAPI' if WS_FEED.enabled else ('CCXT' if self.spot._has_ccxt else 'HTTP')
+            'data_source': 'WS_COINAPI' if WS_FEED.enabled else ('CCXT' if self.spot._has_ccxt else 'HTTP'),
+            'analysis_time_ms': round(analysis_duration, 2)
         }
 
     def scan_symbols_tplus(self, symbols: List[str])->Dict[str,Any]:
@@ -716,6 +914,7 @@ class EnhancedTradingSystem:
                     r['label']=f"{sym} T+{h}"
                     tplus.append(r); candidatos.append(r)
                 except Exception as e:
+                    logger.error("symbol_analysis_error", symbol=sym, horizon=h, error=str(e))
                     tplus.append({
                         "symbol":sym,"horizon":h,"error":str(e),
                         "direction":"buy","probability_buy":0.5,"probability_sell":0.5,
@@ -747,6 +946,7 @@ class AnalysisManager:
 
     def analyze_symbols_thread(self, symbols: List[str], sims: int, _unused=None)->None:
         self.is_analyzing=True
+        logger.info("batch_analysis_started", symbols_count=len(symbols), simulations=sims)
         try:
             result = self.system.scan_symbols_tplus(symbols)
             flat=[]
@@ -758,10 +958,16 @@ class AnalysisManager:
                 best=dict(best)
                 best["entry_time"]=self.calculate_entry_time_brazil(best.get("horizon",1))
                 self.best_opportunity=best
+                logger.info("best_opportunity_found", 
+                           symbol=best['symbol'], 
+                           direction=best['direction'],
+                           confidence=best['confidence'])
             else:
                 self.best_opportunity=None
             self.analysis_time = br_full(self.get_brazil_time())
+            logger.info("batch_analysis_completed", results_count=len(flat))
         except Exception as e:
+            logger.error("batch_analysis_error", error=str(e))
             self.current_results=[]
             self.best_opportunity={"error":str(e)}
             self.analysis_time = br_full(self.get_brazil_time())
@@ -770,36 +976,43 @@ class AnalysisManager:
 
 manager=AnalysisManager()
 
-from flask import jsonify
-
 @app.post("/api/analyze")
 def api_analyze():
+    if FEATURE_FLAGS["maintenance_mode"]:
+        return jsonify({"success": False, "error": "Sistema em manutenção"}), 503
+        
+    client_id = request.remote_addr or "unknown"
+    if not rate_limiter.is_allowed(client_id, max_requests=30, window_seconds=60):
+        logger.warning("rate_limit_exceeded", client_id=client_id)
+        return jsonify({"success": False, "error": "Limite de requisições excedido. Tente novamente em 1 minuto."}), 429
+        
     if manager.is_analyzing:
-        resp = jsonify({"success": False, "error": "Análise em andamento"})
-        resp.headers["Cache-Control"] = "no-store"
-        return resp, 429
+        return jsonify({"success": False, "error": "Análise em andamento"}), 429
+        
     try:
         data = request.get_json(silent=True) or {}
         symbols = [s.strip().upper() for s in (data.get("symbols") or manager.symbols_default) if s.strip()]
         if not symbols:
-            resp = jsonify({"success": False, "error": "Selecione pelo menos um ativo"})
-            resp.headers["Cache-Control"] = "no-store"
-            return resp, 400
+            return jsonify({"success": False, "error": "Selecione pelo menos um ativo"}), 400
+            
         sims = MC_PATHS
         th = threading.Thread(target=manager.analyze_symbols_thread, args=(symbols, sims, None))
         th.daemon = True
         th.start()
-        resp = jsonify({"success": True, "message": f"Analisando {len(symbols)} ativos com {sims} simulações.", "symbols_count": len(symbols)})
-        resp.headers["Cache-Control"] = "no-store"
-        return resp
+        
+        logger.info("analysis_request", client_id=client_id, symbols_count=len(symbols))
+        return jsonify({
+            "success": True, 
+            "message": f"Analisando {len(symbols)} ativos com {sims} simulações.", 
+            "symbols_count": len(symbols)
+        })
     except Exception as e:
-        resp = jsonify({"success": False, "error": str(e)})
-        resp.headers["Cache-Control"] = "no-store"
-        return resp, 500
+        logger.error("analysis_request_error", error=str(e), client_id=client_id)
+        return jsonify({"success": False, "error": str(e)}), 500
 
 @app.get("/api/results")
 def api_results():
-    resp = jsonify({
+    return jsonify({
         "success": True,
         "results": manager.current_results,
         "best": manager.best_opportunity,
@@ -807,14 +1020,54 @@ def api_results():
         "total_signals": len(manager.current_results),
         "is_analyzing": manager.is_analyzing
     })
-    resp.headers["Cache-Control"] = "no-store"
-    return resp
 
 @app.get("/health")
 def health():
-    resp = jsonify({"ok": True, "ws": WS_FEED.enabled, "provider": REALTIME_PROVIDER, "ts": datetime.now(timezone.utc).isoformat()})
-    resp.headers["Cache-Control"] = "no-store"
-    return resp, 200
+    health_status = {
+        "ok": True,
+        "ws": WS_FEED.enabled,
+        "provider": REALTIME_PROVIDER,
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "circuit_breaker": binance_circuit_breaker.state,
+        "feature_flags": FEATURE_FLAGS,
+        "cache_size": len(manager.system.spot._cache._cache)
+    }
+    return jsonify(health_status), 200
+
+@app.get("/deep-health")
+def deep_health():
+    """Health check detalhado para monitoramento"""
+    ws_status = "connected" if WS_FEED._ws and WS_FEED._ws.sock else "disconnected"
+    
+    health_data = {
+        "status": "healthy",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "components": {
+            "websocket": {
+                "status": ws_status,
+                "symbols_monitored": len(WS_FEED.symbols),
+                "enabled": WS_FEED.enabled
+            },
+            "cache": {
+                "size": len(manager.system.spot._cache._cache),
+                "hit_rate": "N/A",  # Poderia ser implementado
+                "volatility_tracking": len(manager.system.spot._cache._volatility_cache)
+            },
+            "circuit_breaker": {
+                "state": binance_circuit_breaker.state,
+                "failures": binance_circuit_breaker.failures,
+                "last_failure": binance_circuit_breaker.last_failure_time
+            },
+            "analysis_engine": {
+                "is_analyzing": manager.is_analyzing,
+                "last_analysis_time": manager.analysis_time,
+                "cached_results": len(manager.current_results)
+            }
+        },
+        "feature_flags": FEATURE_FLAGS
+    }
+    
+    return jsonify(health_data), 200
 
 @app.get("/")
 def index():
@@ -858,7 +1111,7 @@ button{background:#2a9df4;cursor:pointer} button:disabled{opacity:.6;cursor:not-
   <div class="hline">
     <h1>IA Signal Pro - PREÇOS REAIS + 3000 SIMULAÇÕES</h1>
     <div class="clock" id="clock">--:--:-- BRT</div>
-    <div class="sub">✅ CoinAPI (WS) · Binance REST fallback · RSI/ADX (Wilder) · Liquidez (ATR%) · Reversão RSI (12h) · GARCH(1,1)</div>
+    <div class="sub">✅ CoinAPI (WS) · Binance REST fallback · RSI/ADX (Wilder) · Liquidez (ATR%) · Reversão RSI (12h) · GARCH(1,1) Adaptativo</div>
     <div class="controls">
       <div class="chips" id="chips"></div>
       <div class="row">
@@ -1049,4 +1302,5 @@ function renderTbox(it, bestLocal){
 # =========================
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT","5000")), threaded=True, debug=False)
+    logger.info("application_starting", port=port, features_enabled=FEATURE_FLAGS)
+    app.run(host="0.0.0.0", port=port, threaded=True, debug=False)
