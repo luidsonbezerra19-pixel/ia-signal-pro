@@ -21,7 +21,7 @@ WS_BUFFER_MINUTES = 720    # ~12h em memória
 WS_SYMBOLS = DEFAULT_SYMBOLS[:]  # símbolos monitorados
 REALTIME_PROVIDER = "okx"  # informativo
 
-OKX_URL = "wss://ws.okx.com:8443/ws/v5/public"
+OKX_URL = "wss://ws.okx.com:8443/ws/v5/business"
 OKX_CHANNEL = "candle1m"
 
 # GARCH(1,1) Light
