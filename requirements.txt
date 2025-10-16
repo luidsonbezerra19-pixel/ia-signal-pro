@@ -3,5 +3,5 @@ flask-cors>=4.0.0
 requests==2.32.3
 urllib3>=2.0.7
 gunicorn>=22.0.0
-ccxt>=4.0.0,<5
+ccxt==4.4.46
 websocket-client==1.8.0
