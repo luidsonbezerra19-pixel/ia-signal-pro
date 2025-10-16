@@ -1,23 +1,23 @@
-# app.py — App completo (backend + front em uma rota) no estilo do seu layout antigo.
-# - Binance Spot via ccxt (com fallback HTTP)
+# app.py — App completo (Railway-friendly + UI com seleção e polling)
+# - ccxt Spot (com fallback HTTP)
 # - Monte Carlo empírico (MC_PATHS=3000)
-# - T+1, T+2, T+3 por ativo
-# - Indicadores ajustam CONF, não a prob.
-# - Ranking objetivo + Melhor Geral
-# - Campos esperados pelo seu front: timestamp por sinal, best.entry_time, analysis_time
+# - T+1..T+3 por ativo
+# - Indicadores -> ajustam confiança (prob. bruta = MC)
+# - Ranking + Melhor Geral
+# - Selecionar/Limpar ativos; polling até terminar; no-store nas APIs
 
 from __future__ import annotations
-import os, re, time, math, random, threading, json 
+import os, re, time, math, random, threading, json
 from typing import Any, Dict, List, Tuple, Optional
 from datetime import datetime, timezone, timedelta
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
 
 # =========================
-# Configurações
+# Config
 # =========================
 TZ_STR = os.getenv("TZ", "America/Maceio")
-MC_PATHS = int(os.getenv("MC_PATHS", "3000"))  # nº de caminhos Monte Carlo (padrão 3000)
+MC_PATHS = int(os.getenv("MC_PATHS", "3000"))  # nº caminhos Monte Carlo
 DEFAULT_SYMBOLS = os.getenv(
     "SYMBOLS",
     "BTC/USDT,ETH/USDT,SOL/USDT,ADA/USDT,XRP/USDT,BNB/USDT"
@@ -31,7 +31,6 @@ CORS(app)
 # Tempo (Brasil)
 # =========================
 def brazil_now() -> datetime:
-    # America/Maceio ~= UTC-3 sem DST
     return datetime.now(timezone(timedelta(hours=-3)))
 
 def br_full(dt: datetime) -> str:
@@ -83,7 +82,7 @@ class SpotMarket:
     def fetch_prices(self, symbol: str, timeframe: str = "1m", limit: int = 240) -> List[float]:
         key = (symbol, timeframe, limit)
         now = time.time()
-        # cache 20s para aliviar rate-limit
+        # cache leve 20s
         if key in self._cache and (now - self._cache[key][0]) < 20:
             return self._cache[key][1]
 
@@ -99,43 +98,37 @@ class SpotMarket:
                         return closes
                 except Exception:
                     time.sleep(0.25)
-
         # 2) fallback HTTP
         for tf in (timeframe, "5m"):
             closes = self._fetch_http(symbol, timeframe=tf, limit=limit)
             if len(closes) >= min(60, max(20, limit // 3)):
                 self._cache[key] = (now, closes)
                 return closes
-
         return []
 
 # =========================
-# Indicadores (implementações leves)
+# Indicadores (leves)
 # =========================
 class TechnicalIndicators:
     def calculate_rsi(self, prices: List[float], period: int = 14) -> float:
-        if len(prices) <= period:
-            return 50.0
+        if len(prices) <= period: return 50.0
         gains, losses = [], []
         for i in range(1, len(prices)):
             ch = prices[i] - prices[i-1]
             gains.append(max(0.0, ch)); losses.append(max(0.0, -ch))
         avg_gain = sum(gains[-period:]) / period
         avg_loss = sum(losses[-period:]) / period
-        if avg_loss == 0:
-            return 70.0
+        if avg_loss == 0: return 70.0
         rs = avg_gain / avg_loss
         rsi = 100.0 - (100.0 / (1.0 + rs))
         return max(0.0, min(100.0, rsi))
 
     def calculate_adx(self, prices: List[float], period: int = 14) -> float:
-        if len(prices) <= period+1:
-            return 20.0
+        if len(prices) <= period+1: return 20.0
         diffs = [abs(prices[i]-prices[i-1]) for i in range(1, len(prices))]
         avg = sum(diffs[-period:]) / period
         base = sum(abs(p) for p in prices[-period:]) / period
-        if base == 0:
-            return 20.0
+        if base == 0: return 20.0
         val = (avg/base) * 1000.0
         return max(5.0, min(45.0, val))
 
@@ -145,8 +138,7 @@ class TechnicalIndicators:
             k = 2/(n+1); e=[vals[0]]
             for v in vals[1:]: e.append(e[-1] + k*(v-e[-1]))
             return e
-        if len(prices) < 35:
-            return {"signal":"neutral","strength":0.0}
+        if len(prices) < 35: return {"signal":"neutral","strength":0.0}
         ema12 = ema(prices,12); ema26 = ema(prices,26)
         macd_line = [a-b for a,b in zip(ema12[-len(ema26):], ema26)]
         signal_line = ema(macd_line,9)
@@ -318,7 +310,7 @@ class EnhancedTradingSystem:
         base_vol=max(0.001, sum(abs(r) for r in empirical[-60:])/max(1,min(60,len(empirical))))
         self.memory.update_market_regime(volatility=base_vol, adx_values=[adx])
 
-        # 7) pesos iguais
+        # 7) pesos iguais (sem prioridade pra nenhum)
         weights=self.memory.get_symbol_weights(symbol)
 
         # 8) direção pelo MC; confiança pelos indicadores
@@ -369,7 +361,7 @@ class EnhancedTradingSystem:
             'volatility_regime':regime,
             'market_regime':self.memory.market_regime,
             'volatility_multiplier':round(vol_mult,2),
-            'timestamp': self.get_brazil_time().strftime("%H:%M:%S")  # para o layout antigo
+            'timestamp': self.get_brazil_time().strftime("%H:%M:%S")  # para UI
         }
 
     def scan_symbols_tplus(self, symbols: List[str])->Dict[str,Any]:
@@ -393,7 +385,7 @@ class EnhancedTradingSystem:
         return {"por_ativo":por_ativo,"best_overall":best_overall}
 
 # =========================
-# Manager (compatível com seu layout antigo)
+# Manager (compatível layout antigo)
 # =========================
 class AnalysisManager:
     def __init__(self)->None:
@@ -439,62 +431,73 @@ class AnalysisManager:
 manager=AnalysisManager()
 
 # =========================
-# Rotas de API (mantidas)
+# Rotas API (com no-store)
 # =========================
 @app.post("/api/analyze")
 def api_analyze():
     if manager.is_analyzing:
-        return jsonify({"success": False, "error": "Análise em andamento"}), 429
+        resp = jsonify({"success": False, "error": "Análise em andamento"})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp, 429
     try:
         data = request.get_json(silent=True) or {}
         symbols = [s.strip().upper() for s in (data.get("symbols") or manager.symbols_default) if s.strip()]
         if not symbols:
-            return jsonify({"success": False, "error": "Selecione pelo menos um ativo"}), 400
+            resp = jsonify({"success": False, "error": "Selecione pelo menos um ativo"})
+            resp.headers["Cache-Control"] = "no-store"
+            return resp, 400
         sims = MC_PATHS
         th = threading.Thread(target=manager.analyze_symbols_thread, args=(symbols, sims, None))
         th.daemon = True
         th.start()
-        return jsonify({"success": True, "message": f"Analisando {len(symbols)} ativos com {sims} simulações Monte Carlo.", "symbols_count": len(symbols)})
+        resp = jsonify({"success": True, "message": f"Analisando {len(symbols)} ativos com {sims} simulações Monte Carlo.", "symbols_count": len(symbols)})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        resp = jsonify({"success": False, "error": str(e)})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp, 500
 
 @app.get("/api/results")
 def api_results():
-    return jsonify({
+    resp = jsonify({
         "success": True,
-        "results": manager.current_results,      # lista FLAT p/ layout antigo
+        "results": manager.current_results,      # lista FLAT
         "best": manager.best_opportunity,        # inclui best.entry_time
         "analysis_time": manager.analysis_time,  # horário da pesquisa
         "total_signals": len(manager.current_results),
         "is_analyzing": manager.is_analyzing
     })
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 @app.get("/health")
 def health():
-    return jsonify({"ok": True, "ts": datetime.now(timezone.utc).isoformat()}), 200
+    resp = jsonify({"ok": True, "ts": datetime.now(timezone.utc).isoformat()})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp, 200
 
 # =========================
-# Rota "/" com SEU LAYOUT (HTML embutido)
+# UI (HTML sem f-string; com seleção, limpar/selecionar, polling)
 # =========================
 @app.get("/")
 def index():
-    # Monta o HTML sem f-string para evitar conflito com chaves { } de CSS/JS
-    symbols_js = json.dumps(DEFAULT_SYMBOLS)  # vira array JS válido
-
+    symbols_js = json.dumps(DEFAULT_SYMBOLS)
     HTML = """<!doctype html>
 <html lang="pt-br"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>IA Signal Pro - PREÇOS REAIS + 3000 SIMULAÇÕES</title>
 <style>
-:root{--bg:#0f1120;--panel:#181a2e;--panel2:#223148;--tx:#dfe6ff;--muted:#9fb4ff;--accent:#2aa9ff;--gold:#f2a93b;--ok:#29d391;--err:#ff5b5b;--warn:#ffbd2d;}
+:root{--bg:#0f1120;--panel:#181a2e;--panel2:#223148;--tx:#dfe6ff;--muted:#9fb4ff;--accent:#2aa9ff;--gold:#f2a93b;--ok:#29d391;--err:#ff5b5b;}
 *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,"Helvetica Neue",Arial}
 .wrap{max-width:1120px;margin:22px auto;padding:0 16px}
 .hline{border:2px solid var(--accent);border-radius:12px;background:var(--panel);padding:18px}
 h1{margin:0 0 8px;font-size:22px} .sub{color:#8ccf9d;font-size:13px;margin:6px 0 0}
 .controls{margin-top:14px;background:var(--panel2);border-radius:12px;padding:14px}
 .chips{display:flex;flex-wrap:wrap;gap:10px} .chip{border:2px solid var(--accent);border-radius:12px;padding:8px 12px;cursor:pointer;user-select:none}
-.chip input{display:none} .chip.active{box-shadow:0 0 0 2px inset var(--accent)}
-.row{display:flex;gap:10px;align-items:center;margin-top:12px}
+.chip input{margin-right:8px}
+.chip.active{box-shadow:0 0 0 2px inset var(--accent)}
+.row{display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap}
 select,button{border:2px solid var(--accent);border-radius:12px;padding:10px 12px;background:#16314b;color:#fff}
 button{background:#2a9df4;cursor:pointer} button:disabled{opacity:.6;cursor:not-allowed}
 .section{margin-top:16px;border:2px solid var(--gold);border-radius:12px;background:var(--panel)}
@@ -504,12 +507,12 @@ button{background:#2a9df4;cursor:pointer} button:disabled{opacity:.6;cursor:not-
 .kpi{background:#1b2b41;border-radius:10px;padding:10px 12px;color:#b6c8ff} .kpi b{display:block;color:#fff}
 .badge{display:inline-block;padding:3px 8px;border-radius:8px;font-size:11px;margin-right:6px;background:#12263a;border:1px solid #2e6ea8}
 .buy{background:#0c5d4b} .sell{background:#5b1f1f}
-.small{color:#9fb4ff;font-size:12px} .muted{color:#7d90c7} .ok{color:var(--ok)} .err{color:var(--err)}
+.small{color:#9fb4ff;font-size:12px} .muted{color:#7d90c7}
 .grid-syms{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;padding-bottom:12px}
 .sym-head{padding:10px 14px;border-bottom:1px dashed #3b577a} .line{border-top:1px dashed #3b577a;margin:8px 0}
 .tbox{border:2px solid #f0a43c;border-radius:10px;background:#26384e;padding:10px;margin-top:10px}
 .tag{display:inline-block;padding:2px 6px;border-radius:6px;font-size:10px;margin-left:6px;background:#0d2033;border:1px solid #3e6fa8}
-.right{text-align:right}
+.right{float:right}
 </style>
 </head>
 <body>
@@ -525,6 +528,8 @@ button{background:#2a9df4;cursor:pointer} button:disabled{opacity:.6;cursor:not-
           <option value="1000">1000 simulações</option>
           <option value="5000">5000 simulações</option>
         </select>
+        <button type="button" onclick="selectAll()">Selecionar todos</button>
+        <button type="button" onclick="clearAll()">Limpar</button>
         <button id="go" onclick="runAnalyze()">🔎 Analisar com dados reais</button>
       </div>
     </div>
@@ -542,7 +547,7 @@ button{background:#2a9df4;cursor:pointer} button:disabled{opacity:.6;cursor:not-
 </div>
 
 <script>
-const SYMS_DEFAULT = __SYMS__;  // ← substituído no Python por json.dumps(DEFAULT_SYMBOLS)
+const SYMS_DEFAULT = __SYMS__; // injetado pelo backend via json.dumps
 
 const chipsEl = document.getElementById('chips');
 const gridEl  = document.getElementById('grid');
@@ -550,15 +555,39 @@ const bestEl  = document.getElementById('bestCard');
 const bestSec = document.getElementById('bestSec');
 const allSec  = document.getElementById('allSec');
 
+let pollTimer = null;
+let lastAnalysisTime = null;
+
 function mkChip(sym){
-  const div = document.createElement('label');
-  div.className = 'chip active';
-  div.innerHTML = `<input type="checkbox" checked value="${sym}"/>${sym}`;
-  div.onclick = (e)=>{ if(e.target.tagName!=='INPUT'){ const cb=div.querySelector('input'); cb.checked=!cb.checked; } div.classList.toggle('active', div.querySelector('input').checked); };
-  chipsEl.appendChild(div);
+  const label = document.createElement('label');
+  label.className = 'chip active';
+
+  const input = document.createElement('input');
+  input.type = 'checkbox';
+  input.checked = true;
+  input.value = sym;
+  input.addEventListener('change', () => {
+    label.classList.toggle('active', input.checked);
+  });
+
+  label.appendChild(input);
+  label.append(sym);
+  chipsEl.appendChild(label);
 }
 SYMS_DEFAULT.forEach(mkChip);
 
+function selectAll(){
+  document.querySelectorAll('#chips .chip input').forEach(cb=>{
+    cb.checked = true;
+    cb.dispatchEvent(new Event('change'));
+  });
+}
+function clearAll(){
+  document.querySelectorAll('#chips .chip input').forEach(cb=>{
+    cb.checked = false;
+    cb.dispatchEvent(new Event('change'));
+  });
+}
 function selSymbols(){
   return Array.from(chipsEl.querySelectorAll('input')).filter(i=>i.checked).map(i=>i.value);
 }
@@ -568,48 +597,76 @@ function badgeDir(d){ return `<span class="badge ${d==='buy'?'buy':'sell'}">${d=
 async function runAnalyze(){
   const btn = document.getElementById('go');
   btn.disabled = true;
+  btn.textContent = '⏳ Analisando...';
+
   const syms = selSymbols();
-  if(!syms.length){ alert('Selecione pelo menos um ativo.'); btn.disabled=false; return; }
-  try{
-    await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbols: syms})});
-    setTimeout(loadResults, 1200);
-  }catch(e){ alert('Erro na análise'); btn.disabled=false; }
+  if(!syms.length){ alert('Selecione pelo menos um ativo.'); btn.disabled=false; btn.textContent='🔎 Analisar com dados reais'; return; }
+
+  // disparamos a análise
+  await fetch('/api/analyze', {
+    method:'POST',
+    headers:{'Content-Type':'application/json','Cache-Control':'no-store'},
+    cache:'no-store',
+    body: JSON.stringify({ symbols: syms })
+  });
+
+  startPollingResults();
 }
 
-async function loadResults(){
-  const btn = document.getElementById('go');
-  try{
-    const r = await fetch('/api/results'); const data = await r.json();
-    if(!data.success){ alert('Sem resultados'); btn.disabled=false; return; }
+function startPollingResults(){
+  if(pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    const finished = await fetchAndRenderResults();
+    if (finished){
+      clearInterval(pollTimer);
+      pollTimer = null;
+      const btn = document.getElementById('go');
+      btn.disabled = false;
+      btn.textContent = '🔎 Analisar com dados reais';
+    }
+  }, 800);
+}
 
-    // BEST
-    bestSec.style.display='block';
-    bestEl.innerHTML = renderBest(data.best, data.analysis_time);
+async function fetchAndRenderResults(){
+  const r = await fetch('/api/results', { cache: 'no-store', headers: {'Cache-Control':'no-store'} });
+  const data = await r.json();
 
-    // GRID por símbolo
-    const groups = {};
-    (data.results||[]).forEach(it=>{ (groups[it.symbol]=groups[it.symbol]||[]).push(it); });
-    const html = Object.keys(groups).sort().map(sym=>{
-      const arr = groups[sym].sort((a,b)=>(a.horizon||0)-(b.horizon||0));
-      const bestLocal = arr.slice().sort((a,b)=>rank(b)-rank(a))[0];
-      return `
-        <div class="card">
-          <div class="sym-head"><b>${sym}</b>
-            <span class="tag">Regime: ${bestLocal?.volatility_regime||'normal'}</span>
-            <span class="tag">Liquidez: ${Number(bestLocal?.liquidity_score||0).toFixed(1)}</span>
-            <span class="tag">Mercado: ${bestLocal?.multi_timeframe||'neutral'}</span>
-            <span class="tag">🗲 DADOS REAIS</span>
-          </div>
-          ${arr.map(item=>renderTbox(item, bestLocal)).join('')}
-        </div>`;
-    }).join('');
-    gridEl.innerHTML = html;
-    allSec.style.display='block';
-  }catch(e){
-    alert('Erro ao carregar resultados');
-  }finally{
-    btn.disabled=false;
+  // Enquanto está analisando, não finalize
+  if (data.is_analyzing) {
+    // opcional: render parcial do best anterior
+    return false;
   }
+  // Garante que recebemos dados novos
+  if (lastAnalysisTime && data.analysis_time === lastAnalysisTime) {
+    return false;
+  }
+  lastAnalysisTime = data.analysis_time;
+
+  // BEST
+  bestSec.style.display='block';
+  bestEl.innerHTML = renderBest(data.best, data.analysis_time);
+
+  // GRID por símbolo
+  const groups = {};
+  (data.results||[]).forEach(it=>{ (groups[it.symbol]=groups[it.symbol]||[]).push(it); });
+  const html = Object.keys(groups).sort().map(sym=>{
+    const arr = groups[sym].sort((a,b)=>(a.horizon||0)-(b.horizon||0));
+    const bestLocal = arr.slice().sort((a,b)=>rank(b)-rank(a))[0];
+    return `
+      <div class="card">
+        <div class="sym-head"><b>${sym}</b>
+          <span class="tag">Regime: ${bestLocal?.volatility_regime||'normal'}</span>
+          <span class="tag">Liquidez: ${Number(bestLocal?.liquidity_score||0).toFixed(1)}</span>
+          <span class="tag">Mercado: ${bestLocal?.multi_timeframe||'neutral'}</span>
+          <span class="tag">🗲 DADOS REAIS</span>
+        </div>
+        ${arr.map(item=>renderTbox(item, bestLocal)).join('')}
+      </div>`;
+  }).join('');
+  gridEl.innerHTML = html;
+  allSec.style.display='block';
+
+  return true;
 }
 
 function rank(it){ const pd = it.direction==='buy' ? it.probability_buy : it.probability_sell; return (it.confidence*1000)+(pd*100); }
@@ -651,16 +708,10 @@ function renderTbox(it, bestLocal){
 }
 </script>
 </body></html>"""
+    return Response(HTML.replace("__SYMS__", symbols_js), mimetype="text/html")
 
-    html = HTML.replace("__SYMS__", symbols_js)
-    return Response(html, mimetype="text/html")
-    
-# Execução (porta intacta)
+# =========================
+# Execução (PORT do Railway; local 5000)
+# =========================
 if __name__ == "__main__":
-    import os
-    app.run(
-        host="0.0.0.0",
-        port=int(os.getenv("PORT", "5000")),  # Railway usa PORT; local fica 5000
-        threaded=True,
-        debug=False
-    )
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), threaded=True, debug=False)
