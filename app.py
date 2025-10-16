@@ -1,4 +1,4 @@
-# app.py — IA Signal Pro (CoinAPI WS OHLCV + Binance REST fallback) + RSI/ADX/MACD/Liquidez + AR(1)-GARCH Light
+# app.py — IA Signal Pro (CoinAPI WS OHLCV + Binance REST fallback) + RSI/ADX/MACD/Liquidez + GARCH(1,1) Light
 from __future__ import annotations
 import os, re, time, math, random, threading, json, statistics as stats
 from typing import Any, Dict, List, Tuple, Optional
@@ -20,6 +20,7 @@ USE_WS = 1                 # 1=ligado (CoinAPI), 0=desligado
 WS_BUFFER_MINUTES = 720    # ~12h em memória (compatível com RSI reversão)
 WS_SYMBOLS = DEFAULT_SYMBOLS[:]  # símbolos monitorados
 REALTIME_PROVIDER = "okx"    # informativo
+
 OKX_URL = "wss://ws.okx.com:8443/ws/v5/business"
 OKX_CHANNEL = "candle1m"
 
@@ -82,97 +83,142 @@ def _iso_to_ms(iso_str: str) -> int:
     dt = datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
     return int(dt.timestamp() * 1000)
 
-# =========================
-# WebSocket CoinAPI (OHLCV 1m em tempo real)
-# =========================
+def _safe_returns_from_prices(prices: List[float]) -> List[float]:
+    """Calcula retornos percentuais de forma segura"""
+    if len(prices) < 2:
+        return []
+    returns = []
+    for i in range(1, len(prices)):
+        if prices[i-1] != 0:
+            ret = (prices[i] - prices[i-1]) / prices[i-1]
+            returns.append(ret)
+    return returns
 
+def _rank_key(x: Dict[str, Any]) -> float:
+    """Função para ranking das oportunidades"""
+    if "confidence" not in x or "probability_buy" not in x:
+        return 0.0
+    direction = x.get("direction", "buy")
+    prob = x["probability_buy"] if direction == "buy" else x["probability_sell"]
+    return (x["confidence"] * 1000) + (prob * 100)
+
+def _confirm_prob(prob_up: float, rsi: float, macd_hist: float, adx: float) -> float:
+    """Ajusta probabilidade base com confirmação de indicadores"""
+    bullish = (1 if rsi >= 55 else 0) + (1 if macd_hist > 0 else 0)
+    bearish = (1 if rsi <= 45 else 0) + (1 if macd_hist < 0 else 0)
+    strong = (adx >= 25)
+    adj = 0.0
+    if bullish > bearish and strong:   adj = 0.07
+    elif bullish > bearish:            adj = 0.04
+    elif bearish > bullish and strong: adj = -0.07
+    elif bearish > bullish:            adj = -0.04
+    res = prob_up + adj
+    return min(0.99, max(0.01, res))
+
+# =========================
+# WebSocket OKX (OHLCV 1m em tempo real)
+# =========================
 class WSRealtimeFeed:
     def __init__(self):
         self.enabled = bool(USE_WS)
         self.buf_minutes = int(WS_BUFFER_MINUTES)
         self.symbols = [s.strip().upper() for s in WS_SYMBOLS if s.strip()]
         self._lock = threading.Lock()
-        self._buffers = {s: [] for s in self.symbols}
-        self._thread = None
+        self._buffers: Dict[str, List[List[float]]] = {s: [] for s in self.symbols}
+        self._thread: Optional[threading.Thread] = None
         self._ws = None
         self._running = False
         self._ws_available = False
         try:
-            import websocket  # noqa
+            import websocket  # noqa: F401
             self._ws_available = True
         except Exception:
             print("[ws] 'websocket-client' não está instalado; WS desativado.")
             self.enabled = False
+
     def _on_open(self, ws):
         try:
-            args=[{"channel": OKX_CHANNEL, "instId": s.replace("/", "-")} for s in self.symbols]
+            args = [{"channel": OKX_CHANNEL, "instId": s.replace("/", "-")} for s in self.symbols]
             ws.send(json.dumps({"op":"subscribe","args":args}))
             print("[ws] subscribe enviado para OKX; subs:", len(args))
         except Exception as e:
             print("[ws] erro ao enviar subscribe:", e)
-    def _on_message(self, _, msg:str):
+
+    def _on_message(self, _, msg: str):
         try:
-            data=json.loads(msg)
-            if data.get("event") in ("subscribe","error"):
-                if data.get("event")=="error": print("[ws] erro OKX:", data)
+            data = json.loads(msg)
+            if data.get("event") in ("subscribe", "error"):
+                if data.get("event") == "error":
+                    print("[ws] erro OKX:", data)
                 return
-            arg=data.get("arg",{})
-            if arg.get("channel")!=OKX_CHANNEL: return
-            sym=arg.get("instId","").replace("-","/")
+            arg = data.get("arg", {})
+            if arg.get("channel") != OKX_CHANNEL:
+                return
+            sym = arg.get("instId","").replace("-", "/")
             for row in (data.get("data") or []):
-                ts=int(row[0]); o=float(row[1]); h=float(row[2]); l=float(row[3]); c=float(row[4])
-                v=float(row[5]) if len(row)>5 else 0.0
-                rec=[ts,o,h,l,c,v]
+                ts = int(row[0]); o=float(row[1]); h=float(row[2]); l=float(row[3]); c=float(row[4])
+                v = float(row[5]) if len(row)>5 else 0.0
+                rec = [ts,o,h,l,c,v]
                 with self._lock:
-                    buf=self._buffers.setdefault(sym,[])
-                    if buf and buf[-1][0]==ts: buf[-1]=rec
+                    buf = self._buffers.setdefault(sym, [])
+                    if buf and buf[-1][0] == ts:
+                        buf[-1] = rec
                     else:
                         buf.append(rec)
-                        if len(buf)>self.buf_minutes+5: del buf[:len(buf)-(self.buf_minutes+5)]
+                        if len(buf) > self.buf_minutes + 5:
+                            del buf[:len(buf)-(self.buf_minutes+5)]
         except Exception:
             pass
-    def _on_error(self,_,err): print("[ws] error:", err)
-    def _on_close(self,*_): print("[ws] closed")
+
+    def _on_error(self, _, err): print("[ws] error:", err)
+    def _on_close(self, *_):    print("[ws] closed")
+
     def _run(self):
         from websocket import WebSocketApp
         while self._running:
             try:
-                self._ws=WebSocketApp(OKX_URL,on_open=self._on_open,on_message=self._on_message,on_error=self._on_error,on_close=self._on_close)
-                self._ws.run_forever(ping_interval=25,ping_timeout=10)
+                self._ws = WebSocketApp(OKX_URL, on_open=self._on_open, on_message=self._on_message,
+                                        on_error=self._on_error, on_close=self._on_close)
+                self._ws.run_forever(ping_interval=25, ping_timeout=10)
             except Exception as e:
                 print("[ws] run_forever exception:", e)
             if self._running: time.sleep(3)
+
     def start(self):
         if not self.enabled or not self._ws_available: return
-        if self._thread and self._thread.is_alive(): return
-        self._running=True
-        self._thread=threading.Thread(target=self._run,daemon=True); self._thread.start()
+        if self._thread and self._thread.is_alive():    return
+        self._running = True
+        self._thread = threading.Thread(target=self._run, daemon=True); self._thread.start()
+
     def stop(self):
-        self._running=False
+        self._running = False
         try:
             if self._ws: self._ws.close()
         except Exception: pass
         if self._thread: self._thread.join(timeout=2)
-    def get_ohlcv(self, symbol:str, limit:int=1000, use_closed_only:bool=True):
-        if not (self.enabled and self._ws_available): return []
-        sym=symbol.strip().upper()
-        with self._lock:
-            buf=self._buffers.get(sym,[])
-            data=buf[-min(len(buf),limit):]
-        if not data: return []
-        if use_closed_only and len(data)>=1:
-            now_min=int(time.time()//60); last_min=int((data[-1][0]//1000)//60)
-            if last_min==now_min: data=data[:-1]
-        return data[:]
-    def get_last_candle(self, symbol:str):
-        if not (self.enabled and self._ws_available): return None
-        sym=symbol.strip().upper()
-        with self._lock:
-            buf=self._buffers.get(sym,[])
-            return buf[-1][:] if buf else None
-WS_FEED=WSRealtimeFeed()
-WS_FEED.start()
 
+    def get_ohlcv(self, symbol: str, limit: int = 1000, use_closed_only: bool = True) -> List[List[float]]:
+        if not (self.enabled and self._ws_available): return []
+        sym = symbol.strip().upper()
+        with self._lock:
+            buf = self._buffers.get(sym, [])
+            data = buf[-min(len(buf), limit):]
+        if not data: return []
+        if use_closed_only and len(data) >= 1:
+            now_min  = int(time.time() // 60)
+            last_min = int((data[-1][0] // 1000) // 60)
+            if last_min == now_min: data = data[:-1]
+        return data[:]
+
+    def get_last_candle(self, symbol: str) -> Optional[List[float]]:
+        if not (self.enabled and self._ws_available): return None
+        sym = symbol.strip().upper()
+        with self._lock:
+            buf = self._buffers.get(sym, [])
+            return buf[-1][:] if buf else None
+
+WS_FEED = WSRealtimeFeed()
+WS_FEED.start()
 
 # =========================
 # Mercado Spot (ccxt + fallback HTTP) — continua usando Binance REST
@@ -416,48 +462,110 @@ class ReversalDetector:
         return out
 
 # =========================
-# Simulador 100% paramétrico (AR(1)-GARCH "light" + backup EWMA-GBM)
+# Simulador GARCH(1,1) Light com 3000 simulações
 # =========================
 
-class MonteCarloSimulator:
-    def _garch_calibrate(self, rets, alpha=0.06, beta=0.94):
-        if not rets: return None
-        mu=sum(rets)/len(rets)
-        var=sum((x-mu)**2 for x in rets)/(len(rets)-1 if len(rets)>1 else 1)
-        var=max(var,1e-12)
-        alpha=max(1e-6,min(alpha,0.999)); beta=max(1e-6,min(beta,0.999))
-        if alpha+beta>=0.9999: beta=0.9998-alpha
-        omega=var*(1-alpha-beta)
-        h=var
-        for r in rets:
-            h=omega+alpha*(r*r)+beta*h
-        return omega,alpha,beta,h
-    def _prob_up(self, p0, rets_hist, steps, paths=3000):
-        calib=self._garch_calibrate(rets_hist)
-        if not calib: return 0.5
-        omega,alpha,beta,h_last = calib
-        up=0; tot=0
-        import random, math
-        for _ in range(paths):
-            h=h_last; price=p0; r_prev=0.0
-            for _s in range(steps):
-                h=omega+alpha*(r_prev*r_prev)+beta*h
-                sigma=(h if h>0 else 1e-18)**0.5
-                r=sigma*random.gauss(0.0,1.0)
-                price*=math.exp(r)
-                r_prev=r
-            tot+=1
-            if price>p0: up+=1
-        p=up/max(1,tot)
-        if abs(p-0.5)<1e-9: p+=0.001
-        return min(0.99,max(0.01,p))
-    def simulate_auto(self, base_price, empirical_returns, steps, num_paths=3000):
-        import math, random
-        if not empirical_returns or len(empirical_returns)<10:
-            empirical_returns=[random.gauss(0.0,0.001) for _ in range(200)]
-        rets=[math.log(1+x) for x in empirical_returns if x is not None]
-        p_up=self._prob_up(base_price, rets, steps, num_paths)
-        return {"probability_buy": p_up, "probability_sell": 1.0-p_up, "quality":"garch11", "sim_model":"garch11"}
+class GARCH11Simulator:
+    """GARCH(1,1) Light com 3000 simulações por padrão"""
+    
+    def _garch_calibrate(self, returns: List[float]) -> Tuple[float, float, float, float]:
+        """Calibra parâmetros GARCH(1,1) usando momentos"""
+        if len(returns) < 30:
+            # Valores padrão conservadores
+            return 1e-6, 0.1, 0.85, 1e-4
+        
+        # Converter returns para log-returns se necessário
+        log_returns = []
+        for i in range(1, len(returns)):
+            if returns[i-1] != 0:
+                log_ret = math.log(1 + returns[i])  # Assume que returns já são percentuais
+                log_returns.append(log_ret)
+        
+        if not log_returns:
+            return 1e-6, 0.1, 0.85, 1e-4
+        
+        # Estimar parâmetros GARCH(1,1) simplificado
+        mean_ret = sum(log_returns) / len(log_returns)
+        var = sum((r - mean_ret) ** 2 for r in log_returns) / len(log_returns)
+        
+        # Parâmetros GARCH(1,1) típicos para ativos financeiros
+        alpha = 0.08  # coeficiente dos choques recentes
+        beta = 0.90   # coeficiente da variância passada
+        omega = var * (1 - alpha - beta)  # variância de longo prazo
+        
+        # Garantir que omega seja positivo
+        omega = max(1e-6, omega)
+        
+        # Última variância condicional
+        h_last = var
+        
+        return omega, alpha, beta, h_last
+
+    def simulate_garch11(self, base_price: float, returns: List[float], 
+                        steps: int, num_paths: int = 3000) -> Dict[str, Any]:
+        """Executa simulação GARCH(1,1) com num_paths caminhos"""
+        import math
+        import random
+        
+        if not returns or len(returns) < 10:
+            # Fallback: gera returns sintéticos se não houver dados suficientes
+            returns = [random.gauss(0.0, 0.002) for _ in range(100)]
+        
+        # Calibrar GARCH(1,1)
+        omega, alpha, beta, h_last = self._garch_calibrate(returns)
+        
+        # Garantir estabilidade
+        if alpha + beta >= 0.999:
+            alpha, beta = 0.08, 0.90
+            omega = 1e-6
+        
+        up_count = 0
+        total_count = 0
+        
+        # 3000 simulações GARCH(1,1)
+        for _ in range(num_paths):
+            try:
+                h = h_last
+                price = base_price
+                
+                for step in range(steps):
+                    # GARCH(1,1): h_t = omega + alpha * ε²_{t-1} + beta * h_{t-1}
+                    epsilon = math.sqrt(h) * random.gauss(0.0, 1.0)
+                    
+                    # Atualizar preço
+                    price *= math.exp(epsilon)
+                    
+                    # Atualizar variância condicional GARCH(1,1)
+                    h = omega + alpha * (epsilon ** 2) + beta * h
+                    h = max(1e-12, h)  # Evitar variância negativa
+                
+                total_count += 1
+                if price > base_price:
+                    up_count += 1
+                    
+            except Exception:
+                continue
+        
+        if total_count == 0:
+            prob_buy = 0.5
+        else:
+            prob_buy = up_count / total_count
+        
+        # Suavizar probabilidades extremas
+        prob_buy = min(0.95, max(0.05, prob_buy))
+        prob_sell = 1.0 - prob_buy
+        
+        return {
+            "probability_buy": prob_buy,
+            "probability_sell": prob_sell,
+            "quality": "garch11_light",
+            "sim_model": "garch11",
+            "paths_used": total_count,
+            "garch_params": {"omega": omega, "alpha": alpha, "beta": beta}
+        }
+
+# Manter compatibilidade com código existente
+MonteCarloSimulator = GARCH11Simulator
 
 class EnhancedTradingSystem:
     def __init__(self)->None:
@@ -518,17 +626,46 @@ class EnhancedTradingSystem:
         levels = self.revdet.compute_extremes_levels(rsi_series, 720, 6) if rsi_series else {"avg_peak":70.0,"avg_trough":30.0}
         rev_sig = self.revdet.signal_from_levels(rsi, levels, 2.5)
 
-        # Simulador paramétrico
-        empirical=_safe_returns_from_prices(closes) or [random.gauss(0,0.003) for _ in range(120)]
-        steps=max(1,min(3,int(horizon)))
-        base_price=closes[-1] if closes else price_display
-        mc=self.monte_carlo.simulate_auto(base_price, empirical, steps, num_paths=MC_PATHS)
+        # Simulador GARCH(1,1) Light com 3000 simulações
+        empirical_returns = _safe_returns_from_prices(closes)
+        steps = max(1, min(3, int(horizon)))
+        base_price = closes[-1] if closes else price_display
 
-        # direção primária pelo MC
-        p_base = mc['probability_buy']
-        p_adj = _confirm_prob(p_base, rsi, (macd['hist'][-1] if macd.get('hist') else 0.0), adx)
-        direction = 'buy' if p_adj>=0.5 else 'sell'
-        prob_dir = p_adj if direction=='buy' else (1.0 - p_adj)
+        # Usar GARCH(1,1) explicitamente com 3000 simulações
+        mc = self.monte_carlo.simulate_garch11(
+            base_price, 
+            empirical_returns, 
+            steps, 
+            num_paths=MC_PATHS  # 3000 simulações
+        )
+
+        # Aplicar confirmação de probabilidade com indicadores
+        prob_buy_original = mc['probability_buy']
+        prob_sell_original = mc['probability_sell']
+
+        # Calcular MACD histogram para confirmação
+        macd_hist = 0.0
+        try:
+            macd_result = self.indicators.macd(closes)
+            # Converter sinal MACD para valor numérico aproximado
+            if macd_result["signal"] == "bullish":
+                macd_hist = macd_result["strength"]
+            elif macd_result["signal"] == "bearish":
+                macd_hist = -macd_result["strength"]
+        except:
+            macd_hist = 0.0
+
+        # Ajustar probabilidade GARCH com confirmação técnica
+        prob_buy_adjusted = _confirm_prob(prob_buy_original, rsi, macd_hist, adx)
+        prob_sell_adjusted = 1.0 - prob_buy_adjusted
+
+        # direção primária pelo GARCH ajustado
+        direction = 'buy' if prob_buy_adjusted > prob_sell_adjusted else 'sell'
+        prob_dir = prob_buy_adjusted if direction == 'buy' else prob_sell_adjusted
+
+        # Atualizar o resultado GARCH com as probabilidades ajustadas
+        mc['probability_buy'] = prob_buy_adjusted
+        mc['probability_sell'] = prob_sell_adjusted
 
         # confiança base + boosts
         score=prob_dir*100.0
@@ -548,11 +685,13 @@ class EnhancedTradingSystem:
             'symbol':symbol,
             'horizon':steps,
             'direction':direction,
-            'probability_buy': (p_adj if direction=='buy' else (1.0 - p_adj)) ,
-            'probability_sell': (1.0 - (p_adj if direction=='buy' else (1.0 - p_adj))) ,
+            'probability_buy':mc['probability_buy'],
+            'probability_sell':mc['probability_sell'],
             'confidence':confidence,
             'rsi':rsi,'adx':adx,'multi_timeframe':tf_cons,
             'monte_carlo_quality':mc['quality'],
+            'garch_model': mc['sim_model'],
+            'simulations_count': mc.get('paths_used', MC_PATHS),
             'price':price_display,
             'liquidity_score':liq,
             'timestamp': datetime.now().strftime("%H:%M:%S"),
@@ -562,7 +701,7 @@ class EnhancedTradingSystem:
             'reversal_side': rev_sig["side"],
             'reversal_proximity': round(rev_sig["proximity"],3),
             # Extras úteis
-            'sim_model': mc.get('sim_model','ar1_garch11'),
+            'sim_model': mc.get('sim_model', 'garch11'),
             'last_volume_1m': round(volume_display, 8),
             'data_source': 'WS_COINAPI' if WS_FEED.enabled else ('CCXT' if self.spot._has_ccxt else 'HTTP')
         }
@@ -719,12 +858,12 @@ button{background:#2a9df4;cursor:pointer} button:disabled{opacity:.6;cursor:not-
   <div class="hline">
     <h1>IA Signal Pro - PREÇOS REAIS + 3000 SIMULAÇÕES</h1>
     <div class="clock" id="clock">--:--:-- BRT</div>
-    <div class="sub">✅ CoinAPI (WS) · Binance REST fallback · RSI/ADX (Wilder) · Liquidez (ATR%) · Reversão RSI (12h)</div>
+    <div class="sub">✅ CoinAPI (WS) · Binance REST fallback · RSI/ADX (Wilder) · Liquidez (ATR%) · Reversão RSI (12h) · GARCH(1,1)</div>
     <div class="controls">
       <div class="chips" id="chips"></div>
       <div class="row">
         <select id="mcsel">
-          <option value="3000" selected>3000 simulações</option>
+          <option value="3000" selected>3000 simulações GARCH</option>
           <option value="1000">1000 simulações</option>
           <option value="5000">5000 simulações</option>
         </select>
@@ -852,7 +991,7 @@ async function fetchAndRenderResults(){
           <span class="tag">TF: ${bestLocal?.multi_timeframe||'neutral'}</span>
           <span class="tag">Liquidez: ${Number(bestLocal?.liquidity_score||0).toFixed(2)}</span>
           ${bestLocal?.reversal ? `<span class="tag">🔄 Reversão (${bestLocal.reversal_side})</span>`:''}
-          <span class="tag">🗲 DADOS REAIS</span>
+          <span class="tag">📈 GARCH(1,1)</span>
         </div>
         ${arr.map(item=>renderTbox(item, bestLocal)).join('')}
       </div>`;
@@ -871,7 +1010,7 @@ function renderBest(best, analysisTime){
   return `
     <div class="small muted">Atualizado: ${analysisTime} (Horário Brasil)</div>
     <div class="line"></div>
-    <div><b>${best.symbol} T+${best.horizon}</b> ${badgeDir(best.direction)} <span class="tag">🥇 MELHOR ENTRE TODOS OS HORIZONTES</span>${rev} <span class="tag">🗲 REAL</span></div>
+    <div><b>${best.symbol} T+${best.horizon}</b> ${badgeDir(best.direction)} <span class="tag">🥇 MELHOR ENTRE TODOS OS HORIZONTES</span>${rev} <span class="tag">📈 GARCH(1,1)</span></div>
     <div class="kpis">
       <div class="kpi"><b>Prob Compra</b>${pct(best.probability_buy||0)}</div>
       <div class="kpi"><b>Prob Venda</b>${pct(best.probability_sell||0)}</div>
@@ -891,7 +1030,7 @@ function renderTbox(it, bestLocal){
   const rev = it.reversal ? ` <span class="tag">🔄 REVERSÃO (${it.reversal_side})</span>` : '';
   return `
     <div class="tbox">
-      <div><b>T+${it.horizon}</b> ${badgeDir(it.direction)} ${isBest?'<span class="tag">🥇 MELHOR DO ATIVO</span>':''}${rev} <span class="tag">🗲 REAL</span></div>
+      <div><b>T+${it.horizon}</b> ${badgeDir(it.direction)} ${isBest?'<span class="tag">🥇 MELHOR DO ATIVO</span>':''}${rev} <span class="tag">📈 GARCH(1,1)</span></div>
       <div class="small">
         Prob: <span class="${it.direction==='buy'?'ok':'err'}">${pct(it.probability_buy||0)}/${pct(it.probability_sell||0)}</span>
         · Conf: <span class="ok">${pct(it.confidence||0)}</span>
@@ -911,15 +1050,3 @@ function renderTbox(it, bestLocal){
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
     app.run(host="0.0.0.0", port=int(os.getenv("PORT","5000")), threaded=True, debug=False)
-
-
-def _confirm_prob(prob_up: float, rsi: float, macd_hist: float, adx: float) -> float:
-    bullish = (1 if rsi>=55 else 0) + (1 if macd_hist>0 else 0)
-    bearish = (1 if rsi<=45 else 0) + (1 if macd_hist<0 else 0)
-    strong  = (adx >= 25)
-    adj = 0.0
-    if bullish>bearish and strong:   adj = 0.07
-    elif bullish>bearish:            adj = 0.04
-    elif bearish>bullish and strong: adj = -0.07
-    elif bearish>bullish:            adj = -0.04
-    return min(0.99, max(0.01, prob_up + adj))
