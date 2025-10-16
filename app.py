@@ -478,36 +478,38 @@ def health():
 # =========================
 @app.get("/")
 def index():
-    # HTML fiel ao seu visual (cards + melhor global + seleção de símbolos)
-    html = f"""<!doctype html>
+    # Monta o HTML sem f-string para evitar conflito com chaves { } de CSS/JS
+    symbols_js = json.dumps(DEFAULT_SYMBOLS)  # vira array JS válido
+
+    HTML = """<!doctype html>
 <html lang="pt-br"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>IA Signal Pro - PREÇOS REAIS + 3000 SIMULAÇÕES</title>
 <style>
-:root{{--bg:#0f1120;--panel:#181a2e;--panel2:#223148;--tx:#dfe6ff;--muted:#9fb4ff;--accent:#2aa9ff;--gold:#f2a93b;--ok:#29d391;--err:#ff5b5b;--warn:#ffbd2d;}}
-*{{box-sizing:border-box}} body{{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,"Helvetica Neue",Arial}}
-.wrap{{max-width:1120px;margin:22px auto;padding:0 16px}}
-.hline{{border:2px solid var(--accent);border-radius:12px;background:var(--panel);padding:18px}}
-h1{{margin:0 0 8px;font-size:22px}} .sub{{color:#8ccf9d;font-size:13px;margin:6px 0 0}}
-.controls{{margin-top:14px;background:var(--panel2);border-radius:12px;padding:14px}}
-.chips{{display:flex;flex-wrap:wrap;gap:10px}} .chip{{border:2px solid var(--accent);border-radius:12px;padding:8px 12px;cursor:pointer;user-select:none}}
-.chip input{{display:none}} .chip.active{{box-shadow:0 0 0 2px inset var(--accent)}}
-.row{{display:flex;gap:10px;align-items:center;margin-top:12px}}
-select,button{{border:2px solid var(--accent);border-radius:12px;padding:10px 12px;background:#16314b;color:#fff}}
-button{{background:#2a9df4;cursor:pointer}} button:disabled{{opacity:.6;cursor:not-allowed}}
-.section{{margin-top:16px;border:2px solid var(--gold);border-radius:12px;background:var(--panel)}}
-.section .title{{padding:10px 14px;border-bottom:2px solid var(--gold);font-weight:700}}
-.card{{margin:12px;border-radius:12px;background:var(--panel2);padding:14px;border:2px solid var(--gold)}}
-.kpis{{display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:8px;margin-top:8px}}
-.kpi{{background:#1b2b41;border-radius:10px;padding:10px 12px;color:#b6c8ff}} .kpi b{{display:block;color:#fff}}
-.badge{{display:inline-block;padding:3px 8px;border-radius:8px;font-size:11px;margin-right:6px;background:#12263a;border:1px solid #2e6ea8}}
-.buy{{background:#0c5d4b}} .sell{{background:#5b1f1f}}
-.small{{color:#9fb4ff;font-size:12px}} .muted{{color:#7d90c7}} .ok{{color:var(--ok)}} .err{{color:var(--err)}}
-.grid-syms{{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;padding-bottom:12px}}
-.sym-head{{padding:10px 14px;border-bottom:1px dashed #3b577a}} .line{{border-top:1px dashed #3b577a;margin:8px 0}}
-.tbox{{border:2px solid #f0a43c;border-radius:10px;background:#26384e;padding:10px;margin-top:10px}}
-.tag{{display:inline-block;padding:2px 6px;border-radius:6px;font-size:10px;margin-left:6px;background:#0d2033;border:1px solid #3e6fa8}}
-.right{{text-align:right}}
+:root{--bg:#0f1120;--panel:#181a2e;--panel2:#223148;--tx:#dfe6ff;--muted:#9fb4ff;--accent:#2aa9ff;--gold:#f2a93b;--ok:#29d391;--err:#ff5b5b;--warn:#ffbd2d;}
+*{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,"Helvetica Neue",Arial}
+.wrap{max-width:1120px;margin:22px auto;padding:0 16px}
+.hline{border:2px solid var(--accent);border-radius:12px;background:var(--panel);padding:18px}
+h1{margin:0 0 8px;font-size:22px} .sub{color:#8ccf9d;font-size:13px;margin:6px 0 0}
+.controls{margin-top:14px;background:var(--panel2);border-radius:12px;padding:14px}
+.chips{display:flex;flex-wrap:wrap;gap:10px} .chip{border:2px solid var(--accent);border-radius:12px;padding:8px 12px;cursor:pointer;user-select:none}
+.chip input{display:none} .chip.active{box-shadow:0 0 0 2px inset var(--accent)}
+.row{display:flex;gap:10px;align-items:center;margin-top:12px}
+select,button{border:2px solid var(--accent);border-radius:12px;padding:10px 12px;background:#16314b;color:#fff}
+button{background:#2a9df4;cursor:pointer} button:disabled{opacity:.6;cursor:not-allowed}
+.section{margin-top:16px;border:2px solid var(--gold);border-radius:12px;background:var(--panel)}
+.section .title{padding:10px 14px;border-bottom:2px solid var(--gold);font-weight:700}
+.card{margin:12px;border-radius:12px;background:var(--panel2);padding:14px;border:2px solid var(--gold)}
+.kpis{display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:8px;margin-top:8px}
+.kpi{background:#1b2b41;border-radius:10px;padding:10px 12px;color:#b6c8ff} .kpi b{display:block;color:#fff}
+.badge{display:inline-block;padding:3px 8px;border-radius:8px;font-size:11px;margin-right:6px;background:#12263a;border:1px solid #2e6ea8}
+.buy{background:#0c5d4b} .sell{background:#5b1f1f}
+.small{color:#9fb4ff;font-size:12px} .muted{color:#7d90c7} .ok{color:var(--ok)} .err{color:var(--err)}
+.grid-syms{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;padding-bottom:12px}
+.sym-head{padding:10px 14px;border-bottom:1px dashed #3b577a} .line{border-top:1px dashed #3b577a;margin:8px 0}
+.tbox{border:2px solid #f0a43c;border-radius:10px;background:#26384e;padding:10px;margin-top:10px}
+.tag{display:inline-block;padding:2px 6px;border-radius:6px;font-size:10px;margin-left:6px;background:#0d2033;border:1px solid #3e6fa8}
+.right{text-align:right}
 </style>
 </head>
 <body>
@@ -540,7 +542,8 @@ button{{background:#2a9df4;cursor:pointer}} button:disabled{{opacity:.6;cursor:n
 </div>
 
 <script>
-const SYMS_DEFAULT = {DEFAULT_SYMBOLS};
+const SYMS_DEFAULT = __SYMS__;  // ← substituído no Python por json.dumps(DEFAULT_SYMBOLS)
+
 const chipsEl = document.getElementById('chips');
 const gridEl  = document.getElementById('grid');
 const bestEl  = document.getElementById('bestCard');
@@ -567,11 +570,8 @@ async function runAnalyze(){
   btn.disabled = true;
   const syms = selSymbols();
   if(!syms.length){ alert('Selecione pelo menos um ativo.'); btn.disabled=false; return; }
-
-  // opcionalmente enviaremos o MC_PATHS escolhido (o backend usa ENV por padrão, só para futura extensão):
   try{
     await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbols: syms})});
-    // pequena espera e busca de resultados
     setTimeout(loadResults, 1200);
   }catch(e){ alert('Erro na análise'); btn.disabled=false; }
 }
@@ -586,11 +586,9 @@ async function loadResults(){
     bestSec.style.display='block';
     bestEl.innerHTML = renderBest(data.best, data.analysis_time);
 
-    // GRID T+ por símbolo (a API devolve lista flat; vamos agrupar)
+    // GRID por símbolo
     const groups = {};
-    (data.results||[]).forEach(it=>{
-      (groups[it.symbol]=groups[it.symbol]||[]).push(it);
-    });
+    (data.results||[]).forEach(it=>{ (groups[it.symbol]=groups[it.symbol]||[]).push(it); });
     const html = Object.keys(groups).sort().map(sym=>{
       const arr = groups[sym].sort((a,b)=>(a.horizon||0)-(b.horizon||0));
       const bestLocal = arr.slice().sort((a,b)=>rank(b)-rank(a))[0];
@@ -618,7 +616,6 @@ function rank(it){ const pd = it.direction==='buy' ? it.probability_buy : it.pro
 
 function renderBest(best, analysisTime){
   if(!best) return '<div class="small">Sem oportunidade no momento.</div>';
-  const pd = best.direction==='buy' ? best.probability_buy : best.probability_sell;
   return `
     <div class="small muted">Atualizado: ${analysisTime} (Horário Brasil)</div>
     <div class="line"></div>
@@ -640,7 +637,6 @@ function renderBest(best, analysisTime){
 
 function renderTbox(it, bestLocal){
   const isBest = bestLocal && it.symbol===bestLocal.symbol && it.horizon===bestLocal.horizon;
-  const pd = it.direction==='buy' ? (it.probability_buy||0) : (it.probability_sell||0);
   return `
     <div class="tbox">
       <div><b>T+${it.horizon}</b> ${badgeDir(it.direction)} ${isBest?'<span class="tag">🥇 MELHOR DO ATIVO</span>':''} <span class="tag">🗲 REAL</span></div>
@@ -655,6 +651,8 @@ function renderTbox(it, bestLocal){
 }
 </script>
 </body></html>"""
+
+    html = HTML.replace("__SYMS__", symbols_js)
     return Response(html, mimetype="text/html")
     
 # Execução (porta intacta)
