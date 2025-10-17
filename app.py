@@ -812,7 +812,6 @@ class AdaptiveGARCH11Simulator:
             prob_buy = up_count / total_count
         
         # Ajustar probabilidade baseado na qualidade do fit
-        prob_buy = prob_buy * 0.7 + 0.5 * (1 - fit_quality)  # Puxa para 0.5 se qualidade baixa
         prob_buy = min(0.95, max(0.05, prob_buy))
         prob_sell = 1.0 - prob_buy
         
