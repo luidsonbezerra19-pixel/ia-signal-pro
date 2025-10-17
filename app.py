@@ -1,4 +1,4 @@
-# app.py — IA Signal Pro (CoinAPI WS OHLCV + Binance REST fallback) + RSI/ADX/MACD/Liquidez + GARCH(1,1) Light
+# app.py — IA Signal Pro com Novo Modelo Híbrido
 from __future__ import annotations
 import os, re, time, math, random, threading, json, statistics as stats
 from typing import Any, Dict, List, Tuple, Optional
@@ -35,36 +35,36 @@ logger = structlog.get_logger()
 # =========================
 TZ_STR = "America/Maceio"
 MC_PATHS = 3000
-USE_CLOSED_ONLY = True  # usar apenas candles fechados p/ indicadores (coloque False para intrabar)
+USE_CLOSED_ONLY = True
 DEFAULT_SYMBOLS = "BTC/USDT,ETH/USDT,SOL/USDT,ADA/USDT,XRP/USDT,BNB/USDT".split(",")
 DEFAULT_SYMBOLS = [s.strip().upper() for s in DEFAULT_SYMBOLS if s.strip()]
 
-# Provedor de tempo real
-USE_WS = 1                 # 1=ligado (CoinAPI), 0=desligado
-WS_BUFFER_MINUTES = 720    # ~12h em memória (compatível com RSI reversão)
-WS_SYMBOLS = DEFAULT_SYMBOLS[:]  # símbolos monitorados
-REALTIME_PROVIDER = "okx"    # informativo
+USE_WS = 1
+WS_BUFFER_MINUTES = 720
+WS_SYMBOLS = DEFAULT_SYMBOLS[:]
+REALTIME_PROVIDER = "okx"
 
 OKX_URL = "wss://ws.okx.com:8443/ws/v5/business"
 OKX_CHANNEL = "candle1m"
 
-# >>>>>>>> COLOQUE SUA CHAVE AQUI <<<<<<<<
-COINAPI_KEY = "COLE_SUA_COINAPI_KEY_AQUI"  # obtenha em https://www.coinapi.io/
-COINAPI_URL = "wss://ws.coinapi.io/v1/"    # endpoint WS da CoinAPI
-COINAPI_PERIOD = "1MIN"                    # período do OHLCV
+COINAPI_KEY = "COLE_SUA_COINAPI_KEY_AQUI"
+COINAPI_URL = "wss://ws.coinapi.io/v1/"
+COINAPI_PERIOD = "1MIN"
 
 app = Flask(__name__)
 CORS(app)
 
 # =========================
-# Feature Flags
+# Novos Feature Flags
 # =========================
 FEATURE_FLAGS = {
     "enable_adaptive_garch": True,
     "enable_smart_cache": True,
     "enable_circuit_breaker": True,
     "websocket_provider": "okx",
-    "maintenance_mode": False
+    "maintenance_mode": False,
+    "enable_market_context_garch": True,  # NOVO
+    "enable_dynamic_weights": True,       # NOVO
 }
 
 # =========================
@@ -79,7 +79,6 @@ class RateLimiter:
         if identifier not in self.requests:
             self.requests[identifier] = []
         
-        # Remove requests outside the window
         self.requests[identifier] = [req_time for req_time in self.requests[identifier] 
                                    if now - req_time < window_seconds]
         
@@ -99,7 +98,7 @@ class CircuitBreaker:
         self.recovery_timeout = recovery_timeout
         self.failures = 0
         self.last_failure_time = 0
-        self.state = "CLOSED"  # CLOSED, OPEN, HALF_OPEN
+        self.state = "CLOSED"
         
     def record_success(self):
         self.failures = 0
@@ -123,7 +122,7 @@ class CircuitBreaker:
                 logger.info("circuit_breaker_half_open")
                 return True
             return False
-        else:  # HALF_OPEN
+        else:
             return True
 
 binance_circuit_breaker = CircuitBreaker()
@@ -132,7 +131,6 @@ binance_circuit_breaker = CircuitBreaker()
 # Tempo (Brasil)
 # =========================
 def brazil_now() -> datetime:
-    # BRT fixo -3h (Railway usa UTC por padrão)
     return datetime.now(timezone(timedelta(hours=-3)))
 
 def br_full(dt: datetime) -> str:
@@ -152,22 +150,18 @@ def _to_binance_symbol(sym: str) -> str:
     return re.sub(r'[^A-Z0-9]', '', s)
 
 def _to_coinapi_symbol(sym: str) -> str:
-    """Converte 'BTC/USDT' -> 'BINANCE_SPOT_BTC_USDT'"""
     s = sym.strip().upper().replace(" ", "")
     if "/" in s:
         base, quote = s.split("/", 1)
     else:
-        # tenta deduzir
         if s.endswith("USDT"): base, quote = s[:-4], "USDT"
         elif s.endswith("USD"): base, quote = s[:-3], "USD"
         else: base, quote = s, "USDT"
     return f"BINANCE_SPOT_{base}_{quote}"
 
 def _iso_to_ms(iso_str: str) -> int:
-    # CoinAPI manda "2025-01-01T00:00:00.0000000Z"
     z = iso_str.endswith("Z")
     s = iso_str[:-1] if z else iso_str
-    # corta casas a mais em micros
     if '.' in s:
         head, tail = s.split('.', 1)
         tail = ''.join(ch for ch in tail if ch.isdigit())
@@ -180,7 +174,6 @@ def _iso_to_ms(iso_str: str) -> int:
     return int(dt.timestamp() * 1000)
 
 def _safe_returns_from_prices(prices: List[float]) -> List[float]:
-    """Calcula retornos percentuais de forma segura"""
     if len(prices) < 2:
         return []
     returns = []
@@ -191,70 +184,194 @@ def _safe_returns_from_prices(prices: List[float]) -> List[float]:
     return returns
 
 def _rank_key_directional(x: Dict[str, Any]) -> float:
-    """Ranking que considera a melhor probabilidade NA DIREÇÃO escolhida"""
     direction = x.get("direction", "buy")
-    
-    # Probabilidade na direção escolhida (não sempre prob_buy)
     prob_directional = x["probability_buy"] if direction == "buy" else x["probability_sell"]
-    
-    # Score prioriza confiança + probabilidade na direção
     return (x["confidence"] * 1000) + (prob_directional * 100)
 
-def _confirm_prob_neutral_zone(prob_up: float, rsi: float, macd_hist: float, adx: float, 
-                              boll_signal: str, tf_consensus: str) -> float:
-    """USE SEU CÓDIGO ANTIGO QUE FUNCIONA - SIMPLES E BALANCEADO"""
+# =========================
+# NOVO: Análise de Tendência de Mercado
+# =========================
+class MarketTrendAnalyzer:
+    def __init__(self):
+        self.market_regime = "neutral"
+        self.trend_strength = 0.0
+        self.last_update = 0
+        
+    def analyze_market_trend(self, symbols_data: Dict[str, List[float]]) -> Dict[str, Any]:
+        if time.time() - self.last_update < 300:
+            return {"regime": self.market_regime, "strength": self.trend_strength}
+            
+        bullish_count = 0
+        total_symbols = 0
+        strength_scores = []
+        
+        for symbol, closes in symbols_data.items():
+            if len(closes) < 50:
+                continue
+                
+            ma_20 = sum(closes[-20:]) / 20
+            ma_50 = sum(closes[-50:]) / 50 if len(closes) >= 50 else ma_20
+            
+            trend = "bullish" if ma_20 > ma_50 else "bearish"
+            strength = abs(ma_20 - ma_50) / ma_50
+            
+            if trend == "bullish":
+                bullish_count += 1
+                strength_scores.append(strength)
+            else:
+                strength_scores.append(-strength)
+                
+            total_symbols += 1
+        
+        if total_symbols == 0:
+            return {"regime": "neutral", "strength": 0.0}
+        
+        bullish_ratio = bullish_count / total_symbols
+        avg_strength = sum(strength_scores) / len(strength_scores) if strength_scores else 0.0
+        
+        if bullish_ratio >= 0.7 and avg_strength > 0.01:
+            regime = "bullish"
+        elif bullish_ratio <= 0.3 and avg_strength < -0.01:
+            regime = "bearish" 
+        else:
+            regime = "neutral"
+            
+        self.market_regime = regime
+        self.trend_strength = avg_strength
+        self.last_update = time.time()
+        
+        return {
+            "regime": regime,
+            "strength": avg_strength,
+            "bullish_ratio": bullish_ratio,
+            "symbols_analyzed": total_symbols
+        }
+
+# =========================
+# NOVO: Pesos Dinâmicos Baseados na Função do Mercado
+# =========================
+def calculate_dynamic_weights(adx: float, market_regime: str, liquidity_score: float) -> Dict[str, float]:
+    """Pesos dinâmicos baseados na função do mercado"""
     
-    # Sistema de votos simples e balanceado
-    bullish = 0
-    bearish = 0
+    if market_regime in ["bullish", "bearish"] and adx > 25:
+        # Mercado com tendência forte
+        return {
+            "multi_tf": 0.25,  # Decisor
+            "adx": 0.20,       # Decisor  
+            "rsi": 0.20,       # Confirmador
+            "macd": 0.20,      # Confirmador
+            "bollinger": 0.15  # Confirmador
+        }
+    else:
+        # Mercado lateral/fraca tendência
+        return {
+            "multi_tf": 0.15,  # Confirmador
+            "adx": 0.10,       # Confirmador
+            "rsi": 0.25,       # Decisor
+            "macd": 0.25,      # Decisor
+            "bollinger": 0.25  # Decisor
+        }
+
+# =========================
+# NOVO: Confirmação com Pesos Dinâmicos
+# =========================
+def _confirm_prob_with_dynamic_weights(prob_up: float, rsi: float, macd_hist: float, adx: float, 
+                                     boll_signal: str, tf_consensus: str, market_trend: Dict,
+                                     liquidity_score: float) -> float:
+    """Sistema de confirmação com pesos dinâmicos"""
+    
+    # Calcular pesos baseados no mercado
+    weights = calculate_dynamic_weights(adx, market_trend["regime"], liquidity_score)
+    
+    # Calcular contribuições de cada indicador
+    contributions = 0.0
+    
+    # Multi-Timeframe
+    if tf_consensus == "buy":
+        contributions += 0.04 * weights["multi_tf"]
+    elif tf_consensus == "sell":
+        contributions -= 0.04 * weights["multi_tf"]
+    
+    # ADX (apenas confirma força, não direção)
+    if adx >= 25:
+        # Tendência forte - confirma sinais alinhados
+        if market_trend["regime"] == "bullish":
+            contributions += 0.02 * weights["adx"]
+        elif market_trend["regime"] == "bearish":
+            contributions -= 0.02 * weights["adx"]
     
     # RSI
-    if rsi >= 55: bullish += 1
-    if rsi <= 45: bearish += 1
+    if rsi >= 58:
+        contributions -= 0.03 * weights["rsi"]
+    elif rsi <= 42:
+        contributions += 0.03 * weights["rsi"]
     
     # MACD
-    if macd_hist > 0.001: bullish += 1
-    if macd_hist < -0.001: bearish += 1
+    if macd_hist > 0.001:
+        contributions += 0.025 * weights["macd"]
+    elif macd_hist < -0.001:
+        contributions -= 0.025 * weights["macd"]
     
-    # Bollinger
-    if boll_signal in ["oversold", "bullish"]: bullish += 1
-    if boll_signal in ["overbought", "bearish"]: bearish += 1
+    # Bollinger Bands
+    if boll_signal == "oversold":
+        contributions += 0.03 * weights["bollinger"]
+    elif boll_signal == "overbought":
+        contributions -= 0.03 * weights["bollinger"]
+    elif boll_signal == "bullish":
+        contributions += 0.015 * weights["bollinger"]
+    elif boll_signal == "bearish":
+        contributions -= 0.015 * weights["bollinger"]
     
-    # Timeframe
-    if tf_consensus == "buy": bullish += 1
-    if tf_consensus == "sell": bearish += 1
+    # Ajuste final mais conservador (±4% máximo)
+    adjustment = contributions * 1.5  # Escala para ±4% máximo
+    adjustment = max(-0.04, min(0.04, adjustment))
     
-    strong = (adx >= 25)
+    adjusted_prob = prob_up + adjustment
     
-    # MESMA LÓGICA DO SEU CÓDIGO ANTIGO (que funcionava)
-    if bullish > bearish and strong:   adj = 0.07
-    elif bullish > bearish:            adj = 0.04
-    elif bearish > bullish and strong: adj = -0.07
-    elif bearish > bullish:            adj = -0.04
-    else: 
-        adj = 0.0  # Empate = sem ajuste
+    # Randomização mínima para evitar travamento (0.1%)
+    noise = random.gauss(0, 0.001)
+    adjusted_prob += noise
     
-    adjusted_prob = prob_up + adj
-    return min(0.90, max(0.10, adjusted_prob))
+    return min(0.92, max(0.08, adjusted_prob))
 
+# =========================
+# NOVO: Determinação de Direção com Histerese
+# =========================
+def determine_direction_with_hysteresis(prob_buy: float, prob_sell: float, 
+                                      previous_direction: str = None) -> str:
+    """Determina direção com histerese inteligente"""
+    
+    # Limiar de 51% para novos sinais
+    if previous_direction is None:
+        return 'buy' if prob_buy >= 0.51 else 'sell'
+    
+    # Histerese: exige mudança mais significativa para alternar
+    if previous_direction == 'buy':
+        return 'sell' if prob_sell > prob_buy + 0.04 else 'buy'
+    else:  # previous_direction == 'sell'
+        return 'buy' if prob_buy > prob_sell + 0.04 else 'sell'
+
+# =========================
+# Confiança Direcional Atualizada
+# =========================
 def _calculate_directional_confidence(prob_direction: float, direction: str, rsi: float, 
                                     adx: float, macd_signal: str, boll_signal: str,
                                     tf_consensus: str, reversal_signal: dict,
-                                    liquidity_score: float) -> float:
-    """Versão otimizada: melhora assertividade sem reduzir sinais"""
+                                    liquidity_score: float, market_trend: Dict) -> float:
+    """Versão atualizada com contexto de mercado"""
     
     base_conf = prob_direction * 100.0
     score = base_conf
     
-    # === PESOS ADAPTATIVOS ===
-    w_trend = 12.0 if adx >= 25 else 6.0
-    w_momentum = 8.0
-    w_boll = 10.0
-    w_rev = 18.0
-    w_macd = 7.0
-    w_liq = 6.0
+    # Pesos baseados no regime de mercado
+    if market_trend["regime"] in ["bullish", "bearish"] and adx >= 25:
+        # Mercado trend - foco em tendência
+        w_trend, w_momentum, w_boll, w_rev, w_macd, w_liq = 15.0, 6.0, 8.0, 12.0, 6.0, 5.0
+    else:
+        # Mercado lateral - foco em momento
+        w_trend, w_momentum, w_boll, w_rev, w_macd, w_liq = 8.0, 12.0, 10.0, 10.0, 8.0, 6.0
 
-    # === CONFIRMAÇÕES ===
+    # Confirmações
     if (direction == 'buy' and tf_consensus == 'buy') or (direction == 'sell' and tf_consensus == 'sell'):
         score += w_trend
     
@@ -272,19 +389,30 @@ def _calculate_directional_confidence(prob_direction: float, direction: str, rsi
     if (direction == 'buy' and macd_signal == 'bullish') or (direction == 'sell' and macd_signal == 'bearish'):
         score += w_macd
 
-    # === AJUSTE PELA LIQUIDEZ ===
-    score *= (0.90 + liquidity_score * (w_liq / 100))
+    # Alinhamento com tendência de mercado
+    if market_trend["regime"] == "bullish" and direction == "buy":
+        score += 8.0
+    elif market_trend["regime"] == "bearish" and direction == "sell":
+        score += 8.0
+    elif market_trend["regime"] != "neutral" and (
+        (market_trend["regime"] == "bullish" and direction == "sell") or
+        (market_trend["regime"] == "bearish" and direction == "buy")
+    ):
+        score -= 6.0
 
-    # === MODULAÇÃO PELO ADX ===
+    # Liquidez
+    score *= (0.92 + liquidity_score * (w_liq / 100))
+
+    # Modulação pelo ADX
     if adx < 18:
-        score *= 0.85   # mercado fraco → confiança reduzida
+        score *= 0.88
     elif adx > 30:
-        score *= 1.08   # mercado forte → leve reforço
+        score *= 1.10
 
-    return min(96.0, max(28.0, score)) / 100.0
-                                        
+    return min(96.0, max(30.0, score)) / 100.0
+
 # =========================
-# WebSocket OKX (OHLCV 1m em tempo real)
+# WebSocket OKX (mantido igual)
 # =========================
 class WSRealtimeFeed:
     def __init__(self):
@@ -298,7 +426,7 @@ class WSRealtimeFeed:
         self._running = False
         self._ws_available = False
         try:
-            import websocket  # noqa: F401
+            import websocket
             self._ws_available = True
         except Exception:
             logger.warning("websocket_client_not_available", ws_disabled=True)
@@ -405,51 +533,26 @@ WS_FEED = WSRealtimeFeed()
 WS_FEED.start()
 
 # =========================
-# Mercado Spot com Cache Inteligente e Circuit Breaker
+# NOVO: Cache Uniforme de 3 Segundos
 # =========================
 class SmartCache:
     def __init__(self):
-        self._cache: Dict[Tuple[str, str, int], Tuple[float, List[List[float]], float]] = {}
-        self._volatility_cache: Dict[str, float] = {}
+        self._cache: Dict[Tuple[str, str, int], Tuple[float, List[List[float]]]] = {}
         
-    def _calculate_volatility(self, prices: List[float]) -> float:
-        """Calcula volatilidade baseada nos últimos preços"""
-        if len(prices) < 10:
-            return 0.0
-        returns = _safe_returns_from_prices(prices[-50:])  # Últimos 50 períodos
-        if not returns:
-            return 0.0
-        return stats.stdev(returns) if len(returns) > 1 else 0.0
-    
-    def _should_invalidate(self, symbol: str, current_prices: List[float]) -> bool:
-        """Decide se deve invalidar cache baseado na volatilidade"""
-        current_vol = self._calculate_volatility(current_prices)
-        cached_vol = self._volatility_cache.get(symbol, 0.0)
-        
-        # Se volatilidade aumentou significativamente, invalida cache
-        if current_vol > cached_vol * 1.5 and current_vol > 0.01:  # Threshold de 1%
-            return True
-        return False
-    
     def get(self, key: Tuple[str, str, int]) -> Optional[Tuple[float, List[List[float]]]]:
         if key in self._cache:
-            timestamp, data, _ = self._cache[key]
-            # Cache válido por 2-10 segundos baseado na volatilidade
-            symbol = key[0]
-            current_vol = self._volatility_cache.get(symbol, 0.0)
-            cache_ttl = 2 if current_vol > 0.02 else 5 if current_vol > 0.01 else 10
-            
-            if time.time() - timestamp < cache_ttl:
+            timestamp, data = self._cache[key]
+            # Cache uniforme de 3 segundos para todos os ativos
+            if time.time() - timestamp < 3:
                 return (timestamp, data)
         return None
     
     def set(self, key: Tuple[str, str, int], data: List[List[float]]):
-        symbol = key[0]
-        prices = [x[4] for x in data] if data else []  # Preços de fechamento
-        current_vol = self._calculate_volatility(prices)
-        self._volatility_cache[symbol] = current_vol
-        self._cache[key] = (time.time(), data, current_vol)
+        self._cache[key] = (time.time(), data)
 
+# =========================
+# Mercado Spot com Novo Cache
+# =========================
 class SpotMarket:
     def __init__(self) -> None:
         self._cache = SmartCache()
@@ -458,7 +561,7 @@ class SpotMarket:
         self._ccxt = None
         try:
             import ccxt
-            self._ccxt = ccxt.binance({
+            self._ccxt = ccxt.binace({
                 "enableRateLimit": True,
                 "timeout": 12000,
                 "options": {"defaultType": "spot"}
@@ -494,18 +597,13 @@ class SpotMarket:
     def fetch_ohlcv(self, symbol: str, timeframe: str = "1m", limit: int = 1000) -> List[List[float]]:
         key = (symbol.upper(), timeframe, limit)
         
-        # Verifica cache inteligente
         if FEATURE_FLAGS["enable_smart_cache"]:
             cached = self._cache.get(key)
             if cached:
-                timestamp, data = cached
-                # Verifica se precisa invalidar por volatilidade
-                if not self._cache._should_invalidate(symbol, [x[4] for x in data]):
-                    return data
+                return cached[1]  # Retorna dados do cache
 
         ohlcv: List[List[float]] = []
 
-        # 1) WebSocket OKX — preferido para 1m
         try:
             if timeframe == "1m":
                 ws_data = WS_FEED.get_ohlcv(symbol, limit=limit, use_closed_only=USE_CLOSED_ONLY)
@@ -515,7 +613,6 @@ class SpotMarket:
         except Exception as e:
             logger.error("websocket_fetch_error", symbol=symbol, error=str(e))
 
-        # 2) ccxt (se faltar)
         if (not ohlcv or len(ohlcv) < 60) and self._has_ccxt and self._ccxt is not None:
             if not binance_circuit_breaker.can_execute():
                 logger.warning("circuit_breaker_open", provider="binance_ccxt")
@@ -535,7 +632,6 @@ class SpotMarket:
                     binance_circuit_breaker.record_failure()
                     logger.error("ccxt_fetch_error", symbol=symbol, error=str(e))
 
-        # 3) HTTP público (fallback final)
         if not ohlcv or len(ohlcv) < 60:
             http = self._fetch_http_ohlcv(symbol, timeframe=timeframe, limit=limit)
             if http:
@@ -553,7 +649,7 @@ class SpotMarket:
         return ohlcv
 
 # =========================
-# Indicadores (Wilder/TV-like)
+# Indicadores (mantido igual)
 # =========================
 class TechnicalIndicators:
     @staticmethod
@@ -675,14 +771,14 @@ class LiquiditySystem:
             trs.append(tr)
         atr = sum(trs[:period]) / period
         for i in range(period, len(trs)):
-            atr = (atr * (period - 1) + trs[i]) / period  # Wilder
+            atr = (atr * (period - 1) + trs[i]) / period
         atr_pct = atr / max(1e-12, closes[-1])
         LIM = 0.02
         score = 1.0 - min(1.0, atr_pct / LIM)
         return round(max(0.0, min(1.0, score)), 3)
 
 # =========================
-# Reversão (extremos RSI 12h)
+# Reversão (mantido igual)
 # =========================
 class ReversalDetector:
     def compute_extremes_levels(self, rsi_series: List[float], window: int = 720, n_extremes: int = 6) -> Dict[str, float]:
@@ -711,88 +807,116 @@ class ReversalDetector:
         return out
 
 # =========================
-# GARCH(1,1) Light Adaptativo com 3000 simulações
+# NOVO: GARCH com Contexto de Mercado e Mean Reversion
 # =========================
-
 class AdaptiveGARCH11Simulator:
-    """GARCH(1,1) Light Adaptativo com detecção de regime"""
+    """GARCH(1,1) com contexto de mercado e mean reversion"""
     
-    def _detect_market_regime(self, returns: List[float]) -> str:
-        """Detecta o regime de mercado baseado na volatilidade"""
+    def _detect_market_regime(self, returns: List[float], volume_trend: float = 0.0) -> str:
+        """Detecta regime com contexto de volume"""
         if not returns or len(returns) < 20:
             return "normal"
         
         volatility = stats.stdev(returns) if len(returns) > 1 else 0.0
-        mean_abs_return = stats.mean([abs(r) for r in returns])
+        mean_return = stats.mean(returns) if returns else 0.0
         
-        if volatility > 0.03 or mean_abs_return > 0.02:  # 3% vol ou 2% retorno médio
+        # Tendência baseada em retorno e volume
+        if abs(mean_return) > 0.015 and volatility > 0.025:
             return "high_volatility"
-        elif volatility < 0.005:  # 0.5% vol
+        elif abs(mean_return) < 0.005 and volatility < 0.01:
             return "low_volatility"
         else:
             return "normal"
     
-    def _get_garch_params_for_regime(self, regime: str, returns: List[float]) -> Tuple[float, float, float, float]:
-        """Retorna parâmetros GARCH otimizados para o regime detectado"""
+    def _get_garch_params_for_regime(self, regime: str, returns: List[float], 
+                                   market_trend: Dict, liquidity: float) -> Tuple[float, float, float, float]:
+        """Parâmetros GARCH com contexto de mercado"""
         if not returns:
             return 1e-6, 0.1, 0.85, 1e-4
             
         mean_ret = sum(returns) / len(returns)
         var = sum((r - mean_ret) ** 2 for r in returns) / len(returns)
         
+        # Ajustar parâmetros baseado no regime de mercado
         if regime == "low_volatility":
-            # Mercado calmo: volatilidade mais persistente
-            alpha, beta = 0.05, 0.92
+            alpha, beta = 0.06, 0.90
         elif regime == "high_volatility":
-            # Mercado volátil: mais sensível a choques recentes
-            alpha, beta = 0.12, 0.80
-        else:  # normal
-            alpha, beta = 0.08, 0.90
+            alpha, beta = 0.15, 0.75
+        else:
+            alpha, beta = 0.09, 0.88
+            
+        # Ajuste fino baseado na tendência de mercado
+        if market_trend["regime"] == "bullish" and mean_ret > 0:
+            alpha += 0.02  # Mais sensível a choques positivos
+        elif market_trend["regime"] == "bearish" and mean_ret < 0:
+            alpha += 0.02  # Mais sensível a choques negativos
+            
+        # Ajuste por liquidez
+        if liquidity > 0.8:  # Alta liquidez
+            beta += 0.04    # Mais persistência
+        elif liquidity < 0.4:  # Baixa liquidez
+            alpha += 0.03    # Mais sensibilidade
             
         omega = var * (1 - alpha - beta)
         omega = max(1e-6, omega)
         
-        # Garantir estabilidade
         if alpha + beta >= 0.999:
             alpha, beta = 0.08, 0.90
             omega = 1e-6
             
         return omega, alpha, beta, var
     
-    def _calculate_garch_fit_quality(self, returns: List[float], omega: float, alpha: float, beta: float) -> float:
-        """Calcula qualidade do ajuste GARCH (simplificado)"""
-        if len(returns) < 30:
-            return 0.7
+    def _calculate_mean_reversion_force(self, current_price: float, base_price: float, 
+                                      returns: List[float], market_trend: Dict) -> float:
+        """Calcula força de mean reversion baseada no contexto"""
+        if len(returns) < 10:
+            return 0.0
             
-        try:
-            # Métrica simplificada de qualidade
-            predicted_var = omega / (1 - alpha - beta) if alpha + beta < 1 else 1e-4
-            actual_var = stats.variance(returns) if len(returns) > 1 else 1e-4
-            fit_quality = 1.0 - min(1.0, abs(predicted_var - actual_var) / actual_var)
-            return max(0.3, min(0.95, fit_quality))
-        except:
-            return 0.7
+        mean_return = stats.mean(returns)
+        price_ratio = current_price / base_price
+        
+        # Força de reversion baseada na distância da média
+        if market_trend["regime"] == "neutral":
+            # Mercado lateral - reversion mais forte
+            theta = 0.25
+        else:
+            # Mercado com tendência - reversion mais suave
+            theta = 0.12
+            
+        # Calcular reversion force
+        if abs(price_ratio - 1.0) > 0.02:  # Desvio de 2%+
+            reversion_force = theta * (1.0 - price_ratio)
+        else:
+            reversion_force = 0.0
+            
+        return reversion_force
 
     def simulate_garch11(self, base_price: float, returns: List[float], 
-                        steps: int, num_paths: int = 3000) -> Dict[str, Any]:
-        """Executa simulação GARCH(1,1) adaptativa"""
+                        steps: int, num_paths: int = 3000, 
+                        market_trend: Dict = None, liquidity: float = 0.5,
+                        volumes: List[float] = None) -> Dict[str, Any]:
+        """GARCH com contexto de mercado e mean reversion"""
         import math
         import random
         
+        if market_trend is None:
+            market_trend = {"regime": "neutral", "strength": 0.0}
+            
         if not returns or len(returns) < 10:
             returns = [random.gauss(0.0, 0.002) for _ in range(100)]
         
-        # Detectar regime e calibrar parâmetros
-        regime = self._detect_market_regime(returns) if FEATURE_FLAGS["enable_adaptive_garch"] else "normal"
-        omega, alpha, beta, h_last = self._get_garch_params_for_regime(regime, returns)
+        # Detectar regime com contexto
+        volume_trend = stats.mean(volumes[-10:]) / stats.mean(volumes[-50:]) if volumes and len(volumes) >= 50 else 1.0
+        regime = self._detect_market_regime(returns, volume_trend)
         
-        # Calcular qualidade do ajuste
-        fit_quality = self._calculate_garch_fit_quality(returns, omega, alpha, beta)
+        # Calibrar parâmetros com contexto
+        omega, alpha, beta, h_last = self._get_garch_params_for_regime(
+            regime, returns, market_trend, liquidity
+        )
         
         up_count = 0
         total_count = 0
         
-        # Simulações GARCH(1,1)
         start_time = time.time()
         for _ in range(num_paths):
             try:
@@ -800,8 +924,16 @@ class AdaptiveGARCH11Simulator:
                 price = base_price
                 
                 for step in range(steps):
-                    epsilon = math.sqrt(h) * random.gauss(0.0, 1.0)
+                    # Calcular mean reversion
+                    reversion_force = self._calculate_mean_reversion_force(
+                        price, base_price, returns, market_trend
+                    )
+                    
+                    # Simulação GARCH com reversion
+                    epsilon = math.sqrt(h) * random.gauss(0.0, 1.0) + reversion_force
                     price *= math.exp(epsilon)
+                    
+                    # Atualizar volatilidade GARCH
                     h = omega + alpha * (epsilon ** 2) + beta * h
                     h = max(1e-12, h)
                 
@@ -819,7 +951,12 @@ class AdaptiveGARCH11Simulator:
         else:
             prob_buy = up_count / total_count
         
-        # Ajustar probabilidade baseado na qualidade do fit
+        # Ajuste final baseado na tendência de mercado
+        if market_trend["regime"] == "bullish":
+            prob_buy = min(0.95, prob_buy * 1.08)
+        elif market_trend["regime"] == "bearish":
+            prob_buy = max(0.05, prob_buy * 0.92)
+            
         prob_buy = min(0.95, max(0.05, prob_buy))
         prob_sell = 1.0 - prob_buy
         
@@ -827,24 +964,25 @@ class AdaptiveGARCH11Simulator:
                     paths=total_count, 
                     duration_ms=duration_ms,
                     regime=regime,
-                    fit_quality=fit_quality,
+                    market_trend=market_trend["regime"],
                     probability_buy=prob_buy)
         
         return {
             "probability_buy": prob_buy,
             "probability_sell": prob_sell,
-            "quality": "garch11_adaptive",
+            "quality": "garch11_adaptive_market",
             "sim_model": "garch11",
             "paths_used": total_count,
             "garch_params": {"omega": omega, "alpha": alpha, "beta": beta},
             "market_regime": regime,
-            "fit_quality": fit_quality,
             "calculation_time_ms": duration_ms
         }
 
-# Manter compatibilidade
 MonteCarloSimulator = AdaptiveGARCH11Simulator
 
+# =========================
+# Sistema Principal Atualizado
+# =========================
 class EnhancedTradingSystem:
     def __init__(self)->None:
         self.indicators=TechnicalIndicators()
@@ -853,7 +991,9 @@ class EnhancedTradingSystem:
         self.multi_tf=MultiTimeframeAnalyzer()
         self.liquidity=LiquiditySystem()
         self.spot=SpotMarket()
+        self.trend_analyzer = MarketTrendAnalyzer()  # NOVO
         self.current_analysis_cache: Dict[str,Any]={}
+        self.last_directions: Dict[str, str] = {}  # NOVO: histerese
 
     def get_brazil_time(self)->datetime:
         return brazil_now()
@@ -862,10 +1002,9 @@ class EnhancedTradingSystem:
         start_time = time.time()
         logger.info("analysis_started", symbol=symbol, horizon=horizon)
         
-        # OHLCV 1m (~12h+ para reversões)
+        # OHLCV 1m
         raw = self.spot.fetch_ohlcv(symbol, "1m", max(800, 720 + 50))
         if len(raw) < 60:
-            # fallback sintético mínimo
             base = random.uniform(50, 400)
             raw = []
             t = int(time.time() * 1000)
@@ -882,17 +1021,28 @@ class EnhancedTradingSystem:
         highs  = [x[2] for x in ohlcv_closed]
         lows   = [x[3] for x in ohlcv_closed]
         closes = [x[4] for x in ohlcv_closed]
+        volumes = [x[5] for x in ohlcv_closed]  # NOVO: volumes para GARCH
 
-        # Preço e Volume de exibição preferindo WS
+        # Preço e Volume
         price_display = raw[-1][4]
         volume_display = raw[-1][5] if raw and len(raw[-1]) >= 6 else 0.0
         try:
             ws_last = WS_FEED.get_last_candle(symbol)
             if ws_last:
-                price_display  = float(ws_last[4])  # close "ao vivo"
-                volume_display = float(ws_last[5])  # volume 1m "ao vivo"
+                price_display  = float(ws_last[4])
+                volume_display = float(ws_last[5])
         except Exception:
             pass
+
+        # NOVO: Análise de Tendência de Mercado
+        market_data = {}
+        for sym in DEFAULT_SYMBOLS:
+            if sym != symbol:
+                sym_data = self.spot.fetch_ohlcv(sym, "1m", 100)
+                if sym_data:
+                    market_data[sym] = [x[4] for x in sym_data]
+        
+        market_trend = self.trend_analyzer.analyze_market_trend(market_data)
 
         # Indicadores
         rsi_series = self.indicators.rsi_series_wilder(closes, 14)
@@ -903,28 +1053,30 @@ class EnhancedTradingSystem:
         tf_cons = self.multi_tf.analyze_consensus(closes)
         liq = self.liquidity.calculate_liquidity_score(highs, lows, closes)
 
-        # Reversão por RSI (12h)
+        # Reversão
         levels = self.revdet.compute_extremes_levels(rsi_series, 720, 6) if rsi_series else {"avg_peak":70.0,"avg_trough":30.0}
         rev_sig = self.revdet.signal_from_levels(rsi, levels, 2.5)
 
-        # Simulador GARCH(1,1) Light com 3000 simulações
+        # GARCH com Contexto de Mercado
         empirical_returns = _safe_returns_from_prices(closes)
         steps = max(1, min(3, int(horizon)))
         base_price = closes[-1] if closes else price_display
 
-        # Usar GARCH(1,1) adaptativo
+        # NOVO: GARCH com mercado, volumes e liquidez
         mc = self.monte_carlo.simulate_garch11(
             base_price, 
             empirical_returns, 
             steps, 
-            num_paths=MC_PATHS
+            num_paths=MC_PATHS,
+            market_trend=market_trend,
+            liquidity=liq,
+            volumes=volumes
         )
 
-        # Aplicar confirmação de probabilidade com indicadores (SEM VIÉS)
+        # NOVO: Confirmação com pesos dinâmicos
         prob_buy_original = mc['probability_buy']
         prob_sell_original = mc['probability_sell']
 
-        # Calcular MACD histogram para confirmação
         macd_hist = 0.0
         try:
             macd_result = self.indicators.macd(closes)
@@ -935,26 +1087,29 @@ class EnhancedTradingSystem:
         except:
             macd_hist = 0.0
 
-        # Ajustar probabilidade GARCH com confirmação técnica (ZONA NEUTRA)
-        prob_buy_adjusted = _confirm_prob_neutral_zone(
+        # NOVO: Sistema de confirmação com pesos dinâmicos
+        prob_buy_adjusted = _confirm_prob_with_dynamic_weights(
             prob_buy_original, rsi, macd_hist, adx, 
-            boll['signal'], tf_cons
+            boll['signal'], tf_cons, market_trend, liq
         )
         prob_sell_adjusted = 1.0 - prob_buy_adjusted
 
-        # DIREÇÃO com desempate inteligente
-        # DIREÇÃO simples e direta como no código antigo
-        direction = 'buy' if prob_buy_adjusted > 0.5 else 'sell'
+        # NOVO: Direção com histerese
+        previous_direction = self.last_directions.get(symbol)
+        direction = determine_direction_with_hysteresis(
+            prob_buy_adjusted, prob_sell_adjusted, previous_direction
+        )
+        self.last_directions[symbol] = direction  # Atualiza para próxima análise
 
-        # Atualizar o resultado GARCH com as probabilidades ajustadas
+        # Atualizar resultado GARCH
         mc['probability_buy'] = prob_buy_adjusted
         mc['probability_sell'] = prob_sell_adjusted
 
-        # CONFIANÇA DIRECIONAL INTELIGENTE
+        # NOVO: Confiança com contexto de mercado
         prob_dir = prob_buy_adjusted if direction == 'buy' else prob_sell_adjusted
         confidence = _calculate_directional_confidence(
             prob_dir, direction, rsi, adx, macd['signal'], boll['signal'], 
-            tf_cons, rev_sig, liq
+            tf_cons, rev_sig, liq, market_trend
         )
 
         analysis_duration = (time.time() - start_time) * 1000
@@ -963,7 +1118,8 @@ class EnhancedTradingSystem:
                    horizon=horizon, 
                    duration_ms=analysis_duration,
                    direction=direction,
-                   confidence=confidence)
+                   confidence=confidence,
+                   market_trend=market_trend["regime"])
 
         return {
             'symbol':symbol,
@@ -977,7 +1133,6 @@ class EnhancedTradingSystem:
             'garch_model': mc['sim_model'],
             'simulations_count': mc.get('paths_used', MC_PATHS),
             'market_regime': mc.get('market_regime', 'normal'),
-            'fit_quality': mc.get('fit_quality', 0.7),
             'price':price_display,
             'liquidity_score':liq,
             'timestamp': datetime.now().strftime("%H:%M:%S"),
@@ -986,7 +1141,11 @@ class EnhancedTradingSystem:
             'reversal': rev_sig["reversal"],
             'reversal_side': rev_sig["side"],
             'reversal_proximity': round(rev_sig["proximity"],3),
-            # Extras úteis
+            # NOVO: Tendência de mercado
+            'market_trend': market_trend["regime"],
+            'market_trend_strength': round(market_trend["strength"], 4),
+            'bullish_ratio': round(market_trend.get("bullish_ratio", 0.5), 3),
+            # Extras
             'sim_model': mc.get('sim_model', 'garch11'),
             'last_volume_1m': round(volume_display, 8),
             'data_source': 'WS_COINAPI' if WS_FEED.enabled else ('CCXT' if self.spot._has_ccxt else 'HTTP'),
@@ -1015,7 +1174,7 @@ class EnhancedTradingSystem:
         return {"por_ativo":por_ativo,"best_overall":best_overall}
 
 # =========================
-# Manager / API / UI
+# Manager / API / UI (atualizado para mostrar tendência)
 # =========================
 class AnalysisManager:
     def __init__(self)->None:
@@ -1065,6 +1224,9 @@ class AnalysisManager:
 
 manager=AnalysisManager()
 
+# =========================
+# API Routes (mantidas iguais)
+# =========================
 @app.post("/api/analyze")
 def api_analyze():
     if FEATURE_FLAGS["maintenance_mode"]:
@@ -1125,7 +1287,6 @@ def health():
 
 @app.get("/deep-health")
 def deep_health():
-    """Health check detalhado para monitoramento"""
     ws_status = "connected" if WS_FEED._ws and WS_FEED._ws.sock else "disconnected"
     
     health_data = {
@@ -1139,7 +1300,6 @@ def deep_health():
             },
             "cache": {
                 "size": len(manager.system.spot._cache._cache),
-                "volatility_tracking": len(manager.system.spot._cache._volatility_cache)
             },
             "circuit_breaker": {
                 "state": binance_circuit_breaker.state,
@@ -1197,9 +1357,9 @@ button{background:#2a9df4;cursor:pointer} button:disabled{opacity:.6;cursor:not-
 <body>
 <div class="wrap">
   <div class="hline">
-    <h1>IA Signal Pro - PREÇOS REAIS + 3000 SIMULAÇÕES</h1>
+    <h1>IA Signal Pro - NOVO MODELO HÍBRIDO + CONTEXTO DE MERCADO</h1>
     <div class="clock" id="clock">--:--:-- BRT</div>
-    <div class="sub">✅ CoinAPI (WS) · Binance REST fallback · RSI/ADX (Wilder) · Liquidez (ATR%) · Reversão RSI (12h) · GARCH(1,1) Adaptativo</div>
+    <div class="sub">✅ GARCH com Contexto de Mercado · Pesos Dinâmicos · Cache 3s · Mean Reversion · Tendência Geral</div>
     <div class="controls">
       <div class="chips" id="chips"></div>
       <div class="row">
@@ -1210,7 +1370,7 @@ button{background:#2a9df4;cursor:pointer} button:disabled{opacity:.6;cursor:not-
         </select>
         <button type="button" onclick="selectAll()">Selecionar todos</button>
         <button type="button" onclick="clearAll()">Limpar</button>
-        <button id="go" onclick="runAnalyze()">🔎 Analisar com dados reais</button>
+        <button id="go" onclick="runAnalyze()">🔎 Analisar com NOVO modelo</button>
       </div>
     </div>
   </div>
@@ -1286,7 +1446,7 @@ async function runAnalyze(){
   btn.disabled = true;
   btn.textContent = '⏳ Analisando...';
   const syms = selSymbols();
-  if(!syms.length){ alert('Selecione pelo menos um ativo.'); btn.disabled=false; btn.textContent='🔎 Analisar com dados reais'; return; }
+  if(!syms.length){ alert('Selecione pelo menos um ativo.'); btn.disabled=false; btn.textContent='🔎 Analisar com NOVO modelo'; return; }
   await fetch('/api/analyze', {
     method:'POST',
     headers:{'Content-Type':'application/json','Cache-Control':'no-store'},
@@ -1305,7 +1465,7 @@ function startPollingResults(){
       pollTimer = null;
       const btn = document.getElementById('go');
       btn.disabled = false;
-      btn.textContent = '🔎 Analisar com dados reais';
+      btn.textContent = '🔎 Analisar com NOVO modelo';
     }
   }, 700);
 }
@@ -1331,8 +1491,9 @@ async function fetchAndRenderResults(){
         <div class="sym-head"><b>${sym}</b>
           <span class="tag">TF: ${bestLocal?.multi_timeframe||'neutral'}</span>
           <span class="tag">Liquidez: ${Number(bestLocal?.liquidity_score||0).toFixed(2)}</span>
+          <span class="tag">Mercado: ${bestLocal?.market_trend||'neutral'}</span>
           ${bestLocal?.reversal ? `<span class="tag">🔄 Reversão (${bestLocal.reversal_side})</span>`:''}
-          <span class="tag">📈 GARCH(1,1)</span>
+          <span class="tag">📈 GARCH Contextual</span>
         </div>
         ${arr.map(item=>renderTbox(item, bestLocal)).join('')}
       </div>`;
@@ -1355,17 +1516,17 @@ function renderBest(best, analysisTime){
   return `
     <div class="small muted">Atualizado: ${analysisTime} (Horário Brasil)</div>
     <div class="line"></div>
-    <div><b>${best.symbol} T+${best.horizon}</b> ${badgeDir(best.direction)} <span class="tag">🥇 MELHOR ENTRE TODOS OS HORIZONTES</span>${rev} <span class="tag">📈 GARCH(1,1)</span></div>
+    <div><b>${best.symbol} T+${best.horizon}</b> ${badgeDir(best.direction)} <span class="tag">🥇 MELHOR ENTRE TODOS OS HORIZONTES</span>${rev} <span class="tag">📈 GARCH Contextual</span></div>
     <div class="kpis">
       <div class="kpi"><b>Prob Compra</b>${pct(best.probability_buy||0)}</div>
       <div class="kpi"><b>Prob Venda</b>${pct(best.probability_sell||0)}</div>
-      <div class="kpi"><b>Soma</b>100.0%</div>
+      <div class="kpi"><b>Confiança</b>${pct(best.confidence||0)}</div>
       <div class="kpi"><b>ADX</b>${(best.adx||0).toFixed(1)}</div>
       <div class="kpi"><b>RSI</b>${(best.rsi||0).toFixed(1)}</div>
-      <div class="kpi"><b>Liquidez</b>${Number(best.liquidity_score||0).toFixed(2)}</div>
+      <div class="kpi"><b>Mercado</b>${best.market_trend||'neutral'}</div>
     </div>
     <div class="small" style="margin-top:8px;">
-      Pontuação: <span class="ok">${(best.confidence*100).toFixed(1)}%</span> · TF: <b>${best.multi_timeframe||'neutral'}</b> · Price: <b>${Number(best.price||0).toFixed(6)}</b>
+      Bullish Ratio: <span class="ok">${((best.bullish_ratio||0.5)*100).toFixed(0)}%</span> · Liquidez: <b>${Number(best.liquidity_score||0).toFixed(2)}</b> · Price: <b>${Number(best.price||0).toFixed(6)}</b>
       <span class="right">Entrada: <b>${best.entry_time||'-'}</b></span>
     </div>`;
 }
@@ -1375,11 +1536,11 @@ function renderTbox(it, bestLocal){
   const rev = it.reversal ? ` <span class="tag">🔄 REVERSÃO (${it.reversal_side})</span>` : '';
   return `
     <div class="tbox">
-      <div><b>T+${it.horizon}</b> ${badgeDir(it.direction)} ${isBest?'<span class="tag">🥇 MELHOR DO ATIVO</span>':''}${rev} <span class="tag">📈 GARCH(1,1)</span></div>
+      <div><b>T+${it.horizon}</b> ${badgeDir(it.direction)} ${isBest?'<span class="tag">🥇 MELHOR DO ATIVO</span>':''}${rev} <span class="tag">📈 GARCH Contextual</span></div>
       <div class="small">
         Prob: <span class="${it.direction==='buy'?'ok':'err'}">${pct(it.probability_buy||0)}/${pct(it.probability_sell||0)}</span>
         · Conf: <span class="ok">${pct(it.confidence||0)}</span>
-        · RSI≈Pico: ${(it.rev_levels?.avg_peak||0).toFixed(1)} · RSI≈Vale: ${(it.rev_levels?.avg_trough||0).toFixed(1)}
+        · Mercado: <b>${it.market_trend||'neutral'}</b>
       </div>
       <div class="small">ADX: ${(it.adx||0).toFixed(1)} | RSI: ${(it.rsi||0).toFixed(1)} | TF: <b>${it.multi_timeframe||'neutral'}</b></div>
       <div class="small muted">⏱️ ${it.timestamp||'-'} · Price: ${Number(it.price||0).toFixed(6)}</div>
