@@ -857,18 +857,29 @@ class AdaptiveGARCH11Simulator:
         return omega, alpha, beta, var
     
     def _calculate_mean_reversion_force(self, current_price: float, base_price: float, 
-                                      returns: List[float]) -> float:
-    """Reversion puramente matemática - USA dados, NÃO tendência"""
-        if len(returns) < 20:
+                                  returns: List[float], market_trend: Dict) -> float:
+    """Calcula força de mean reversion baseada no contexto"""
+        if len(returns) < 10:
         return 0.0
         
         mean_return = stats.mean(returns)
-    volatility = stats.stdev(returns) if len(returns) > 1 else 0.01
+        price_ratio = current_price / base_price
     
-        # Reversion proporcional ao desvio da média (IMPARCIAL)
-        reversion_force = -0.15 * (mean_return / volatility)
-    
-        return reversion_forcee
+    # Força de reversion baseada na distância da média
+        if market_trend["regime"] == "neutral":
+        # Mercado lateral - reversion mais forte
+        theta = 0.25
+    else:
+        # Mercado com tendência - reversion mais suave
+        theta = 0.12
+        
+    # Calcular reversion force
+        if abs(price_ratio - 1.0) > 0.02:  # Desvio de 2%+
+        reversion_force = theta * (1.0 - price_ratio)
+    else:
+        reversion_force = 0.0
+        
+        return reversion_force
 
     def simulate_garch11(self, base_price: float, returns: List[float], 
                         steps: int, num_paths: int = 3000, 
