@@ -250,26 +250,26 @@ class MarketTrendAnalyzer:
 # =========================
 # NOVO: Pesos Dinâmicos Baseados na Função do Mercado
 # =========================
-def calculate_dynamic_weights(adx: float, market_regime: str, liquidity_score: float) -> Dict[str, float]:
-    """Pesos dinâmicos baseados na função do mercado"""
+def calculate_dynamic_weights(adx: float, liquidity_score: float) -> Dict[str, float]:
+    """Pesos dinâmicos baseados apenas em ADX e liquidez - IMPARCIAL"""
     
-    if market_regime in ["bullish", "bearish"] and adx > 25:
-        # Mercado com tendência forte
+    if adx > 25:
+        # Tendência forte - foco em indicadores de tendência
         return {
-            "multi_tf": 0.25,  # Decisor
-            "adx": 0.20,       # Decisor  
-            "rsi": 0.20,       # Confirmador
-            "macd": 0.20,      # Confirmador
-            "bollinger": 0.15  # Confirmador
+            "multi_tf": 0.22,
+            "adx": 0.18,  
+            "rsi": 0.20,
+            "macd": 0.20,
+            "bollinger": 0.20
         }
     else:
-        # Mercado lateral/fraca tendência
+        # Mercado lateral - pesos balanceados
         return {
-            "multi_tf": 0.15,  # Confirmador
-            "adx": 0.10,       # Confirmador
-            "rsi": 0.25,       # Decisor
-            "macd": 0.25,      # Decisor
-            "bollinger": 0.25  # Decisor
+            "multi_tf": 0.18,
+            "adx": 0.16,
+            "rsi": 0.22,
+            "macd": 0.22, 
+            "bollinger": 0.22
         }
 
 # =========================
@@ -281,7 +281,7 @@ def _confirm_prob_with_dynamic_weights(prob_up: float, rsi: float, macd_hist: fl
     """Sistema de confirmação com pesos dinâmicos"""
     
     # Calcular pesos baseados no mercado
-    weights = calculate_dynamic_weights(adx, market_trend["regime"], liquidity_score)
+    weights = calculate_dynamic_weights(adx, liquidity_score)
     
     # Calcular contribuições de cada indicador
     contributions = 0.0
@@ -337,19 +337,9 @@ def _confirm_prob_with_dynamic_weights(prob_up: float, rsi: float, macd_hist: fl
 # =========================
 # NOVO: Determinação de Direção com Histerese
 # =========================
-def determine_direction_with_hysteresis(prob_buy: float, prob_sell: float, 
-                                      previous_direction: str = None) -> str:
-    """Determina direção com histerese inteligente"""
-    
-    # Limiar de 51% para novos sinais
-    if previous_direction is None:
-        return 'buy' if prob_buy >= 0.51 else 'sell'
-    
-    # Histerese: exige mudança mais significativa para alternar
-    if previous_direction == 'buy':
-        return 'sell' if prob_sell > prob_buy + 0.04 else 'buy'
-    else:  # previous_direction == 'sell'
-        return 'buy' if prob_buy > prob_sell + 0.04 else 'sell'
+def determine_direction_impartial(prob_buy: float, prob_sell: float) -> str:
+    """Decisão PURA baseada apenas nas probabilidades"""
+    return 'buy' if prob_buy > prob_sell else 'sell'
 
 # =========================
 # Confiança Direcional Atualizada
@@ -867,29 +857,18 @@ class AdaptiveGARCH11Simulator:
         return omega, alpha, beta, var
     
     def _calculate_mean_reversion_force(self, current_price: float, base_price: float, 
-                                      returns: List[float], market_trend: Dict) -> float:
-        """Calcula força de mean reversion baseada no contexto"""
-        if len(returns) < 10:
-            return 0.0
-            
-        mean_return = stats.mean(returns)
-        price_ratio = current_price / base_price
+                                      returns: List[float]) -> float:
+    """Reversion puramente matemática - USA dados, NÃO tendência"""
+        if len(returns) < 20:
+        return 0.0
         
-        # Força de reversion baseada na distância da média
-        if market_trend["regime"] == "neutral":
-            # Mercado lateral - reversion mais forte
-            theta = 0.25
-        else:
-            # Mercado com tendência - reversion mais suave
-            theta = 0.12
-            
-        # Calcular reversion force
-        if abs(price_ratio - 1.0) > 0.02:  # Desvio de 2%+
-            reversion_force = theta * (1.0 - price_ratio)
-        else:
-            reversion_force = 0.0
-            
-        return reversion_force
+        mean_return = stats.mean(returns)
+    volatility = stats.stdev(returns) if len(returns) > 1 else 0.01
+    
+        # Reversion proporcional ao desvio da média (IMPARCIAL)
+        reversion_force = -0.15 * (mean_return / volatility)
+    
+        return reversion_forcee
 
     def simulate_garch11(self, base_price: float, returns: List[float], 
                         steps: int, num_paths: int = 3000, 
@@ -926,7 +905,7 @@ class AdaptiveGARCH11Simulator:
                 for step in range(steps):
                     # Calcular mean reversion
                     reversion_force = self._calculate_mean_reversion_force(
-                        price, base_price, returns, market_trend
+                        price, base_price, returns  # ✅ SEM market_trend
                     )
                     
                     # Simulação GARCH com reversion
@@ -950,12 +929,6 @@ class AdaptiveGARCH11Simulator:
             prob_buy = 0.5
         else:
             prob_buy = up_count / total_count
-        
-        # Ajuste final baseado na tendência de mercado
-        if market_trend["regime"] == "bullish":
-            prob_buy = min(0.95, prob_buy * 1.08)
-        elif market_trend["regime"] == "bearish":
-            prob_buy = max(0.05, prob_buy * 0.92)
             
         prob_buy = min(0.95, max(0.05, prob_buy))
         prob_sell = 1.0 - prob_buy
@@ -1095,11 +1068,8 @@ class EnhancedTradingSystem:
         prob_sell_adjusted = 1.0 - prob_buy_adjusted
 
         # NOVO: Direção com histerese
-        previous_direction = self.last_directions.get(symbol)
-        direction = determine_direction_with_hysteresis(
-            prob_buy_adjusted, prob_sell_adjusted, previous_direction
-        )
-        self.last_directions[symbol] = direction  # Atualiza para próxima análise
+        # Direção IMPARCIAL - baseada apenas nas probabilidades
+        direction = determine_direction_impartial(prob_buy_adjusted, prob_sell_adjusted)
 
         # Atualizar resultado GARCH
         mc['probability_buy'] = prob_buy_adjusted
