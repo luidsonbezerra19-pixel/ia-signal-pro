@@ -41,7 +41,7 @@ DEFAULT_SYMBOLS = [s.strip().upper() for s in DEFAULT_SYMBOLS if s.strip()]
 
 # Provedor de tempo real
 USE_WS = 1                 # 1=ligado (CoinAPI), 0=desligado
-WS_BUFFER_MINUTES = 720    # ~12h em memória (compatível com RSI reversão)
+WS_BUFFER_MINUTES = 1440   # 24h em memória (aumentado para melhor análise)
 WS_SYMBOLS = DEFAULT_SYMBOLS[:]  # símbolos monitorados
 REALTIME_PROVIDER = "okx"    # informativo
 
@@ -63,6 +63,8 @@ FEATURE_FLAGS = {
     "enable_adaptive_garch": True,
     "enable_smart_cache": True,
     "enable_circuit_breaker": True,
+    "enable_volatility_filter": True,
+    "enable_trend_confirmation": True,
     "websocket_provider": "okx",
     "maintenance_mode": False
 }
@@ -240,7 +242,7 @@ def _confirm_prob_neutral_zone(prob_up: float, rsi: float, macd_hist: float, adx
 def _calculate_directional_confidence(prob_direction: float, direction: str, rsi: float, 
                                     adx: float, macd_signal: str, boll_signal: str,
                                     tf_consensus: str, reversal_signal: dict,
-                                    liquidity_score: float) -> float:
+                                    liquidity_score: float, trend_strength: float) -> float:
     """Calcula confiança direcional com pesos inteligentes"""
     
     base_confidence = prob_direction * 100.0
@@ -269,11 +271,56 @@ def _calculate_directional_confidence(prob_direction: float, direction: str, rsi
     if (direction == 'buy' and macd_signal == 'bullish') or (direction == 'sell' and macd_signal == 'bearish'):
         directional_boosts += 8.0
     
+    # 6. FORÇA DA TENDÊNCIA (nova métrica)
+    directional_boosts += trend_strength * 10.0
+    
     # APLICAR BOOSTS E LIQUIDEZ
     total_score = base_confidence + directional_boosts
     total_score *= (0.90 + (liquidity_score * 0.15))  # Liquidez tem peso moderado
     
     return min(95.0, max(30.0, total_score)) / 100.0
+
+def _calculate_trend_strength(closes: List[float], period: int = 50) -> float:
+    """Calcula força da tendência baseada em múltiplas médias"""
+    if len(closes) < period:
+        return 0.0
+    
+    try:
+        # Médias para diferentes timeframes
+        sma_20 = sum(closes[-20:]) / 20
+        sma_50 = sum(closes[-50:]) / 50
+        
+        # Calcular inclinação das médias
+        if len(closes) >= 70:
+            sma_20_prev = sum(closes[-40:-20]) / 20 if len(closes) >= 40 else sma_20
+            sma_50_prev = sum(closes[-70:-50]) / 20 if len(closes) >= 70 else sma_50
+        else:
+            sma_20_prev = sma_20
+            sma_50_prev = sma_50
+        
+        # Força baseada na convergência e inclinação
+        price_trend = 1.0 if closes[-1] > sma_20 else -1.0
+        ma_alignment = 1.0 if sma_20 > sma_50 else -1.0
+        ma_slope = 1.0 if (sma_20 - sma_20_prev) > 0 else -1.0
+        
+        # Pontuação consolidada
+        strength = (price_trend + ma_alignment + ma_slope) / 3.0
+        
+        return max(0.0, min(1.0, abs(strength)))
+    except Exception:
+        return 0.0
+
+def _volatility_filter(closes: List[float], period: int = 20, max_volatility: float = 0.05) -> bool:
+    """Filtra ativos com volatilidade excessiva"""
+    if len(closes) < period:
+        return True
+        
+    returns = _safe_returns_from_prices(closes[-period:])
+    if not returns or len(returns) < 10:
+        return True
+        
+    volatility = stats.stdev(returns)
+    return volatility < max_volatility
                                         
 # =========================
 # WebSocket OKX (OHLCV 1m em tempo real)
@@ -450,7 +497,7 @@ class SpotMarket:
         self._ccxt = None
         try:
             import ccxt
-            self._ccxt = ccxt.binance({
+            self._ccxt = ccxt.binace({
                 "enableRateLimit": True,
                 "timeout": 12000,
                 "options": {"defaultType": "spot"}
@@ -508,7 +555,7 @@ class SpotMarket:
             logger.error("websocket_fetch_error", symbol=symbol, error=str(e))
 
         # 2) ccxt (se faltar)
-        if (not ohlcv or len(ohlcv) < 60) and self._has_ccxt and self._ccxt is not None:
+        if (not ohlcv or len(ohlcv) < 100) and self._has_ccxt and self._ccxt is not None:
             if not binance_circuit_breaker.can_execute():
                 logger.warning("circuit_breaker_open", provider="binance_ccxt")
             else:
@@ -528,7 +575,7 @@ class SpotMarket:
                     logger.error("ccxt_fetch_error", symbol=symbol, error=str(e))
 
         # 3) HTTP público (fallback final)
-        if not ohlcv or len(ohlcv) < 60:
+        if not ohlcv or len(ohlcv) < 100:
             http = self._fetch_http_ohlcv(symbol, timeframe=timeframe, limit=limit)
             if http:
                 if ohlcv:
@@ -812,7 +859,8 @@ class AdaptiveGARCH11Simulator:
             prob_buy = up_count / total_count
         
         # Ajustar probabilidade baseado na qualidade do fit
-        prob_buy = min(0.95, max(0.05, prob_buy))
+        adjusted_prob = prob_buy * fit_quality + 0.5 * (1 - fit_quality)
+        prob_buy = min(0.95, max(0.05, adjusted_prob))
         prob_sell = 1.0 - prob_buy
         
         logger.debug("garch_simulation_completed", 
@@ -854,26 +902,38 @@ class EnhancedTradingSystem:
         start_time = time.time()
         logger.info("analysis_started", symbol=symbol, horizon=horizon)
         
-        # OHLCV 1m (~12h+ para reversões)
-        raw = self.spot.fetch_ohlcv(symbol, "1m", max(800, 720 + 50))
-        if len(raw) < 60:
-            # fallback sintético mínimo
-            base = random.uniform(50, 400)
-            raw = []
-            t = int(time.time() * 1000)
-            for i in range(800):
-                if not raw:
-                    o, h, l, c = base * 0.999, base * 1.001, base * 0.999, base
-                else:
-                    c_prev = raw[-1][4]
-                    c = max(1e-9, c_prev * (1.0 + random.gauss(0, 0.003)))
-                    o = c_prev; h = max(o, c) * (1.0 + 0.0007); l = min(o, c) * (1.0 - 0.0007)
-                raw.append([t + i * 60000, o, h, l, c, 0.0])
+        # OHLCV 1m (AUMENTADO para 5000 candles - ~3.5 dias)
+        raw = self.spot.fetch_ohlcv(symbol, "1m", 5000)
+        if len(raw) < 500:  # Mínimo aumentado significativamente
+            logger.error("insufficient_data", symbol=symbol, data_points=len(raw))
+            return {
+                "symbol": symbol,
+                "error": "Dados insuficientes para análise confiável",
+                "direction": "neutral",
+                "confidence": 0.0,
+                "probability_buy": 0.5,
+                "probability_sell": 0.5,
+                "data_quality": "poor"
+            }
 
         ohlcv_closed = raw[:-1] if (USE_CLOSED_ONLY and len(raw)>=2) else raw
         highs  = [x[2] for x in ohlcv_closed]
         lows   = [x[3] for x in ohlcv_closed]
         closes = [x[4] for x in ohlcv_closed]
+
+        # Aplicar filtro de volatilidade
+        if FEATURE_FLAGS["enable_volatility_filter"]:
+            if not _volatility_filter(closes, period=50, max_volatility=0.05):
+                logger.warning("high_volatility_filtered", symbol=symbol)
+                return {
+                    "symbol": symbol,
+                    "error": "Volatilidade excessiva - operação filtrada",
+                    "direction": "neutral", 
+                    "confidence": 0.0,
+                    "probability_buy": 0.5,
+                    "probability_sell": 0.5,
+                    "volatility_filter": "rejected"
+                }
 
         # Preço e Volume de exibição preferindo WS
         price_display = raw[-1][4]
@@ -894,6 +954,9 @@ class EnhancedTradingSystem:
         boll = self.indicators.calculate_bollinger_bands(closes)
         tf_cons = self.multi_tf.analyze_consensus(closes)
         liq = self.liquidity.calculate_liquidity_score(highs, lows, closes)
+        
+        # NOVO: Força da tendência
+        trend_strength = _calculate_trend_strength(closes, 50)
 
         # Reversão por RSI (12h)
         levels = self.revdet.compute_extremes_levels(rsi_series, 720, 6) if rsi_series else {"avg_peak":70.0,"avg_trough":30.0}
@@ -935,18 +998,17 @@ class EnhancedTradingSystem:
         prob_sell_adjusted = 1.0 - prob_buy_adjusted
 
         # DIREÇÃO com desempate inteligente
-        # DIREÇÃO simples e direta como no código antigo
         direction = 'buy' if prob_buy_adjusted > 0.5 else 'sell'
 
         # Atualizar o resultado GARCH com as probabilidades ajustadas
         mc['probability_buy'] = prob_buy_adjusted
         mc['probability_sell'] = prob_sell_adjusted
 
-        # CONFIANÇA DIRECIONAL INTELIGENTE
+        # CONFIANÇA DIRECIONAL INTELIGENTE (COM NOVA MÉTRICA)
         prob_dir = prob_buy_adjusted if direction == 'buy' else prob_sell_adjusted
         confidence = _calculate_directional_confidence(
             prob_dir, direction, rsi, adx, macd['signal'], boll['signal'], 
-            tf_cons, rev_sig, liq
+            tf_cons, rev_sig, liq, trend_strength
         )
 
         analysis_duration = (time.time() - start_time) * 1000
@@ -955,7 +1017,8 @@ class EnhancedTradingSystem:
                    horizon=horizon, 
                    duration_ms=analysis_duration,
                    direction=direction,
-                   confidence=confidence)
+                   confidence=confidence,
+                   trend_strength=trend_strength)
 
         return {
             'symbol':symbol,
@@ -978,6 +1041,10 @@ class EnhancedTradingSystem:
             'reversal': rev_sig["reversal"],
             'reversal_side': rev_sig["side"],
             'reversal_proximity': round(rev_sig["proximity"],3),
+            # Novas métricas
+            'trend_strength': round(trend_strength, 3),
+            'volatility_filter_passed': True,
+            'data_quality': 'good',
             # Extras úteis
             'sim_model': mc.get('sim_model', 'garch11'),
             'last_volume_1m': round(volume_display, 8),
@@ -992,17 +1059,26 @@ class EnhancedTradingSystem:
             for h in (1,2,3):
                 try:
                     r=self.analyze_symbol(sym,h)
-                    r['label']=f"{sym} T+{h}"
-                    tplus.append(r); candidatos.append(r)
+                    # Filtrar sinais de baixa qualidade
+                    if r.get('data_quality') == 'good' and r.get('volatility_filter_passed', True):
+                        r['label']=f"{sym} T+{h}"
+                        tplus.append(r); candidatos.append(r)
+                    else:
+                        tplus.append({
+                            "symbol":sym,"horizon":h,"error":r.get('error', 'Qualidade insuficiente'),
+                            "direction":"neutral","probability_buy":0.5,"probability_sell":0.5,
+                            "confidence":0.3,"label":f"{sym} T+{h}",
+                            "timestamp": datetime.now().strftime("%H:%M:%S")
+                        })
                 except Exception as e:
                     logger.error("symbol_analysis_error", symbol=sym, horizon=h, error=str(e))
                     tplus.append({
                         "symbol":sym,"horizon":h,"error":str(e),
-                        "direction":"buy","probability_buy":0.5,"probability_sell":0.5,
-                        "confidence":0.5,"label":f"{sym} T+{h}",
+                        "direction":"neutral","probability_buy":0.5,"probability_sell":0.5,
+                        "confidence":0.3,"label":f"{sym} T+{h}",
                         "timestamp": datetime.now().strftime("%H:%M:%S")
                     })
-            por_ativo[sym]={"tplus":tplus,"best_for_symbol":max(tplus,key=_rank_key_directional)}
+            por_ativo[sym]={"tplus":tplus,"best_for_symbol":max(tplus,key=_rank_key_directional) if tplus else None}
         best_overall=max(candidatos,key=_rank_key_directional) if candidatos else None
         return {"por_ativo":por_ativo,"best_overall":best_overall}
 
@@ -1189,9 +1265,9 @@ button{background:#2a9df4;cursor:pointer} button:disabled{opacity:.6;cursor:not-
 <body>
 <div class="wrap">
   <div class="hline">
-    <h1>IA Signal Pro - PREÇOS REAIS + 3000 SIMULAÇÕES</h1>
+    <h1>IA Signal Pro - PREÇOS REAIS + 3000 SIMULAÇÕES GARCH(1,1)</h1>
     <div class="clock" id="clock">--:--:-- BRT</div>
-    <div class="sub">✅ CoinAPI (WS) · Binance REST fallback · RSI/ADX (Wilder) · Liquidez (ATR%) · Reversão RSI (12h) · GARCH(1,1) Adaptativo</div>
+    <div class="sub">✅ CoinAPI (WS) · Binance REST · RSI/ADX (Wilder) · Liquidez (ATR%) · Reversão RSI (12h) · GARCH(1,1) Adaptativo · Filtro Vol · Tendência</div>
     <div class="controls">
       <div class="chips" id="chips"></div>
       <div class="row">
@@ -1208,7 +1284,7 @@ button{background:#2a9df4;cursor:pointer} button:disabled{opacity:.6;cursor:not-
   </div>
 
   <div class="section" id="bestSec" style="display:none">
-    <div class="title">🥇 MELHOR OPORTUNIDADE GLOBAL</div>
+    <div class="title">🥇 MELHOR OPORTUNIDADE GLOBAL (FILTRADA)</div>
     <div class="card" id="bestCard"></div>
   </div>
 
@@ -1323,6 +1399,7 @@ async function fetchAndRenderResults(){
         <div class="sym-head"><b>${sym}</b>
           <span class="tag">TF: ${bestLocal?.multi_timeframe||'neutral'}</span>
           <span class="tag">Liquidez: ${Number(bestLocal?.liquidity_score||0).toFixed(2)}</span>
+          <span class="tag">Tendência: ${Number(bestLocal?.trend_strength||0).toFixed(2)}</span>
           ${bestLocal?.reversal ? `<span class="tag">🔄 Reversão (${bestLocal.reversal_side})</span>`:''}
           <span class="tag">📈 GARCH(1,1)</span>
         </div>
@@ -1342,22 +1419,22 @@ function rank(it){
 }
 
 function renderBest(best, analysisTime){
-  if(!best) return '<div class="small">Sem oportunidade no momento.</div>';
+  if(!best || best.error) return '<div class="small">Sem oportunidade de qualidade no momento.</div>';
   const rev = best.reversal ? ` <span class="tag">🔄 Reversão (${best.reversal_side})</span>` : '';
   return `
-    <div class="small muted">Atualizado: ${analysisTime} (Horário Brasil)</div>
+    <div class="small muted">Atualizado: ${analysisTime} (Horário Brasil) | Dados: 5000 candles | Filtro Vol: ✅</div>
     <div class="line"></div>
-    <div><b>${best.symbol} T+${best.horizon}</b> ${badgeDir(best.direction)} <span class="tag">🥇 MELHOR ENTRE TODOS OS HORIZONTES</span>${rev} <span class="tag">📈 GARCH(1,1)</span></div>
+    <div><b>${best.symbol} T+${best.horizon}</b> ${badgeDir(best.direction)} <span class="tag">🥇 MELHOR ENTRE TODOS</span>${rev} <span class="tag">📈 GARCH(1,1)</span></div>
     <div class="kpis">
       <div class="kpi"><b>Prob Compra</b>${pct(best.probability_buy||0)}</div>
       <div class="kpi"><b>Prob Venda</b>${pct(best.probability_sell||0)}</div>
-      <div class="kpi"><b>Soma</b>100.0%</div>
+      <div class="kpi"><b>Confiança</b>${pct(best.confidence||0)}</div>
       <div class="kpi"><b>ADX</b>${(best.adx||0).toFixed(1)}</div>
       <div class="kpi"><b>RSI</b>${(best.rsi||0).toFixed(1)}</div>
-      <div class="kpi"><b>Liquidez</b>${Number(best.liquidity_score||0).toFixed(2)}</div>
+      <div class="kpi"><b>Tendência</b>${Number(best.trend_strength||0).toFixed(2)}</div>
     </div>
     <div class="small" style="margin-top:8px;">
-      Pontuação: <span class="ok">${(best.confidence*100).toFixed(1)}%</span> · TF: <b>${best.multi_timeframe||'neutral'}</b> · Price: <b>${Number(best.price||0).toFixed(6)}</b>
+      Liquidez: <span class="ok">${Number(best.liquidity_score||0).toFixed(2)}</span> · TF: <b>${best.multi_timeframe||'neutral'}</b> · Price: <b>${Number(best.price||0).toFixed(6)}</b>
       <span class="right">Entrada: <b>${best.entry_time||'-'}</b></span>
     </div>`;
 }
@@ -1365,13 +1442,15 @@ function renderBest(best, analysisTime){
 function renderTbox(it, bestLocal){
   const isBest = bestLocal && it.symbol===bestLocal.symbol && it.horizon===bestLocal.horizon;
   const rev = it.reversal ? ` <span class="tag">🔄 REVERSÃO (${it.reversal_side})</span>` : '';
+  const error = it.error ? `<div class="small err">${it.error}</div>` : '';
   return `
     <div class="tbox">
       <div><b>T+${it.horizon}</b> ${badgeDir(it.direction)} ${isBest?'<span class="tag">🥇 MELHOR DO ATIVO</span>':''}${rev} <span class="tag">📈 GARCH(1,1)</span></div>
+      ${error}
       <div class="small">
         Prob: <span class="${it.direction==='buy'?'ok':'err'}">${pct(it.probability_buy||0)}/${pct(it.probability_sell||0)}</span>
         · Conf: <span class="ok">${pct(it.confidence||0)}</span>
-        · RSI≈Pico: ${(it.rev_levels?.avg_peak||0).toFixed(1)} · RSI≈Vale: ${(it.rev_levels?.avg_trough||0).toFixed(1)}
+        · Tendência: ${Number(it.trend_strength||0).toFixed(2)}
       </div>
       <div class="small">ADX: ${(it.adx||0).toFixed(1)} | RSI: ${(it.rsi||0).toFixed(1)} | TF: <b>${it.multi_timeframe||'neutral'}</b></div>
       <div class="small muted">⏱️ ${it.timestamp||'-'} · Price: ${Number(it.price||0).toFixed(6)}</div>
