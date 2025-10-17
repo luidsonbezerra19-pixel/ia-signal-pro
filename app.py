@@ -1156,7 +1156,8 @@ class EnhancedTradingSystem:
                     logger.error("symbol_analysis_error", symbol=sym, horizon=h, error=str(e))
                     tplus.append({
                         "symbol":sym,"horizon":h,"error":str(e),
-                        "direction":"buy","probability_buy":0.5,"probability_sell":0.5,
+                        "direction":"neutral",  # ✅ CORRIGIDO!
+                        "probability_buy":0.5,"probability_sell":0.5,
                         "confidence":0.5,"label":f"{sym} T+{h}",
                         "timestamp": datetime.now().strftime("%H:%M:%S")
                     })
