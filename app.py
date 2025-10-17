@@ -288,43 +288,47 @@ def _confirm_prob_with_dynamic_weights(prob_up: float, rsi: float, macd_hist: fl
     
     # Multi-Timeframe
     if tf_consensus == "buy":
-        contributions += 0.04 * weights["multi_tf"]
+        contributions += 0.035 * weights["multi_tf"]
     elif tf_consensus == "sell":
-        contributions -= 0.04 * weights["multi_tf"]
+        contributions -= 0.035 * weights["multi_tf"]
     
     # ADX (apenas confirma força, não direção)
     if adx >= 25:
         # Tendência forte - confirma sinais alinhados
         if market_trend["regime"] == "bullish":
-            contributions += 0.02 * weights["adx"]
+            contributions += 0.018 * weights["adx"]
         elif market_trend["regime"] == "bearish":
-            contributions -= 0.02 * weights["adx"]
+            contributions -= 0.018 * weights["adx"]
     
     # RSI
-    if rsi >= 58:
-        contributions -= 0.03 * weights["rsi"]
-    elif rsi <= 42:
-        contributions += 0.03 * weights["rsi"]
-    
+    if rsi >= 60:  # VENDA: acima de 60
+        contributions -= 0.025 * weights["rsi"]
+    elif rsi <= 40:  # COMPRA: abaixo de 40
+        contributions += 0.025 * weights["rsi"]
+    elif rsi >= 55:  # VENDA leve: 55-60
+        contributions -= 0.012 * weights["rsi"]
+    elif rsi <= 45:  # COMPRA leve: 40-45
+        contributions += 0.012 * weights["rsi"]
+        
     # MACD
     if macd_hist > 0.001:
-        contributions += 0.025 * weights["macd"]
+        contributions += 0.020 * weights["macd"]
     elif macd_hist < -0.001:
-        contributions -= 0.025 * weights["macd"]
+        contributions -= 0.020 * weights["macd"]
     
     # Bollinger Bands
     if boll_signal == "oversold":
-        contributions += 0.03 * weights["bollinger"]
+        contributions += 0.025 * weights["bollinger"]
     elif boll_signal == "overbought":
-        contributions -= 0.03 * weights["bollinger"]
+        contributions -= 0.025 * weights["bollinger"]
     elif boll_signal == "bullish":
-        contributions += 0.015 * weights["bollinger"]
+        contributions += 0.012 * weights["bollinger"]
     elif boll_signal == "bearish":
-        contributions -= 0.015 * weights["bollinger"]
+        contributions -= 0.012 * weights["bollinger"]
     
     # Ajuste final mais conservador (±4% máximo)
-    adjustment = contributions * 1.5  # Escala para ±4% máximo
-    adjustment = max(-0.04, min(0.04, adjustment))
+    adjustment = contributions * 1.2  # Escala para ±4% máximo
+    adjustment = max(-0.03, min(0.03, adjustment))
     
     adjusted_prob = prob_up + adjustment
     
@@ -332,15 +336,21 @@ def _confirm_prob_with_dynamic_weights(prob_up: float, rsi: float, macd_hist: fl
     noise = random.gauss(0, 0.001)
     adjusted_prob += noise
     
-    return min(0.92, max(0.08, adjusted_prob))
+    return min(0.90, max(0.010, adjusted_prob))
 
 # =========================
 # NOVO: Determinação de Direção com Histerese
 # =========================
 def determine_direction_impartial(prob_buy: float, prob_sell: float) -> str:
-    """Decisão PURA baseada apenas nas probabilidades"""
-    return 'buy' if prob_buy > prob_sell else 'sell'
-
+    """Decisão PURA baseada apenas nas probabilidades - VERSÃO MAIS SENSÍVEL"""
+    # Adiciona um threshold mínimo de 2% para evitar oscilações
+    if prob_buy > prob_sell + 0.02:
+        return 'buy'
+    elif prob_sell > prob_buy + 0.02:
+        return 'sell'
+    else:
+        return 'neutral'  # Novo: direção neutra quando muito próximo
+        
 # =========================
 # Confiança Direcional Atualizada
 # =========================
@@ -829,29 +839,29 @@ class AdaptiveGARCH11Simulator:
         
         # Ajustar parâmetros baseado no regime de mercado
         if regime == "low_volatility":
-            alpha, beta = 0.06, 0.90
+            alpha, beta = 0.05, 0.92
         elif regime == "high_volatility":
-            alpha, beta = 0.15, 0.75
+            alpha, beta = 0.12, 0.78
         else:
             alpha, beta = 0.09, 0.88
             
         # Ajuste fino baseado na tendência de mercado
         if market_trend["regime"] == "bullish" and mean_ret > 0:
-            alpha += 0.02  # Mais sensível a choques positivos
+            alpha += 0.01  # Mais sensível a choques positivos
         elif market_trend["regime"] == "bearish" and mean_ret < 0:
-            alpha += 0.02  # Mais sensível a choques negativos
+            alpha += 0.01  # Mais sensível a choques negativos
             
         # Ajuste por liquidez
         if liquidity > 0.8:  # Alta liquidez
-            beta += 0.04    # Mais persistência
+            beta += 0.02    # Mais persistência
         elif liquidity < 0.4:  # Baixa liquidez
-            alpha += 0.03    # Mais sensibilidade
+            alpha += 0.02    # Mais sensibilidade
             
         omega = var * (1 - alpha - beta)
         omega = max(1e-6, omega)
         
         if alpha + beta >= 0.999:
-            alpha, beta = 0.08, 0.90
+            alpha, beta = 0.07, 0.90
             omega = 1e-6
             
         return omega, alpha, beta, var
@@ -868,10 +878,10 @@ class AdaptiveGARCH11Simulator:
         # Força de reversion baseada na distância da média
         if market_trend["regime"] == "neutral":
             # Mercado lateral - reversion mais forte
-            theta = 0.25
+            theta = 0.20
         else:
             # Mercado com tendência - reversion mais suave
-            theta = 0.12
+            theta = 0.10
             
         # Calcular reversion force
         if abs(price_ratio - 1.0) > 0.02:  # Desvio de 2%+
