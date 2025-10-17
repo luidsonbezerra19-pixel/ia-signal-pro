@@ -202,19 +202,19 @@ def _rank_key_directional(x: Dict[str, Any]) -> float:
 
 def _confirm_prob_neutral_zone(prob_up: float, rsi: float, macd_hist: float, adx: float, 
                               boll_signal: str, tf_consensus: str) -> float:
-    """Sistema IMPARCIAL - ajuste mínimo baseado apenas em confirmações fortes"""
+    """USE SEU CÓDIGO ANTIGO QUE FUNCIONA - SIMPLES E BALANCEADO"""
     
-    # Sistema de votos SIMPLES
+    # Sistema de votos simples e balanceado
     bullish = 0
     bearish = 0
     
-    # RSI - ZONAS NEUTRAS (50 = neutro)
-    if rsi > 55: bullish += 1
-    if rsi < 45: bearish += 1
+    # RSI
+    if rsi >= 55: bullish += 1
+    if rsi <= 45: bearish += 1
     
-    # MACD 
-    if macd_hist > 0: bullish += 1
-    if macd_hist < 0: bearish += 1
+    # MACD
+    if macd_hist > 0.001: bullish += 1
+    if macd_hist < -0.001: bearish += 1
     
     # Bollinger
     if boll_signal in ["oversold", "bullish"]: bullish += 1
@@ -224,13 +224,15 @@ def _confirm_prob_neutral_zone(prob_up: float, rsi: float, macd_hist: float, adx
     if tf_consensus == "buy": bullish += 1
     if tf_consensus == "sell": bearish += 1
     
-    # Apenas CONFIRMAÇÕES FORTES ajustam a probabilidade
-    if bullish >= 3 and bearish <= 1:   # Forte sinal de compra
-        adj = 0.05
-    elif bearish >= 3 and bullish <= 1: # Forte sinal de venda
-        adj = -0.05
+    strong = (adx >= 25)
+    
+    # MESMA LÓGICA DO SEU CÓDIGO ANTIGO (que funcionava)
+    if bullish > bearish and strong:   adj = 0.07
+    elif bullish > bearish:            adj = 0.04
+    elif bearish > bullish and strong: adj = -0.07
+    elif bearish > bullish:            adj = -0.04
     else: 
-        adj = 0.0  # Sinais mistos ou fracos = mantém probabilidade GARCH
+        adj = 0.0  # Empate = sem ajuste
     
     adjusted_prob = prob_up + adj
     return min(0.90, max(0.10, adjusted_prob))
@@ -239,38 +241,39 @@ def _calculate_directional_confidence(prob_direction: float, direction: str, rsi
                                     adx: float, macd_signal: str, boll_signal: str,
                                     tf_consensus: str, reversal_signal: dict,
                                     liquidity_score: float) -> float:
-    """Confiança SIMPLES baseada em confirmações"""
+    """Calcula confiança direcional com pesos inteligentes"""
     
     base_confidence = prob_direction * 100.0
-    confirmations = 0
     
-    # Contagem simples de confirmações
-    if (direction == 'buy' and rsi < 50) or (direction == 'sell' and rsi > 50):
-        confirmations += 1
+    # BOOSTS DIRECIONAIS (só aplicam quando confirmam a direção)
+    directional_boosts = 0.0
     
-    if (direction == 'buy' and tf_consensus == 'buy') or (direction == 'sell' and tf_consensus == 'sell'):
-        confirmations += 1
-    
-    if (direction == 'buy' and boll_signal in ['oversold', 'bullish']) or (direction == 'sell' and boll_signal in ['overbought', 'bearish']):
-        confirmations += 1
-    
-    if reversal_signal["reversal"] and reversal_signal["side"] == direction:
-        confirmations += 2  # Reversão tem peso duplo
-    
-    if (direction == 'buy' and macd_signal == 'bullish') or (direction == 'sell' and macd_signal == 'bearish'):
-        confirmations += 1
-    
-    # ADX confirma tendência forte
+    # 1. CONFIRMAÇÃO TENDÊNCIA (ADX + TF) - peso alto
     if adx > 25:
-        confirmations += 1
+        if (direction == 'buy' and tf_consensus == 'buy') or (direction == 'sell' and tf_consensus == 'sell'):
+            directional_boosts += 15.0
     
-    # Boost baseado em confirmações
-    confidence_boost = confirmations * 8.0  # 8% por confirmação
+    # 2. CONFIRMAÇÃO MOMENTO (RSI zonas fortes) - peso médio
+    if (direction == 'buy' and rsi < 40) or (direction == 'sell' and rsi > 60):
+        directional_boosts += 10.0
     
-    total_score = base_confidence + confidence_boost
-    total_score *= (0.9 + (liquidity_score * 0.1))  # Liquidez leve
+    # 3. CONFIRMAÇÃO BOLLINGER (extremidades) - peso alto
+    if (direction == 'buy' and boll_signal == 'oversold') or (direction == 'sell' and boll_signal == 'overbought'):
+        directional_boosts += 12.0
     
-    return min(95.0, max(40.0, total_score)) / 100.0
+    # 4. REVERSÃO (quando alinhada) - peso muito alto
+    if reversal_signal["reversal"] and reversal_signal["side"] == direction:
+        directional_boosts += 18.0 * reversal_signal["proximity"]
+    
+    # 5. CONFIRMAÇÃO MACD (apenas sinais fortes) - peso médio
+    if (direction == 'buy' and macd_signal == 'bullish') or (direction == 'sell' and macd_signal == 'bearish'):
+        directional_boosts += 8.0
+    
+    # APLICAR BOOSTS E LIQUIDEZ
+    total_score = base_confidence + directional_boosts
+    total_score *= (0.90 + (liquidity_score * 0.15))  # Liquidez tem peso moderado
+    
+    return min(95.0, max(30.0, total_score)) / 100.0
                                         
 # =========================
 # WebSocket OKX (OHLCV 1m em tempo real)
