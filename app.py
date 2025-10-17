@@ -81,23 +81,39 @@ class MarketMemory:
         return "|".join(elements)
     
     def learn_from_signal(self, signal: Dict, actual_outcome: bool, price_movement: float):
-        """Aprende com resultado real do sinal"""
+        """Aprende com resultado real do sinal com validação robusta"""
+        # Validação do sinal de entrada
+        if not signal or 'rsi' not in signal or 'adx' not in signal:
+            logger.warning("invalid_signal_for_learning", signal_keys=signal.keys() if signal else None)
+            return
+            
         pattern_key = self._extract_pattern_key(signal)
+        
+        # Filtra movimentos de preço insignificantes
+        if abs(price_movement) < 0.001:  # 0.1% threshold
+            logger.debug("ignoring_insignificant_price_movement", movement=price_movement)
+            return
+            
         self.recent_outcomes.append((pattern_key, actual_outcome))
         
-        # Atualiza efetividade do padrão
-        if pattern_key not in self.pattern_success:
-            self.pattern_success[pattern_key] = 0.5  # Inicializa neutro
-            
-        # Ajusta baseado no resultado
-        adjustment = 0.1 if actual_outcome else -0.1
-        self.pattern_success[pattern_key] = max(0.1, min(0.9, 
-            self.pattern_success[pattern_key] + adjustment))
+        # Limita o tamanho da memória para evitar viés histórico excessivo
+        if len(self.recent_outcomes) > 500:
+            self.recent_outcomes.popleft()
+        
+        # Atualiza efetividade com decay factor para adaptabilidade
+        current_success = self.pattern_success.get(pattern_key, 0.5)
+        learning_rate = 0.08  # Reduzido para mais estabilidade
+        
+        adjustment = learning_rate if actual_outcome else -learning_rate
+        new_success = max(0.1, min(0.9, current_success + adjustment))
+        
+        self.pattern_success[pattern_key] = new_success
         
         logger.debug("pattern_learned", 
                     pattern=pattern_key, 
-                    success_rate=self.pattern_success[pattern_key],
-                    outcome=actual_outcome)
+                    success_rate=new_success,
+                    outcome=actual_outcome,
+                    confidence_change=adjustment)
     
     def get_pattern_effectiveness(self, signal: Dict) -> float:
         """Retorna efetividade histórica do padrão"""
@@ -125,22 +141,30 @@ class AdaptiveIntelligence:
         self.performance_history: Deque[bool] = deque(maxlen=100)
         
     def calibrate_confidence(self, signal: Dict, actual_outcome: bool):
-        """Calibra confiança baseado em resultados reais"""
+        """Calibra confiança com decay e validação"""
+        if not signal or 'market_regime' not in signal or 'direction' not in signal:
+            return
+            
         regime = signal.get('market_regime', 'normal')
         direction = signal.get('direction', 'neutral')
         
         key = f"{regime}_{direction}"
         current_calibration = self.confidence_calibration.get(key, 1.0)
         
-        # Ajusta calibration factor
-        if actual_outcome:
-            new_calibration = min(1.5, current_calibration * 1.05)
-        else:
-            new_calibration = max(0.5, current_calibration * 0.95)
+        # Ajuste mais conservador com decay
+        adjustment_factor = 1.03 if actual_outcome else 0.97
+        new_calibration = current_calibration * adjustment_factor
+        
+        # Limites mais conservadores
+        new_calibration = max(0.6, min(1.4, new_calibration))
             
         self.confidence_calibration[key] = new_calibration
         self.performance_history.append(actual_outcome)
         
+        # Mantém histórico gerenciável
+        if len(self.performance_history) > 200:
+            self.performance_history.popleft()
+    
     def get_confidence_multiplier(self, signal: Dict) -> float:
         """Retorna multiplicador de confiança calibrado"""
         regime = signal.get('market_regime', 'normal')
@@ -170,8 +194,9 @@ class IntelligentReasoning:
         score = 0.0
         reasons = []
         
-        # RSI Analysis
-        rsi = raw_data.get('rsi', 50)
+        # RSI Analysis com validação
+        rsi = self._safe_float_conversion(raw_data.get('rsi'), 50)
+        rsi = max(0.0, min(100.0, rsi))  # Garante limites válidos
         if rsi < 35:
             score += 0.2
             reasons.append("RSI em oversold")
@@ -179,8 +204,9 @@ class IntelligentReasoning:
             score -= 0.2
             reasons.append("RSI em overbought")
             
-        # ADX Analysis
-        adx = raw_data.get('adx', 20)
+        # ADX Analysis com validação
+        adx = self._safe_float_conversion(raw_data.get('adx'), 20)
+        adx = max(0.0, min(100.0, adx))
         if adx > 25:
             score += 0.15
             reasons.append("Tendência forte")
@@ -201,8 +227,9 @@ class IntelligentReasoning:
         score = 0.0
         reasons = []
         
-        # Liquidity Analysis
-        liquidity = raw_data.get('liquidity_score', 0.5)
+        # Liquidity Analysis com validação
+        liquidity = self._safe_float_conversion(raw_data.get('liquidity_score'), 0.5)
+        liquidity = max(0.0, min(1.0, liquidity))
         if liquidity > 0.7:
             score += 0.15
             reasons.append("Alta liquidez")
@@ -212,7 +239,8 @@ class IntelligentReasoning:
             
         # Reversal Analysis
         if raw_data.get('reversal', False):
-            reversal_proximity = raw_data.get('reversal_proximity', 0)
+            reversal_proximity = self._safe_float_conversion(raw_data.get('reversal_proximity'), 0)
+            reversal_proximity = max(0.0, min(1.0, reversal_proximity))
             score += 0.2 * reversal_proximity
             reasons.append(f"Reversão detectada ({reversal_proximity:.1f})")
             
@@ -258,7 +286,7 @@ class IntelligentReasoning:
             technical["technical_score"] * weights.get("rsi", 0.25) +
             context["context_score"] * weights.get("adx", 0.25) + 
             pattern["pattern_score"] * weights.get("garch", 0.25) +
-            (raw_data.get('probability_buy', 0.5) - 0.5) * weights.get("garch", 0.25)
+            (self._safe_float_conversion(raw_data.get('probability_buy'), 0.5) - 0.5) * weights.get("garch", 0.25)
         )
         
         # Determina direção
@@ -281,19 +309,35 @@ class IntelligentReasoning:
         }
     
     def _determine_market_regime(self, raw_data: Dict) -> str:
-        """Detecta o regime atual de mercado"""
-        volatility = raw_data.get('volatility', 0.02)
-        adx = raw_data.get('adx', 20)
-        rsi = raw_data.get('rsi', 50)
+        """Detecta o regime atual de mercado com validação cruzada"""
+        volatility = self._safe_float_conversion(raw_data.get('volatility'), 0.02)
+        adx = self._safe_float_conversion(raw_data.get('adx'), 20)
+        rsi = self._safe_float_conversion(raw_data.get('rsi'), 50)
         
-        if volatility > 0.03:
+        # Validações de limites razoáveis
+        volatility = max(0.0, min(0.5, volatility))  # Volatilidade entre 0% e 50%
+        adx = max(0.0, min(100.0, adx))
+        rsi = max(0.0, min(100.0, rsi))
+        
+        # Decisão hierárquica com thresholds validados
+        if volatility > 0.035:  # Aumentado threshold para alta volatilidade
             return "high_volatility"
-        elif volatility < 0.01:
+        elif volatility < 0.008:  # Ajustado threshold para baixa volatilidade
             return "low_volatility"
-        elif adx > 25 and (rsi < 40 or rsi > 60):
+        elif adx > 28 and (rsi < 38 or rsi > 62):  # Thresholds mais conservadores
             return "trending"
         else:
             return "ranging"
+    
+    def _safe_float_conversion(self, value: Any, default: float = 0.0) -> float:
+        """Conversão segura para float com validação robusta"""
+        if value is None:
+            return default
+        try:
+            result = float(value)
+            return result if math.isfinite(result) else default
+        except (ValueError, TypeError):
+            return default
     
     def process(self, raw_data: Dict, market_memory: MarketMemory) -> Dict:
         """Processamento completo do raciocínio inteligente"""
@@ -359,7 +403,7 @@ class IntelligentTradingAI:
         checks = []
         
         # Check 1: Consistência de indicadores
-        rsi = signal.get('rsi', 50)
+        rsi = self.reasoning._safe_float_conversion(signal.get('rsi'), 50)
         macd = signal.get('macd_signal', 'neutral')
         if (rsi < 40 and macd == 'bearish') or (rsi > 60 and macd == 'bullish'):
             checks.append(False)
@@ -367,21 +411,21 @@ class IntelligentTradingAI:
             checks.append(True)
             
         # Check 2: Confirmação de contexto
-        liquidity = signal.get('liquidity_score', 0.5)
+        liquidity = self.reasoning._safe_float_conversion(signal.get('liquidity_score'), 0.5)
         if liquidity < 0.3:
             checks.append(False)
         else:
             checks.append(True)
             
         # Check 3: Força do sinal
-        confidence = signal.get('intelligent_confidence', 0.5)
+        confidence = self.reasoning._safe_float_conversion(signal.get('intelligent_confidence'), 0.5)
         if confidence < 0.6:
             checks.append(False)
         else:
             checks.append(True)
             
         # Check 4: Efetividade do padrão
-        pattern_effectiveness = signal.get('pattern_effectiveness', 0.5)
+        pattern_effectiveness = self.reasoning._safe_float_conversion(signal.get('pattern_effectiveness'), 0.5)
         if pattern_effectiveness < 0.4:
             checks.append(False)
         else:
@@ -406,19 +450,19 @@ class IntelligentTradingAI:
         """Explica fontes de incerteza no sinal"""
         uncertainty_factors = []
         
-        rsi = signal.get('rsi', 50)
+        rsi = self.reasoning._safe_float_conversion(signal.get('rsi'), 50)
         if 40 <= rsi <= 60:
             uncertainty_factors.append("RSI em zona neutra")
             
-        adx = signal.get('adx', 20)
+        adx = self.reasoning._safe_float_conversion(signal.get('adx'), 20)
         if adx < 25:
             uncertainty_factors.append("Tendência fraca (ADX baixo)")
             
-        liquidity = signal.get('liquidity_score', 0.5)
+        liquidity = self.reasoning._safe_float_conversion(signal.get('liquidity_score'), 0.5)
         if liquidity < 0.4:
             uncertainty_factors.append("Liquidez abaixo do ideal")
             
-        confidence = signal.get('intelligent_confidence', 0.5)
+        confidence = self.reasoning._safe_float_conversion(signal.get('intelligent_confidence'), 0.5)
         if confidence < 0.65:
             uncertainty_factors.append("Confiança moderada")
             
@@ -426,6 +470,33 @@ class IntelligentTradingAI:
             'uncertainty_level': len(uncertainty_factors),
             'uncertainty_factors': uncertainty_factors,
             'suggested_action': 'wait' if uncertainty_factors else 'consider'
+        }
+    
+    def get_performance_metrics(self) -> Dict[str, Any]:
+        """Retorna métricas detalhadas de performance"""
+        recent_outcomes = list(self.memory.recent_outcomes)
+        if not recent_outcomes:
+            return {"accuracy": 0.5, "confidence": 0.5, "sample_size": 0}
+        
+        outcomes = [outcome for _, outcome in recent_outcomes]
+        accuracy = sum(outcomes) / len(outcomes)
+        
+        # Calcula confiança estatística
+        sample_size = len(outcomes)
+        if sample_size >= 30:  # Apenas para amostras significativas
+            z_score = 1.96  # 95% confidence
+            margin_of_error = z_score * math.sqrt((accuracy * (1 - accuracy)) / sample_size)
+            confidence_interval = (accuracy - margin_of_error, accuracy + margin_of_error)
+        else:
+            margin_of_error = 0.0
+            confidence_interval = (accuracy, accuracy)
+        
+        return {
+            "accuracy": round(accuracy, 3),
+            "sample_size": sample_size,
+            "margin_of_error": round(margin_of_error, 3),
+            "confidence_interval": [round(ci, 3) for ci in confidence_interval],
+            "recent_trend": sum(outcomes[-50:]) / len(outcomes[-50:]) if len(outcomes) >= 50 else accuracy
         }
 
 # =========================
@@ -619,6 +690,45 @@ def _calculate_directional_confidence(prob_direction: float, direction: str, rsi
     total_score *= (0.90 + (liquidity_score * 0.15))
     
     return min(95.0, max(30.0, total_score)) / 100.0
+
+# =========================
+# Utils - Melhorias de Validação
+# =========================
+
+def _safe_float_conversion(value: Any, default: float = 0.0) -> float:
+    """Conversão segura para float com validação robusta"""
+    if value is None:
+        return default
+    try:
+        result = float(value)
+        return result if math.isfinite(result) else default
+    except (ValueError, TypeError):
+        return default
+
+def _validate_ohlcv_data(ohlcv: List[List[float]]) -> bool:
+    """Valida a integridade dos dados OHLCV"""
+    if not ohlcv or len(ohlcv) < 2:
+        return False
+    
+    for candle in ohlcv[-10:]:  # Verifica apenas os últimos candles
+        if len(candle) < 5:
+            return False
+        timestamp, o, h, l, c = candle[:5]
+        
+        # Validações de consistência de preços
+        if not (0 < o < float('inf') and 0 < h < float('inf') and 
+                0 < l < float('inf') and 0 < c < float('inf')):
+            return False
+            
+        # Validações de relação entre preços
+        if l > h or o > h or o < l or c > h or c < l:
+            return False
+            
+        # Timestamp razoável (últimos 30 dias)
+        if timestamp < (time.time() * 1000) - (30 * 24 * 60 * 60 * 1000):
+            return False
+            
+    return True
 
 # =========================
 # WebSocket OKX (mantido do original)
@@ -875,6 +985,11 @@ class SpotMarket:
                     ohlcv = http
                 logger.debug("http_fallback_used", symbol=symbol, candles_count=len(ohlcv))
 
+        # Validação de dados OHLCV
+        if ohlcv and not _validate_ohlcv_data(ohlcv):
+            logger.warning("invalid_ohlcv_data_detected", symbol=symbol, candles_count=len(ohlcv))
+            ohlcv = []  # Força refetch se dados são inválidos
+
         if ohlcv:
             self._cache.set(key, ohlcv)
             
@@ -915,8 +1030,29 @@ class TechnicalIndicators:
         return [max(0.0, min(100.0, r)) for r in rsis]
 
     def rsi_wilder(self, closes: List[float], period: int = 14) -> float:
-        s = self.rsi_series_wilder(closes, period)
-        return s[-1] if s else 50.0
+        """RSI com validação de dados de entrada"""
+        if not closes or len(closes) < period + 1:
+            return 50.0
+            
+        # Valida preços
+        valid_closes = [c for c in closes if c > 0 and math.isfinite(c)]
+        if len(valid_closes) < period + 1:
+            return 50.0
+            
+        # Remove outliers extremos (mais de 10 desvios padrão)
+        if len(valid_closes) > 20:
+            mean_price = stats.mean(valid_closes)
+            stdev_price = stats.stdev(valid_closes)
+            if stdev_price > 0:
+                valid_closes = [p for p in valid_closes 
+                              if abs(p - mean_price) < 10 * stdev_price]
+        
+        try:
+            rsi_series = self.rsi_series_wilder(valid_closes, period)
+            return rsi_series[-1] if rsi_series else 50.0
+        except Exception as e:
+            logger.error("rsi_calculation_error", error=str(e))
+            return 50.0
 
     def adx_wilder(self, highs: List[float], lows: List[float], closes: List[float], period: int = 14) -> float:
         n = len(closes)
@@ -1486,6 +1622,27 @@ def api_ai_status():
         "confidence_calibration": ai.adaptation.confidence_calibration
     })
 
+@app.get("/api/ai/metrics")
+def api_ai_metrics():
+    """Métricas detalhadas de performance da IA"""
+    if not FEATURE_FLAGS["enable_ai_intelligence"]:
+        return jsonify({"success": False, "error": "IA não habilitada"}), 404
+        
+    ai = manager.system.intelligent_ai
+    metrics = ai.get_performance_metrics()
+    
+    return jsonify({
+        "success": True,
+        "performance_metrics": metrics,
+        "patterns_learned": len(ai.memory.pattern_success),
+        "confidence_calibration": ai.adaptation.confidence_calibration,
+        "system_health": {
+            "learning_enabled": ai.learning_enabled,
+            "memory_size": len(ai.memory.recent_outcomes),
+            "calibration_entries": len(ai.adaptation.confidence_calibration)
+        }
+    })
+
 # =========================
 # Endpoints originais (mantidos)
 # =========================
@@ -1504,24 +1661,42 @@ def api_analyze():
         
     try:
         data = request.get_json(silent=True) or {}
-        symbols = [s.strip().upper() for s in (data.get("symbols") or manager.symbols_default) if s.strip()]
+        raw_symbols = data.get("symbols") or manager.symbols_default
+        
+        # Validação robusta de símbolos
+        if not raw_symbols:
+            return jsonify({"success": False, "error": "Nenhum símbolo fornecido"}), 400
+            
+        symbols = []
+        for s in raw_symbols:
+            if isinstance(s, str) and s.strip():
+                clean_symbol = s.strip().upper()
+                # Valida formato básico do símbolo
+                if len(clean_symbol) >= 3 and '/' in clean_symbol:
+                    symbols.append(clean_symbol)
+        
         if not symbols:
-            return jsonify({"success": False, "error": "Selecione pelo menos um ativo"}), 400
+            return jsonify({"success": False, "error": "Nenhum símbolo válido encontrado"}), 400
+            
+        # Limite razoável de símbolos por requisição
+        if len(symbols) > 20:
+            return jsonify({"success": False, "error": "Máximo de 20 símbolos por análise"}), 400
             
         sims = MC_PATHS
         th = threading.Thread(target=manager.analyze_symbols_thread, args=(symbols, sims, None))
         th.daemon = True
         th.start()
         
-        logger.info("analysis_request", client_id=client_id, symbols_count=len(symbols))
+        logger.info("analysis_request", client_id=client_id, symbols_count=len(symbols), symbols=symbols)
         return jsonify({
             "success": True, 
             "message": f"Analisando {len(symbols)} ativos com {sims} simulações.", 
-            "symbols_count": len(symbols)
+            "symbols_count": len(symbols),
+            "symbols_processed": symbols
         })
     except Exception as e:
-        logger.error("analysis_request_error", error=str(e), client_id=client_id)
-        return jsonify({"success": False, "error": str(e)}), 500
+        logger.error("analysis_request_error", error=str(e), client_id=client_id, stack_info=True)
+        return jsonify({"success": False, "error": "Erro interno do servidor"}), 500
 
 @app.get("/api/results")
 def api_results():
