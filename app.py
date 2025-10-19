@@ -1064,7 +1064,8 @@ class SpotMarket:
         self._ccxt = None
         try:
             import ccxt
-            self._ccxt = ccxt.binace({
+            # CORREÇÃO: binace -> binance
+            self._ccxt = ccxt.binance({
                 "enableRateLimit": True,
                 "timeout": 12000,
                 "options": {"defaultType": "spot"}
@@ -1832,367 +1833,275 @@ def deep_health():
 @app.get("/")
 def index():
     symbols_js = json.dumps(DEFAULT_SYMBOLS)
-    
-    # HTML dividido em partes para evitar problemas de syntax
-    html_parts = [
-        '<!doctype html>\n<html lang="pt-br">\n<head>\n',
-        '<meta charset="utf-8"/>\n<meta name="viewport" content="width=device-width,initial-scale=1"/>\n',
-        '<title>IA Signal Pro - GARCH EXPANDIDO (6 horizontes) + IA AVANÇADA</title>\n',
-        '<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0"/>\n',
-        '<style>\n',
-        ':root{--bg:#0f1120;--panel:#181a2e;--panel2:#223148;--tx:#dfe6ff;--muted:#9fb4ff;--accent:#2aa9ff;--gold:#f2a93b;--ok:#29d391;--err:#ff5b5b;}\n',
-        '*{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,"Helvetica Neue",Arial}\n',
-        '.wrap{max-width:1120px;margin:22px auto;padding:0 16px}\n',
-        '.hline{border:2px solid var(--accent);border-radius:12px;background:var(--panel);padding:18px;position:relative}\n',
-        'h1{margin:0 0 8px;font-size:22px} .sub{color:#8ccf9d;font-size:13px;margin:6px 0 0}\n',
-        '.clock{position:absolute;right:18px;top:18px;background:#0d2033;border:1px solid #3e6fa8;border-radius:10px;padding:8px 10px;color:#cfe2ff;font-weight:600}\n',
-        '.controls{margin-top:14px;background:var(--panel2);border-radius:12px;padding:14px}\n',
-        '.chips{display:flex;flex-wrap:wrap;gap:10px} .chip{border:2px solid var(--accent);border-radius:12px;padding:8px 12px;cursor:pointer;user-select:none}\n',
-        '.chip input{margin-right:8px}\n',
-        '.chip.active{box-shadow:0 0 0 2px inset var(--accent)}\n',
-        '.row{display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap}\n',
-        'select,button{border:2px solid var(--accent);border-radius:12px;padding:10px 12px;background:#16314b;color:#fff}\n',
-        'button{background:#2a9df4;cursor:pointer} button:disabled{opacity:.6;cursor:not-allowed}\n',
-        '.section{margin-top:16px;border:2px solid var(--gold);border-radius:12px;background:var(--panel)}\n',
-        '.section .title{padding:10px 14px;border-bottom:2px solid var(--gold);font-weight:700}\n',
-        '.card{margin:12px;border-radius:12px;background:var(--panel2);padding:14px;border:2px solid var(--gold)}\n',
-        '.kpis{display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:8px;margin-top:8px}\n',
-        '.kpi{background:#1b2b41;border-radius:10px;padding:10px 12px;color:#b6c8ff} .kpi b{display:block;color:#fff}\n',
-        '.badge{display:inline-block;padding:3px 8px;border-radius:8px;font-size:11px;margin-right:6px;background:#12263a;border:1px solid #2e6ea8}\n',
-        '.buy{background:#0c5d4b} .sell{background:#5b1f1f} .neutral{background:#3a4a5a}\n',
-        '.small{color:#9fb4ff;font-size:12px} .muted{color:#7d90c7}\n',
-        '.grid-syms{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;padding-bottom:12px}\n',
-        '.sym-head{padding:10px 14px;border-bottom:1px dashed #3b577a} .line{border-top:1px dashed #3b577a;margin:8px 0}\n',
-        '.tbox{border:2px solid #f0a43c;border-radius:10px;background:#26384e;padding:10px;margin-top:10px}\n',
-        '.tag{display:inline-block;padding:2px 6px;border-radius:6px;font-size:10px;margin-left:6px;background:#0d2033;border:1px solid #3e6fa8}\n',
-        '.right{float:right}\n',
-        '.ai-badge{background:#4a1f5f;border-color:#b362ff}\n',
-        '.trajectory-badge{background:#1f5f4a;border-color:#62ffb3}\n',
-        '.loading{text-align:center;padding:20px;color:#9fb4ff}\n',
-        '.error{background:#5b1f1f;border-color:#ff5b5b;padding:10px;border-radius:8px;margin:10px 0}\n',
-        '</style>\n</head>\n<body>\n',
-        '<div class="wrap">\n',
-        '  <div class="hline">\n',
-        '    <h1>IA Signal Pro - GARCH EXPANDIDO (6 horizontes) + IA AVANÇADA</h1>\n',
-        '    <div class="clock" id="clock">--:--:-- BRT</div>\n',
-        '    <div class="sub">✅ GARCH Expandido (T1-T15) · 7200 simulações · IA Trajetória Temporal · Filtros Inteligentes · 🧠 IA MULTICAMADAS AVANÇADA</div>\n',
-        '    <div class="controls">\n',
-        '      <div class="chips" id="chips"></div>\n',
-        '      <div class="row">\n',
-        '        <select id="mcsel">\n',
-        '          <option value="1200" selected>1200 simulações por horizonte (7200 total)</option>\n',
-        '          <option value="800">800 simulações por horizonte</option>\n',
-        '          <option value="1500">1500 simulações por horizonte</option>\n',
-        '        </select>\n',
-        '        <button type="button" onclick="selectAll()">Selecionar todos</button>\n',
-        '        <button type="button" onclick="clearAll()">Limpar</button>\n',
-        '        <button id="go" onclick="runAnalyze()">🚀 Analisar com GARCH Expandido</button>\n',
-        '      </div>\n',
-        '    </div>\n',
-        '  </div>\n\n',
-        '  <div class="section" id="bestSec" style="display:none">\n',
-        '    <div class="title">🥇 MELHOR OPORTUNIDADE GLOBAL (GARCH EXPANDIDO + IA)</div>\n',
-        '    <div class="card" id="bestCard">\n',
-        '      <div class="loading" id="bestLoading">Carregando melhor oportunidade...</div>\n',
-        '    </div>\n',
-        '  </div>\n\n',
-        '  <div class="section" id="allSec" style="display:none">\n',
-        '    <div class="title">📊 TODOS OS HORIZONTES E ATIVOS ANALISADOS</div>\n',
-        '    <div class="grid-syms" id="grid">\n',
-        '      <div class="loading" id="gridLoading">Carregando análise completa...</div>\n',
-        '    </div>\n',
-        '  </div>\n',
-        '</div>\n\n',
-        '<script>\n',
-        'const SYMS_DEFAULT = ' + symbols_js + ';\n',
-        'const chipsEl = document.getElementById("chips");\n',
-        'const gridEl = document.getElementById("grid");\n',
-        'const bestEl = document.getElementById("bestCard");\n',
-        'const bestSec = document.getElementById("bestSec");\n',
-        'const allSec = document.getElementById("allSec");\n',
-        'const clockEl = document.getElementById("clock");\n',
-        'const bestLoading = document.getElementById("bestLoading");\n',
-        'const gridLoading = document.getElementById("gridLoading");\n\n',
-        'function tickClock(){\n',
-        '  const now = new Date();\n',
-        '  const utc = now.getTime() + (now.getTimezoneOffset()*60000);\n',
-        '  const brt = new Date(utc - 3*60*60000);\n',
-        '  const pad = (n)=> n.toString().padStart(2,"0");\n',
-        '  clockEl.textContent = pad(brt.getHours())+":"+pad(brt.getMinutes())+":"+pad(brt.getSeconds())+" BRT";\n',
-        '}\n',
-        'setInterval(tickClock, 500); tickClock();\n\n',
-        'let pollTimer = null;\n',
-        'let lastAnalysisTime = null;\n\n',
-        'function mkChip(sym){\n',
-        '  const label = document.createElement("label");\n',
-        '  label.className = "chip active";\n',
-        '  const input = document.createElement("input");\n',
-        '  input.type = "checkbox";\n',
-        '  input.checked = true;\n',
-        '  input.value = sym;\n',
-        '  input.addEventListener("change", () => {\n',
-        '    label.classList.toggle("active", input.checked);\n',
-        '  });\n',
-        '  label.appendChild(input);\n',
-        '  label.append(sym);\n',
-        '  chipsEl.appendChild(label);\n',
-        '}\n',
-        'SYMS_DEFAULT.forEach(mkChip);\n\n',
-        'function selectAll(){\n',
-        '  document.querySelectorAll("#chips .chip input").forEach(cb=>{\n',
-        '    cb.checked = true;\n',
-        '    cb.dispatchEvent(new Event("change"));\n',
-        '  });\n',
-        '}\n\n',
-        'function clearAll(){\n',
-        '  document.querySelectorAll("#chips .chip input").forEach(cb=>{\n',
-        '    cb.checked = false;\n',
-        '    cb.dispatchEvent(new Event("change"));\n',
-        '  });\n',
-        '}\n\n',
-        'function selSymbols(){\n',
-        '  return Array.from(chipsEl.querySelectorAll("input")).filter(i=>i.checked).map(i=>i.value);\n',
-        '}\n\n',
-        'function pct(x){ \n',
-        '  if (x === undefined || x === null) return "0.0%";\n',
-        '  return (Number(x)*100).toFixed(1)+"%"; \n',
-        '}\n\n',
-        'function badgeDir(d){ \n',
-        '  if (!d || d === "undefined") d = "neutral";\n',
-        '  return `<span class="badge ${d==="buy"?"buy":d==="sell"?"sell":"neutral"}">${d==="buy"?"COMPRAR":d==="sell"?"VENDER":"NEUTRO"}</span>`; \n',
-        '}\n\n',
-        'function formatNumber(num, decimals = 6) {\n',
-        '  if (num === undefined || num === null) return "0.000000";\n',
-        '  return Number(num).toFixed(decimals);\n',
-        '}\n\n',
-        'async function runAnalyze(){\n',
-        '  const btn = document.getElementById("go");\n',
-        '  btn.disabled = true;\n',
-        '  btn.textContent = "⏳ GARCH Expandido Analisando...";\n',
-        '  \n',
-        '  bestSec.style.display = "block";\n',
-        '  allSec.style.display = "block";\n',
-        '  bestLoading.style.display = "block";\n',
-        '  gridLoading.style.display = "block";\n',
-        '  bestEl.innerHTML = "<div class=\"loading\">Carregando melhor oportunidade...</div>";\n',
-        '  gridEl.innerHTML = "<div class=\"loading\">Carregando análise completa...</div>";\n',
-        '  \n',
-        '  const syms = selSymbols();\n',
-        '  if(!syms.length){ \n',
-        '    alert("Selecione pelo menos um ativo."); \n',
-        '    btn.disabled = false; \n',
-        '    btn.textContent = "🚀 Analisar com GARCH Expandido"; \n',
-        '    return; \n',
-        '  }\n',
-        '  \n',
-        '  try {\n',
-        '    const response = await fetch("/api/analyze", {\n',
-        '      method: "POST",\n',
-        '      headers: {"Content-Type": "application/json", "Cache-Control": "no-store"},\n',
-        '      cache: "no-store",\n',
-        '      body: JSON.stringify({ symbols: syms })\n',
-        '    });\n',
-        '    \n',
-        '    const result = await response.json();\n',
-        '    if (!result.success) {\n',
-        '      throw new Error(result.error || "Erro na análise");\n',
-        '    }\n',
-        '    \n',
-        '    startPollingResults();\n',
-        '  } catch (error) {\n',
-        '    console.error("Erro na análise:", error);\n',
-        '    bestEl.innerHTML = `<div class="error">Erro: ${error.message}</div>`;\n',
-        '    gridEl.innerHTML = `<div class="error">Erro na análise</div>`;\n',
-        '    btn.disabled = false;\n',
-        '    btn.textContent = "🚀 Analisar com GARCH Expandido";\n',
-        '  }\n',
-        '}\n\n',
-        'function startPollingResults(){\n',
-        '  if(pollTimer) clearInterval(pollTimer);\n',
-        '  pollTimer = setInterval(async () => {\n',
-        '    try {\n',
-        '      const finished = await fetchAndRenderResults();\n',
-        '      if (finished){\n',
-        '        clearInterval(pollTimer);\n',
-        '        pollTimer = null;\n',
-        '        const btn = document.getElementById("go");\n',
-        '        btn.disabled = false;\n',
-        '        btn.textContent = "🚀 Analisar com GARCH Expandido";\n',
-        '      }\n',
-        '    } catch (error) {\n',
-        '      console.error("Erro no polling:", error);\n',
-        '    }\n',
-        '  }, 1500);\n',
-        '}\n\n',
-        'async function fetchAndRenderResults(){\n',
-        '  try {\n',
-        '    const response = await fetch("/api/results", { \n',
-        '      cache: "no-store", \n',
-        '      headers: {"Cache-Control": "no-store"} \n',
-        '    });\n',
-        '    const data = await response.json();\n\n',
-        '    if (!data.success) {\n',
-        '      throw new Error(data.error || "Erro ao carregar resultados");\n',
-        '    }\n\n',
-        '    if (data.is_analyzing) {\n',
-        '      bestEl.innerHTML = "<div class=\"loading\">⏳ Processando GARCH Expandido...</div>";\n',
-        '      gridEl.innerHTML = "<div class=\"loading\">⏳ Analisando múltiplos horizontes...</div>";\n',
-        '      return false;\n',
-        '    }\n\n',
-        '    if (lastAnalysisTime && data.analysis_time === lastAnalysisTime) {\n',
-        '      return false;\n',
-        '    }\n',
-        '    \n',
-        '    lastAnalysisTime = data.analysis_time;\n',
-        '    bestLoading.style.display = "none";\n',
-        '    gridLoading.style.display = "none";\n\n',
-        '    bestSec.style.display = "block";\n',
-        '    bestEl.innerHTML = renderBest(data.best, data.analysis_time);\n\n',
-        '    if (data.results && data.results.length > 0) {\n',
-        '      const groups = {};\n',
-        '      data.results.forEach(it => { \n',
-        '        if (it.symbol) {\n',
-        '          (groups[it.symbol] = groups[it.symbol] || []).push(it); \n',
-        '        }\n',
-        '      });\n',
-        '      \n',
-        '      const html = Object.keys(groups).sort().map(sym => {\n',
-        '        const arr = groups[sym].sort((a,b) => (a.horizon || 0) - (b.horizon || 0));\n',
-        '        const bestLocal = arr.slice().sort((a,b) => rank(b) - rank(a))[0];\n',
-        '        return `\n',
-        '          <div class="card">\n',
-        '            <div class="sym-head">\n',
-        '              <b>${sym}</b>\n',
-        '              <span class="tag">TF: ${bestLocal?.multi_timeframe || "neutral"}</span>\n',
-        '              <span class="tag">Liquidez: ${formatNumber(bestLocal?.liquidity_score, 2)}</span>\n',
-        '              ${bestLocal?.reversal ? `<span class="tag">🔄 Reversão (${bestLocal.reversal_side || "unknown"})</span>` : ""}\n',
-        '              <span class="tag ai-badge">🧠 IA</span>\n',
-        '              <span class="tag trajectory-badge">📈 GARCH Expandido</span>\n',
-        '            </div>\n',
-        '            ${arr.map(item => renderTbox(item, bestLocal)).join("")}\n',
-        '          </div>`;\n',
-        '      }).join("");\n',
-        '      \n',
-        '      gridEl.innerHTML = html;\n',
-        '    } else {\n',
-        '      gridEl.innerHTML = "<div class=\"muted\">Nenhum sinal encontrado para os critérios atuais.</div>";\n',
-        '    }\n',
-        '    \n',
-        '    allSec.style.display = "block";\n',
-        '    return true;\n\n',
-        '  } catch (error) {\n',
-        '    console.error("Erro ao renderizar resultados:", error);\n',
-        '    bestEl.innerHTML = `<div class="error">Erro ao carregar dados: ${error.message}</div>`;\n',
-        '    gridEl.innerHTML = `<div class="error">Erro ao carregar análise</div>`;\n',
-        '    return true;\n',
-        '  }\n',
-        '}\n\n',
-        'function rank(it){ \n',
-        '  if (!it) return 0;\n',
-        '  \n',
-        '  const direction = it.direction || "neutral";\n',
-        '  const prob_directional = direction === "buy" ? (it.probability_buy || 0.5) : (it.probability_sell || 0.5);\n',
-        '  const confidence = it.intelligent_confidence || it.confidence || 0.5;\n',
-        '  const trajectory_quality = it.trajectory_quality || 0.5;\n',
-        '  \n',
-        '  return (confidence * 800) + (trajectory_quality * 500) + (prob_directional * 100);\n',
-        '}\n\n',
-        'function renderBest(best, analysisTime){\n',
-        '  if(!best || best.error) {\n',
-        '    return "<div class=\"muted\">Nenhuma oportunidade destacada no momento. Aguarde a análise completar.</div>";\n',
-        '  }\n\n',
-        '  const symbol = best.symbol || "Unknown";\n',
-        '  const horizon = best.horizon || 1;\n',
-        '  const direction = best.direction || "neutral";\n',
-        '  const probability_buy = best.probability_buy || 0.5;\n',
-        '  const probability_sell = best.probability_sell || 0.5;\n',
-        '  const confidence = best.intelligent_confidence || best.confidence || 0.5;\n',
-        '  const trajectory_quality = best.trajectory_quality || 0.5;\n',
-        '  const adx = best.adx || 0;\n',
-        '  const rsi = best.rsi || 0;\n',
-        '  const price = best.price || 0;\n',
-        '  const recommended_horizon = best.recommended_horizon || "T1";\n',
-        '  const entry_time = best.entry_time || "-";\n',
-        '  \n',
-        '  const rev = best.reversal ? ` <span class="tag">🔄 Reversão (${best.reversal_side || "unknown"})</span>` : "";\n',
-        '  const reasoning = best.reasoning ? `<div class="small" style="margin-top:8px;color:#8ccf9d">🧠 ${best.reasoning.slice(0,3).join(" · ")}</div>` : "";\n',
-        '  \n',
-        '  return `\n',
-        '    <div class="small muted">Atualizado: ${analysisTime || "N/A"} · GARCH Expandido + IA Trajetória</div>\n',
-        '    <div class="line"></div>\n',
-        '    <div>\n',
-        '      <b>${symbol} T+${horizon}</b> \n',
-        '      ${badgeDir(direction)} \n',
-        '      <span class="tag">🥇 MELHOR GLOBAL</span>${rev} \n',
-        '      <span class="tag ai-badge">🧠 IA</span>\n',
-        '      <span class="tag trajectory-badge">📈 Trajetória: ${pct(trajectory_quality)}</span>\n',
-        '    </div>\n',
-        '    <div class="kpis">\n',
-        '      <div class="kpi"><b>Prob Compra</b>${pct(probability_buy)}</div>\n',
-        '      <div class="kpi"><b>Prob Venda</b>${pct(probability_sell)}</div>\n',
-        '      <div class="kpi"><b>Confiança IA</b>${pct(confidence)}</div>\n',
-        '      <div class="kpi"><b>Qualidade Trajetória</b>${pct(trajectory_quality)}</div>\n',
-        '      <div class="kpi"><b>ADX</b>${formatNumber(adx, 1)}</div>\n',
-        '      <div class="kpi"><b>RSI</b>${formatNumber(rsi, 1)}</div>\n',
-        '    </div>\n',
-        '    ${reasoning}\n',
-        '    <div class="small" style="margin-top:8px;">\n',
-        '      Horizonte Recomendado: <b>${recommended_horizon}</b> · \n',
-        '      Price: <b>${formatNumber(price)}</b>\n',
-        '      <span class="right">Entrada: <b>${entry_time}</b></span>\n',
-        '    </div>`;\n',
-        '}\n\n',
-        'function renderTbox(it, bestLocal){\n',
-        '  if (!it) return "";\n',
-        '  \n',
-        '  const horizon = it.horizon || 1;\n',
-        '  const direction = it.direction || "neutral";\n',
-        '  const probability_buy = it.probability_buy || 0.5;\n',
-        '  const probability_sell = it.probability_sell || 0.5;\n',
-        '  const confidence = it.intelligent_confidence || it.confidence || 0.5;\n',
-        '  const trajectory_quality = it.trajectory_quality || 0.5;\n',
-        '  const adx = it.adx || 0;\n',
-        '  const rsi = it.rsi || 0;\n',
-        '  const price = it.price || 0;\n',
-        '  const timestamp = it.timestamp || "-";\n',
-        '  const multi_timeframe = it.multi_timeframe || "neutral";\n',
-        '  \n',
-        '  const isBest = bestLocal && it.symbol === bestLocal.symbol && it.horizon === bestLocal.horizon;\n',
-        '  const rev = it.reversal ? ` <span class="tag">🔄 REVERSÃO (${it.reversal_side || "unknown"})</span>` : "";\n',
-        '  const reasoning = it.reasoning ? `<div class="small" style="color:#8ccf9d;margin-top:4px">🧠 ${it.reasoning.slice(0,2).join(" · ")}</div>` : "";\n',
-        '  \n',
-        '  return `\n',
-        '    <div class="tbox">\n',
-        '      <div>\n',
-        '        <b>T+${horizon}</b> \n',
-        '        ${badgeDir(direction)} \n',
-        '        ${isBest ? "<span class=\"tag\">🥇 MELHOR DO ATIVO</span>" : ""}${rev} \n',
-        '        <span class="tag ai-badge">🧠 IA</span>\n',
-        '        <span class="tag trajectory-badge">📈 ${pct(trajectory_quality)}</span>\n',
-        '      </div>\n',
-        '      <div class="small">\n',
-        '        Prob: <span class="${direction === "buy" ? "ok" : direction === "sell" ? "err" : "muted"}">\n',
-        '          ${pct(probability_buy)}/${pct(probability_sell)}\n',
-        '        </span>\n',
-        '        · Conf IA: <span class="ok">${pct(confidence)}</span>\n',
-        '        · Trajetória: <span class="ok">${pct(trajectory_quality)}</span>\n',
-        '      </div>\n',
-        '      <div class="small">\n',
-        '        ADX: ${formatNumber(adx, 1)} | RSI: ${formatNumber(rsi, 1)} | TF: <b>${multi_timeframe}</b>\n',
-        '      </div>\n',
-        '      ${reasoning}\n',
-        '      <div class="small muted">\n',
-        '        ⏱️ ${timestamp} · Price: ${formatNumber(price)}\n',
-        '      </div>\n',
-        '    </div>`;\n',
-        '}\n\n',
-        'document.addEventListener("DOMContentLoaded", function() {\n',
-        '  console.log("IA Signal Pro - GARCH Expandido inicializado");\n',
-        '});\n',
-        '</script>\n</body>\n</html>'
-    ]
-    
-    HTML = ''.join(html_parts)
+    HTML = """<!doctype html>
+<html lang="pt-br"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>IA Signal Pro - GARCH EXPANDIDO + IA AVANÇADA</title>
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0"/>
+<style>
+:root{--bg:#0f1120;--panel:#181a2e;--panel2:#223148;--tx:#dfe6ff;--muted:#9fb4ff;--accent:#2aa9ff;--gold:#f2a93b;--ok:#29d391;--err:#ff5b5b;}
+*{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,"Helvetica Neue",Arial}
+.wrap{max-width:1120px;margin:22px auto;padding:0 16px}
+.hline{border:2px solid var(--accent);border-radius:12px;background:var(--panel);padding:18px;position:relative}
+h1{margin:0 0 8px;font-size:22px} .sub{color:#8ccf9d;font-size:13px;margin:6px 0 0}
+.clock{position:absolute;right:18px;top:18px;background:#0d2033;border:1px solid #3e6fa8;border-radius:10px;padding:8px 10px;color:#cfe2ff;font-weight:600}
+.controls{margin-top:14px;background:var(--panel2);border-radius:12px;padding:14px}
+.chips{display:flex;flex-wrap:wrap;gap:10px} .chip{border:2px solid var(--accent);border-radius:12px;padding:8px 12px;cursor:pointer;user-select:none}
+.chip input{margin-right:8px}
+.chip.active{box-shadow:0 0 0 2px inset var(--accent)}
+.row{display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap}
+select,button{border:2px solid var(--accent);border-radius:12px;padding:10px 12px;background:#16314b;color:#fff}
+button{background:#2a9df4;cursor:pointer} button:disabled{opacity:.6;cursor:not-allowed}
+.section{margin-top:16px;border:2px solid var(--gold);border-radius:12px;background:var(--panel)}
+.section .title{padding:10px 14px;border-bottom:2px solid var(--gold);font-weight:700}
+.card{margin:12px;border-radius:12px;background:var(--panel2);padding:14px;border:2px solid var(--gold)}
+.kpis{display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:8px;margin-top:8px}
+.kpi{background:#1b2b41;border-radius:10px;padding:10px 12px;color:#b6c8ff} .kpi b{display:block;color:#fff}
+.badge{display:inline-block;padding:3px 8px;border-radius:8px;font-size:11px;margin-right:6px;background:#12263a;border:1px solid #2e6ea8}
+.buy{background:#0c5d4b} .sell{background:#5b1f1f}
+.small{color:#9fb4ff;font-size:12px} .muted{color:#7d90c7}
+.grid-syms{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;padding-bottom:12px}
+.sym-head{padding:10px 14px;border-bottom:1px dashed #3b577a} .line{border-top:1px dashed #3b577a;margin:8px 0}
+.tbox{border:2px solid #f0a43c;border-radius:10px;background:#26384e;padding:10px;margin-top:10px}
+.tag{display:inline-block;padding:2px 6px;border-radius:6px;font-size:10px;margin-left:6px;background:#0d2033;border:1px solid #3e6fa8}
+.right{float:right}
+.ai-badge{background:#4a1f5f;border-color:#b362ff}
+.trajectory-badge{background:#1f5f4a;border-color:#62ffb3}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hline">
+    <h1>IA Signal Pro - GARCH EXPANDIDO (6 horizontes) + IA AVANÇADA</h1>
+    <div class="clock" id="clock">--:--:-- BRT</div>
+    <div class="sub">✅ GARCH Expandido (T1-T15) · 7200 simulações · IA Trajetória Temporal · Filtros Inteligentes · 🧠 IA MULTICAMADAS AVANÇADA</div>
+    <div class="controls">
+      <div class="chips" id="chips"></div>
+      <div class="row">
+        <select id="mcsel">
+          <option value="1200" selected>1200 simulações por horizonte (7200 total)</option>
+          <option value="800">800 simulações por horizonte</option>
+          <option value="1500">1500 simulações por horizonte</option>
+        </select>
+        <button type="button" onclick="selectAll()">Selecionar todos</button>
+        <button type="button" onclick="clearAll()">Limpar</button>
+        <button id="go" onclick="runAnalyze()">🚀 Analisar com GARCH Expandido</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="section" id="bestSec" style="display:none">
+    <div class="title">🥇 MELHOR OPORTUNIDADE GLOBAL (GARCH EXPANDIDO + IA)</div>
+    <div class="card" id="bestCard"></div>
+  </div>
+
+  <div class="section" id="allSec" style="display:none">
+    <div class="title">📊 TODOS OS HORIZONTES E ATIVOS ANALISADOS</div>
+    <div class="grid-syms" id="grid"></div>
+  </div>
+</div>
+
+<script>
+const SYMS_DEFAULT = """ + symbols_js + """;
+const chipsEl = document.getElementById('chips');
+const gridEl  = document.getElementById('grid');
+const bestEl  = document.getElementById('bestCard');
+const bestSec = document.getElementById('bestSec');
+const allSec  = document.getElementById('allSec');
+const clockEl = document.getElementById('clock');
+
+function tickClock(){
+  const now = new Date();
+  const utc = now.getTime() + (now.getTimezoneOffset()*60000);
+  const brt = new Date(utc - 3*60*60000);
+  const pad = (n)=> n.toString().padStart(2,'0');
+  clockEl.textContent = pad(brt.getHours())+':'+pad(brt.getMinutes())+':'+pad(brt.getSeconds())+' BRT';
+}
+setInterval(tickClock, 500); tickClock();
+
+let pollTimer = null;
+let lastAnalysisTime = null;
+
+function mkChip(sym){
+  const label = document.createElement('label');
+  label.className = 'chip active';
+  const input = document.createElement('input');
+  input.type = 'checkbox';
+  input.checked = true;
+  input.value = sym;
+  input.addEventListener('change', () => {
+    label.classList.toggle('active', input.checked);
+  });
+  label.appendChild(input);
+  label.append(sym);
+  chipsEl.appendChild(label);
+}
+SYMS_DEFAULT.forEach(mkChip);
+
+function selectAll(){
+  document.querySelectorAll('#chips .chip input').forEach(cb=>{
+    cb.checked = true;
+    cb.closest('.chip').classList.add('active');
+  });
+}
+function clearAll(){
+  document.querySelectorAll('#chips .chip input').forEach(cb=>{
+    cb.checked = false;
+    cb.closest('.chip').classList.remove('active');
+  });
+}
+function selSymbols(){
+  return Array.from(chipsEl.querySelectorAll('input:checked')).map(i=>i.value);
+}
+function pct(x){ return (x*100).toFixed(1)+'%'; }
+function badgeDir(d){ return `<span class="badge ${d==='buy'?'buy':'sell'}">${d==='buy'?'COMPRAR':'VENDER'}</span>`; }
+
+async function runAnalyze(){
+  const btn = document.getElementById('go');
+  btn.disabled = true;
+  btn.textContent = '⏳ GARCH Expandido Analisando...';
+  const syms = selSymbols();
+  if(!syms.length){ alert('Selecione pelo menos um ativo.'); btn.disabled=false; btn.textContent='🚀 Analisar com GARCH Expandido'; return; }
+  try {
+    const response = await fetch('/api/analyze', {
+      method:'POST',
+      headers:{'Content-Type':'application/json','Cache-Control':'no-store'},
+      cache:'no-store',
+      body: JSON.stringify({ symbols: syms })
+    });
+    const data = await response.json();
+    if (!data.success) {
+      alert('Erro: ' + data.error);
+      btn.disabled = false;
+      btn.textContent = '🚀 Analisar com GARCH Expandido';
+      return;
+    }
+    startPollingResults();
+  } catch (error) {
+    alert('Erro de conexão: ' + error);
+    btn.disabled = false;
+    btn.textContent = '🚀 Analisar com GARCH Expandido';
+  }
+}
+
+function startPollingResults(){
+  if(pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    const finished = await fetchAndRenderResults();
+    if (finished){
+      clearInterval(pollTimer);
+      pollTimer = null;
+      const btn = document.getElementById('go');
+      btn.disabled = false;
+      btn.textContent = '🚀 Analisar com GARCH Expandido';
+    }
+  }, 1000);
+}
+
+async function fetchAndRenderResults(){
+  try {
+    const r = await fetch('/api/results', { cache: 'no-store', headers: {'Cache-Control':'no-store'} });
+    const data = await r.json();
+
+    if (data.is_analyzing) return false;
+    if (lastAnalysisTime && data.analysis_time === lastAnalysisTime) return false;
+    lastAnalysisTime = data.analysis_time;
+
+    bestSec.style.display='block';
+    bestEl.innerHTML = renderBest(data.best, data.analysis_time);
+
+    const groups = {};
+    (data.results||[]).forEach(it=>{ (groups[it.symbol]=groups[it.symbol]||[]).push(it); });
+    const html = Object.keys(groups).sort().map(sym=>{
+      const arr = groups[sym].sort((a,b)=>(a.horizon||0)-(b.horizon||0));
+      const bestLocal = arr.slice().sort((a,b)=>rank(b)-rank(a))[0];
+      return `
+        <div class="card">
+          <div class="sym-head"><b>${sym}</b>
+            <span class="tag">TF: ${bestLocal?.multi_timeframe||'neutral'}</span>
+            <span class="tag">Liquidez: ${Number(bestLocal?.liquidity_score||0).toFixed(2)}</span>
+            ${bestLocal?.reversal ? `<span class="tag">🔄 Reversão (${bestLocal.reversal_side})</span>`:''}
+            <span class="tag ai-badge">🧠 IA Inteligente</span>
+            <span class="tag trajectory-badge">📈 GARCH Expandido</span>
+          </div>
+          ${arr.map(item=>renderTbox(item, bestLocal)).join('')}
+        </div>`;
+    }).join('');
+    gridEl.innerHTML = html;
+    allSec.style.display='block';
+
+    return true;
+  } catch (error) {
+    console.error('Erro ao buscar resultados:', error);
+    return false;
+  }
+}
+
+function rank(it){ 
+  const direction = it.direction || 'buy';
+  const prob_directional = direction === 'buy' ? it.probability_buy : it.probability_sell;
+  const confidence = it.intelligent_confidence || it.confidence;
+  const trajectory_quality = it.trajectory_quality || 0.5;
+  return (confidence * 800) + (trajectory_quality * 500) + (prob_directional * 100);
+}
+
+function renderBest(best, analysisTime){
+  if(!best || best.error) return '<div class="small">Sem oportunidade no momento.</div>';
+  const rev = best.reversal ? ` <span class="tag">🔄 Reversão (${best.reversal_side})</span>` : '';
+  const confidence = best.intelligent_confidence || best.confidence;
+  const trajectory_quality = best.trajectory_quality || 0.5;
+  const reasoning = best.reasoning ? `<div class="small" style="margin-top:8px;color:#8ccf9d">🧠 ${best.reasoning.slice(0,3).join(' · ')}</div>` : '';
+  
+  return `
+    <div class="small muted">Atualizado: ${analysisTime} · GARCH Expandido + IA Trajetória</div>
+    <div class="line"></div>
+    <div><b>${best.symbol} T+${best.horizon}</b> ${badgeDir(best.direction)} 
+      <span class="tag">🥇 MELHOR GLOBAL</span>${rev} 
+      <span class="tag ai-badge">🧠 IA</span>
+      <span class="tag trajectory-badge">📈 Trajetória: ${(trajectory_quality*100).toFixed(1)}%</span>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><b>Prob Compra</b>${pct(best.probability_buy||0)}</div>
+      <div class="kpi"><b>Prob Venda</b>${pct(best.probability_sell||0)}</div>
+      <div class="kpi"><b>Confiança IA</b>${pct(confidence)}</div>
+      <div class="kpi"><b>Qualidade Trajetória</b>${pct(trajectory_quality)}</div>
+      <div class="kpi"><b>ADX</b>${(best.adx||0).toFixed(1)}</div>
+      <div class="kpi"><b>RSI</b>${(best.rsi||0).toFixed(1)}</div>
+    </div>
+    ${reasoning}
+    <div class="small" style="margin-top:8px;">
+      Horizonte Recomendado: <b>${best.recommended_horizon || 'T1'}</b> · 
+      Price: <b>${Number(best.price||0).toFixed(6)}</b>
+      <span class="right">Entrada: <b>${best.entry_time||'-'}</b></span>
+    </div>`;
+}
+
+function renderTbox(it, bestLocal){
+  const isBest = bestLocal && it.symbol===bestLocal.symbol && it.horizon===bestLocal.horizon;
+  const rev = it.reversal ? ` <span class="tag">🔄 REVERSÃO (${it.reversal_side})</span>` : '';
+  const confidence = it.intelligent_confidence || it.confidence;
+  const trajectory_quality = it.trajectory_quality || 0.5;
+  const reasoning = it.reasoning ? `<div class="small" style="color:#8ccf9d;margin-top:4px">🧠 ${it.reasoning.slice(0,2).join(' · ')}</div>` : '';
+  
+  return `
+    <div class="tbox">
+      <div><b>T+${it.horizon}</b> ${badgeDir(it.direction)} 
+        ${isBest?'<span class="tag">🥇 MELHOR DO ATIVO</span>':''}${rev} 
+        <span class="tag ai-badge">🧠 IA</span>
+        <span class="tag trajectory-badge">📈 ${(trajectory_quality*100).toFixed(0)}%</span>
+      </div>
+      <div class="small">
+        Prob: <span class="${it.direction==='buy'?'ok':'err'}">${pct(it.probability_buy||0)}/${pct(it.probability_sell||0)}</span>
+        · Conf IA: <span class="ok">${pct(confidence)}</span>
+        · Trajetória: <span class="ok">${pct(trajectory_quality)}</span>
+      </div>
+      <div class="small">ADX: ${(it.adx||0).toFixed(1)} | RSI: ${(it.rsi||0).toFixed(1)} | TF: <b>${it.multi_timeframe||'neutral'}</b></div>
+      ${reasoning}
+      <div class="small muted">⏱️ ${it.timestamp||'-'} · Price: ${Number(it.price||0).toFixed(6)}</div>
+    </div>`;
+}
+</script>
+</body></html>"""
     return Response(HTML, mimetype="text/html")
 
 # =========================
