@@ -1833,9 +1833,11 @@ def deep_health():
 def index():
     symbols_js = json.dumps(DEFAULT_SYMBOLS)
     HTML = """<!doctype html>
-<html lang="pt-br"><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>IA Signal Pro - GARCH EXPANDIDO + IA AVANÇADA</title>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>IA Signal Pro - GARCH EXPANDIDO (6 horizontes) + IA AVANÇADA</title>
 <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0"/>
 <style>
 :root{--bg:#0f1120;--panel:#181a2e;--panel2:#223148;--tx:#dfe6ff;--muted:#9fb4ff;--accent:#2aa9ff;--gold:#f2a93b;--ok:#29d391;--err:#ff5b5b;}
@@ -1857,7 +1859,7 @@ button{background:#2a9df4;cursor:pointer} button:disabled{opacity:.6;cursor:not-
 .kpis{display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:8px;margin-top:8px}
 .kpi{background:#1b2b41;border-radius:10px;padding:10px 12px;color:#b6c8ff} .kpi b{display:block;color:#fff}
 .badge{display:inline-block;padding:3px 8px;border-radius:8px;font-size:11px;margin-right:6px;background:#12263a;border:1px solid #2e6ea8}
-.buy{background:#0c5d4b} .sell{background:#5b1f1f}
+.buy{background:#0c5d4b} .sell{background:#5b1f1f} .neutral{background:#3a4a5a}
 .small{color:#9fb4ff;font-size:12px} .muted{color:#7d90c7}
 .grid-syms{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;padding-bottom:12px}
 .sym-head{padding:10px 14px;border-bottom:1px dashed #3b577a} .line{border-top:1px dashed #3b577a;margin:8px 0}
@@ -1866,6 +1868,8 @@ button{background:#2a9df4;cursor:pointer} button:disabled{opacity:.6;cursor:not-
 .right{float:right}
 .ai-badge{background:#4a1f5f;border-color:#b362ff}
 .trajectory-badge{background:#1f5f4a;border-color:#62ffb3}
+.loading{text-align:center;padding:20px;color:#9fb4ff}
+.error{background:#5b1f1f;border-color:#ff5b5b;padding:10px;border-radius:8px;margin:10px 0}
 </style>
 </head>
 <body>
@@ -1891,23 +1895,29 @@ button{background:#2a9df4;cursor:pointer} button:disabled{opacity:.6;cursor:not-
 
   <div class="section" id="bestSec" style="display:none">
     <div class="title">🥇 MELHOR OPORTUNIDADE GLOBAL (GARCH EXPANDIDO + IA)</div>
-    <div class="card" id="bestCard"></div>
+    <div class="card" id="bestCard">
+      <div class="loading" id="bestLoading">Carregando melhor oportunidade...</div>
+    </div>
   </div>
 
   <div class="section" id="allSec" style="display:none">
     <div class="title">📊 TODOS OS HORIZONTES E ATIVOS ANALISADOS</div>
-    <div class="grid-syms" id="grid"></div>
+    <div class="grid-syms" id="grid">
+      <div class="loading" id="gridLoading">Carregando análise completa...</div>
+    </div>
   </div>
 </div>
 
 <script>
-const SYMS_DEFAULT = __SYMS__;
+const SYMS_DEFAULT = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "ADA/USDT", "XRP/USDT", "BNB/USDT"];
 const chipsEl = document.getElementById('chips');
-const gridEl  = document.getElementById('grid');
-const bestEl  = document.getElementById('bestCard');
+const gridEl = document.getElementById('grid');
+const bestEl = document.getElementById('bestCard');
 const bestSec = document.getElementById('bestSec');
-const allSec  = document.getElementById('allSec');
+const allSec = document.getElementById('allSec');
 const clockEl = document.getElementById('clock');
+const bestLoading = document.getElementById('bestLoading');
+const gridLoading = document.getElementById('gridLoading');
 
 function tickClock(){
   const now = new Date();
@@ -1943,146 +1953,278 @@ function selectAll(){
     cb.dispatchEvent(new Event('change'));
   });
 }
+
 function clearAll(){
   document.querySelectorAll('#chips .chip input').forEach(cb=>{
     cb.checked = false;
     cb.dispatchEvent(new Event('change'));
   });
 }
+
 function selSymbols(){
   return Array.from(chipsEl.querySelectorAll('input')).filter(i=>i.checked).map(i=>i.value);
 }
-function pct(x){ return (x*100).toFixed(1)+'%'; }
-function badgeDir(d){ return `<span class="badge ${d==='buy'?'buy':'sell'}">${d==='buy'?'COMPRAR':'VENDER'}</span>`; }
+
+function pct(x){ 
+  if (x === undefined || x === null) return '0.0%';
+  return (Number(x)*100).toFixed(1)+'%'; 
+}
+
+function badgeDir(d){ 
+  if (!d || d === 'undefined') d = 'neutral';
+  return `<span class="badge ${d==='buy'?'buy':d==='sell'?'sell':'neutral'}">${d==='buy'?'COMPRAR':d==='sell'?'VENDER':'NEUTRO'}</span>`; 
+}
+
+function formatNumber(num, decimals = 6) {
+  if (num === undefined || num === null) return '0.000000';
+  return Number(num).toFixed(decimals);
+}
 
 async function runAnalyze(){
   const btn = document.getElementById('go');
   btn.disabled = true;
   btn.textContent = '⏳ GARCH Expandido Analisando...';
+  
+  // Mostrar seções de loading
+  bestSec.style.display = 'block';
+  allSec.style.display = 'block';
+  bestLoading.style.display = 'block';
+  gridLoading.style.display = 'block';
+  bestEl.innerHTML = '<div class="loading">Carregando melhor oportunidade...</div>';
+  gridEl.innerHTML = '<div class="loading">Carregando análise completa...</div>';
+  
   const syms = selSymbols();
-  if(!syms.length){ alert('Selecione pelo menos um ativo.'); btn.disabled=false; btn.textContent='🚀 Analisar com GARCH Expandido'; return; }
-  await fetch('/api/analyze', {
-    method:'POST',
-    headers:{'Content-Type':'application/json','Cache-Control':'no-store'},
-    cache:'no-store',
-    body: JSON.stringify({ symbols: syms })
-  });
-  startPollingResults();
+  if(!syms.length){ 
+    alert('Selecione pelo menos um ativo.'); 
+    btn.disabled = false; 
+    btn.textContent = '🚀 Analisar com GARCH Expandido'; 
+    return; 
+  }
+  
+  try {
+    const response = await fetch('/api/analyze', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'Cache-Control': 'no-store'},
+      cache: 'no-store',
+      body: JSON.stringify({ symbols: syms })
+    });
+    
+    const result = await response.json();
+    if (!result.success) {
+      throw new Error(result.error || 'Erro na análise');
+    }
+    
+    startPollingResults();
+  } catch (error) {
+    console.error('Erro na análise:', error);
+    bestEl.innerHTML = `<div class="error">Erro: ${error.message}</div>`;
+    gridEl.innerHTML = `<div class="error">Erro na análise</div>`;
+    btn.disabled = false;
+    btn.textContent = '🚀 Analisar com GARCH Expandido';
+  }
 }
 
 function startPollingResults(){
   if(pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(async () => {
-    const finished = await fetchAndRenderResults();
-    if (finished){
-      clearInterval(pollTimer);
-      pollTimer = null;
-      const btn = document.getElementById('go');
-      btn.disabled = false;
-      btn.textContent = '🚀 Analisar com GARCH Expandido';
+    try {
+      const finished = await fetchAndRenderResults();
+      if (finished){
+        clearInterval(pollTimer);
+        pollTimer = null;
+        const btn = document.getElementById('go');
+        btn.disabled = false;
+        btn.textContent = '🚀 Analisar com GARCH Expandido';
+      }
+    } catch (error) {
+      console.error('Erro no polling:', error);
     }
-  }, 1000);
+  }, 1500);
 }
 
 async function fetchAndRenderResults(){
-  const r = await fetch('/api/results', { cache: 'no-store', headers: {'Cache-Control':'no-store'} });
-  const data = await r.json();
+  try {
+    const response = await fetch('/api/results', { 
+      cache: 'no-store', 
+      headers: {'Cache-Control': 'no-store'} 
+    });
+    const data = await response.json();
 
-  if (data.is_analyzing) return false;
-  if (lastAnalysisTime && data.analysis_time === lastAnalysisTime) return false;
-  lastAnalysisTime = data.analysis_time;
+    if (!data.success) {
+      throw new Error(data.error || 'Erro ao carregar resultados');
+    }
 
-  bestSec.style.display='block';
-  bestEl.innerHTML = renderBest(data.best, data.analysis_time);
+    if (data.is_analyzing) {
+      // Ainda analisando, mostra status
+      bestEl.innerHTML = '<div class="loading">⏳ Processando GARCH Expandido...</div>';
+      gridEl.innerHTML = '<div class="loading">⏳ Analisando múltiplos horizontes...</div>';
+      return false;
+    }
 
-  const groups = {};
-  (data.results||[]).forEach(it=>{ (groups[it.symbol]=groups[it.symbol]||[]).push(it); });
-  const html = Object.keys(groups).sort().map(sym=>{
-    const arr = groups[sym].sort((a,b)=>(a.horizon||0)-(b.horizon||0));
-    const bestLocal = arr.slice().sort((a,b)=>rank(b)-rank(a))[0];
-    return `
-      <div class="card">
-        <div class="sym-head"><b>${sym}</b>
-          <span class="tag">TF: ${bestLocal?.multi_timeframe||'neutral'}</span>
-          <span class="tag">Liquidez: ${Number(bestLocal?.liquidity_score||0).toFixed(2)}</span>
-          ${bestLocal?.reversal ? `<span class="tag">🔄 Reversão (${bestLocal.reversal_side})</span>`:''}
-          <span class="tag ai-badge">🧠 IA Inteligente</span>
-          <span class="tag trajectory-badge">📈 GARCH Expandido</span>
-        </div>
-        ${arr.map(item=>renderTbox(item, bestLocal)).join('')}
-      </div>`;
-  }).join('');
-  gridEl.innerHTML = html;
-  allSec.style.display='block';
+    if (lastAnalysisTime && data.analysis_time === lastAnalysisTime) {
+      return false; // Dados não mudaram
+    }
+    
+    lastAnalysisTime = data.analysis_time;
+    bestLoading.style.display = 'none';
+    gridLoading.style.display = 'none';
 
-  return true;
+    // Renderizar melhor oportunidade
+    bestSec.style.display = 'block';
+    bestEl.innerHTML = renderBest(data.best, data.analysis_time);
+
+    // Renderizar todos os sinais
+    if (data.results && data.results.length > 0) {
+      const groups = {};
+      data.results.forEach(it => { 
+        if (it.symbol) {
+          (groups[it.symbol] = groups[it.symbol] || []).push(it); 
+        }
+      });
+      
+      const html = Object.keys(groups).sort().map(sym => {
+        const arr = groups[sym].sort((a,b) => (a.horizon || 0) - (b.horizon || 0));
+        const bestLocal = arr.slice().sort((a,b) => rank(b) - rank(a))[0];
+        return `
+          <div class="card">
+            <div class="sym-head">
+              <b>${sym}</b>
+              <span class="tag">TF: ${bestLocal?.multi_timeframe || 'neutral'}</span>
+              <span class="tag">Liquidez: ${formatNumber(bestLocal?.liquidity_score, 2)}</span>
+              ${bestLocal?.reversal ? `<span class="tag">🔄 Reversão (${bestLocal.reversal_side || 'unknown'})</span>` : ''}
+              <span class="tag ai-badge">🧠 IA</span>
+              <span class="tag trajectory-badge">📈 GARCH Expandido</span>
+            </div>
+            ${arr.map(item => renderTbox(item, bestLocal)).join('')}
+          </div>`;
+      }).join('');
+      
+      gridEl.innerHTML = html;
+    } else {
+      gridEl.innerHTML = '<div class="muted">Nenhum sinal encontrado para os critérios atuais.</div>';
+    }
+    
+    allSec.style.display = 'block';
+    return true;
+
+  } catch (error) {
+    console.error('Erro ao renderizar resultados:', error);
+    bestEl.innerHTML = `<div class="error">Erro ao carregar dados: ${error.message}</div>`;
+    gridEl.innerHTML = `<div class="error">Erro ao carregar análise</div>`;
+    return true; // Para parar o polling em caso de erro
+  }
 }
 
 function rank(it){ 
-  const direction = it.direction || 'buy';
-  const prob_directional = direction === 'buy' ? it.probability_buy : it.probability_sell;
-  const confidence = it.intelligent_confidence || it.confidence;
+  if (!it) return 0;
+  
+  const direction = it.direction || 'neutral';
+  const prob_directional = direction === 'buy' ? (it.probability_buy || 0.5) : (it.probability_sell || 0.5);
+  const confidence = it.intelligent_confidence || it.confidence || 0.5;
   const trajectory_quality = it.trajectory_quality || 0.5;
+  
   return (confidence * 800) + (trajectory_quality * 500) + (prob_directional * 100);
 }
 
 function renderBest(best, analysisTime){
-  if(!best) return '<div class="small">Sem oportunidade no momento.</div>';
-  const rev = best.reversal ? ` <span class="tag">🔄 Reversão (${best.reversal_side})</span>` : '';
-  const confidence = best.intelligent_confidence || best.confidence;
+  if(!best || best.error) {
+    return '<div class="muted">Nenhuma oportunidade destacada no momento. Aguarde a análise completar.</div>';
+  }
+
+  const symbol = best.symbol || 'Unknown';
+  const horizon = best.horizon || 1;
+  const direction = best.direction || 'neutral';
+  const probability_buy = best.probability_buy || 0.5;
+  const probability_sell = best.probability_sell || 0.5;
+  const confidence = best.intelligent_confidence || best.confidence || 0.5;
   const trajectory_quality = best.trajectory_quality || 0.5;
+  const adx = best.adx || 0;
+  const rsi = best.rsi || 0;
+  const price = best.price || 0;
+  const recommended_horizon = best.recommended_horizon || 'T1';
+  const entry_time = best.entry_time || '-';
+  
+  const rev = best.reversal ? ` <span class="tag">🔄 Reversão (${best.reversal_side || 'unknown'})</span>` : '';
   const reasoning = best.reasoning ? `<div class="small" style="margin-top:8px;color:#8ccf9d">🧠 ${best.reasoning.slice(0,3).join(' · ')}</div>` : '';
   
   return `
-    <div class="small muted">Atualizado: ${analysisTime} · GARCH Expandido + IA Trajetória</div>
+    <div class="small muted">Atualizado: ${analysisTime || 'N/A'} · GARCH Expandido + IA Trajetória</div>
     <div class="line"></div>
-    <div><b>${best.symbol} T+${best.horizon}</b> ${badgeDir(best.direction)} 
+    <div>
+      <b>${symbol} T+${horizon}</b> 
+      ${badgeDir(direction)} 
       <span class="tag">🥇 MELHOR GLOBAL</span>${rev} 
       <span class="tag ai-badge">🧠 IA</span>
-      <span class="tag trajectory-badge">📈 Trajetória: ${(trajectory_quality*100).toFixed(1)}%</span>
+      <span class="tag trajectory-badge">📈 Trajetória: ${pct(trajectory_quality)}</span>
     </div>
     <div class="kpis">
-      <div class="kpi"><b>Prob Compra</b>${pct(best.probability_buy||0)}</div>
-      <div class="kpi"><b>Prob Venda</b>${pct(best.probability_sell||0)}</div>
+      <div class="kpi"><b>Prob Compra</b>${pct(probability_buy)}</div>
+      <div class="kpi"><b>Prob Venda</b>${pct(probability_sell)}</div>
       <div class="kpi"><b>Confiança IA</b>${pct(confidence)}</div>
       <div class="kpi"><b>Qualidade Trajetória</b>${pct(trajectory_quality)}</div>
-      <div class="kpi"><b>ADX</b>${(best.adx||0).toFixed(1)}</div>
-      <div class="kpi"><b>RSI</b>${(best.rsi||0).toFixed(1)}</div>
+      <div class="kpi"><b>ADX</b>${formatNumber(adx, 1)}</div>
+      <div class="kpi"><b>RSI</b>${formatNumber(rsi, 1)}</div>
     </div>
     ${reasoning}
     <div class="small" style="margin-top:8px;">
-      Horizonte Recomendado: <b>${best.recommended_horizon || 'T1'}</b> · 
-      Price: <b>${Number(best.price||0).toFixed(6)}</b>
-      <span class="right">Entrada: <b>${best.entry_time||'-'}</b></span>
+      Horizonte Recomendado: <b>${recommended_horizon}</b> · 
+      Price: <b>${formatNumber(price)}</b>
+      <span class="right">Entrada: <b>${entry_time}</b></span>
     </div>`;
 }
 
 function renderTbox(it, bestLocal){
-  const isBest = bestLocal && it.symbol===bestLocal.symbol && it.horizon===bestLocal.horizon;
-  const rev = it.reversal ? ` <span class="tag">🔄 REVERSÃO (${it.reversal_side})</span>` : '';
-  const confidence = it.intelligent_confidence || it.confidence;
+  if (!it) return '';
+  
+  const horizon = it.horizon || 1;
+  const direction = it.direction || 'neutral';
+  const probability_buy = it.probability_buy || 0.5;
+  const probability_sell = it.probability_sell || 0.5;
+  const confidence = it.intelligent_confidence || it.confidence || 0.5;
   const trajectory_quality = it.trajectory_quality || 0.5;
+  const adx = it.adx || 0;
+  const rsi = it.rsi || 0;
+  const price = it.price || 0;
+  const timestamp = it.timestamp || '-';
+  const multi_timeframe = it.multi_timeframe || 'neutral';
+  
+  const isBest = bestLocal && it.symbol === bestLocal.symbol && it.horizon === bestLocal.horizon;
+  const rev = it.reversal ? ` <span class="tag">🔄 REVERSÃO (${it.reversal_side || 'unknown'})</span>` : '';
   const reasoning = it.reasoning ? `<div class="small" style="color:#8ccf9d;margin-top:4px">🧠 ${it.reasoning.slice(0,2).join(' · ')}</div>` : '';
   
   return `
     <div class="tbox">
-      <div><b>T+${it.horizon}</b> ${badgeDir(it.direction)} 
-        ${isBest?'<span class="tag">🥇 MELHOR DO ATIVO</span>':''}${rev} 
+      <div>
+        <b>T+${horizon}</b> 
+        ${badgeDir(direction)} 
+        ${isBest ? '<span class="tag">🥇 MELHOR DO ATIVO</span>' : ''}${rev} 
         <span class="tag ai-badge">🧠 IA</span>
-        <span class="tag trajectory-badge">📈 ${(trajectory_quality*100).toFixed(0)}%</span>
+        <span class="tag trajectory-badge">📈 ${pct(trajectory_quality)}</span>
       </div>
       <div class="small">
-        Prob: <span class="${it.direction==='buy'?'ok':'err'}">${pct(it.probability_buy||0)}/${pct(it.probability_sell||0)}</span>
+        Prob: <span class="${direction === 'buy' ? 'ok' : direction === 'sell' ? 'err' : 'muted'}">
+          ${pct(probability_buy)}/${pct(probability_sell)}
+        </span>
         · Conf IA: <span class="ok">${pct(confidence)}</span>
         · Trajetória: <span class="ok">${pct(trajectory_quality)}</span>
       </div>
-      <div class="small">ADX: ${(it.adx||0).toFixed(1)} | RSI: ${(it.rsi||0).toFixed(1)} | TF: <b>${it.multi_timeframe||'neutral'}</b></div>
+      <div class="small">
+        ADX: ${formatNumber(adx, 1)} | RSI: ${formatNumber(rsi, 1)} | TF: <b>${multi_timeframe}</b>
+      </div>
       ${reasoning}
-      <div class="small muted">⏱️ ${it.timestamp||'-'} · Price: ${Number(it.price||0).toFixed(6)}</div>
+      <div class="small muted">
+        ⏱️ ${timestamp} · Price: ${formatNumber(price)}
+      </div>
     </div>`;
 }
+
+// Inicialização
+document.addEventListener('DOMContentLoaded', function() {
+  console.log('IA Signal Pro - GARCH Expandido inicializado');
+});
 </script>
-</body></html>"""
+</body>
+</html>
     return Response(HTML.replace("__SYMS__", symbols_js), mimetype="text/html")
 
 # =========================
