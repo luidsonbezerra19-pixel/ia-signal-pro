@@ -1,4 +1,4 @@
-# app.py — IA Signal Pro COM INTELIGÊNCIA AVANÇADA
+# app.py — RODA IA COM GARCH EXPANDIDO + IA AVANÇADA
 from __future__ import annotations
 import os, re, time, math, random, threading, json, statistics as stats
 from typing import Any, Dict, List, Tuple, Optional, Deque
@@ -7,6 +7,7 @@ from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
 import structlog
 from collections import deque, defaultdict
+from concurrent.futures import ThreadPoolExecutor
 
 # =========================
 # Configuração de Logging Estruturado
@@ -32,10 +33,10 @@ structlog.configure(
 logger = structlog.get_logger()
 
 # =========================
-# Config (sem ENV — tudo aqui)
+# Config (com GARCH Expandido)
 # =========================
 TZ_STR = "America/Maceio"
-MC_PATHS = 3000
+MC_PATHS = 1200  # Reduzido por horizonte, mas mais horizontes
 USE_CLOSED_ONLY = True
 DEFAULT_SYMBOLS = "BTC/USDT,ETH/USDT,SOL/USDT,ADA/USDT,XRP/USDT,BNB/USDT".split(",")
 DEFAULT_SYMBOLS = [s.strip().upper() for s in DEFAULT_SYMBOLS if s.strip()]
@@ -56,7 +57,277 @@ app = Flask(__name__)
 CORS(app)
 
 # =========================
-# NOVO: Sistema de Inteligência Avançada
+# NOVO: Sistema de GARCH Expandido
+# =========================
+
+class ExpandedGARCHSystem:
+    def __init__(self):
+        self.horizons = [1, 2, 3, 5, 10, 15]  # 6 horizontes diferentes
+        self.paths_per_horizon = MC_PATHS
+        
+    def run_multi_horizon_garch(self, base_price: float, returns: List[float]) -> Dict:
+        """Executa GARCH para múltiplos horizontes simultaneamente"""
+        horizon_results = {}
+        
+        for horizon in self.horizons:
+            result = self.simulate_garch11_single(
+                base_price, returns, horizon, self.paths_per_horizon
+            )
+            horizon_results[f"T{horizon}"] = {
+                'probability_buy': result['probability_buy'],
+                'probability_sell': result['probability_sell'],
+                'volatility_forecast': result.get('volatility_forecast', 0.02),
+                'confidence': result.get('fit_quality', 0.7),
+                'garch_params': result.get('garch_params', {}),
+                'market_regime': result.get('market_regime', 'normal')
+            }
+        
+        return horizon_results
+    
+    def simulate_garch11_single(self, base_price: float, returns: List[float], 
+                               steps: int, num_paths: int) -> Dict[str, Any]:
+        """Versão simplificada do GARCH para múltiplas execuções"""
+        import math
+        import random
+        
+        if not returns or len(returns) < 10:
+            returns = [random.gauss(0.0, 0.002) for _ in range(100)]
+        
+        # Parâmetros GARCH adaptativos
+        volatility = stats.stdev(returns) if len(returns) > 1 else 0.02
+        if volatility > 0.03:
+            omega, alpha, beta = 1e-5, 0.12, 0.80
+        elif volatility < 0.01:
+            omega, alpha, beta = 1e-6, 0.05, 0.92
+        else:
+            omega, alpha, beta = 1e-6, 0.08, 0.90
+            
+        h_last = volatility ** 2
+        
+        up_count = 0
+        total_count = 0
+        
+        for _ in range(num_paths):
+            try:
+                h = h_last
+                price = base_price
+                
+                for step in range(steps):
+                    epsilon = math.sqrt(h) * random.gauss(0.0, 1.0)
+                    price *= math.exp(epsilon)
+                    h = omega + alpha * (epsilon ** 2) + beta * h
+                    h = max(1e-12, h)
+                
+                total_count += 1
+                if price > base_price:
+                    up_count += 1
+                    
+            except Exception:
+                continue
+        
+        if total_count == 0:
+            prob_buy = 0.5
+        else:
+            prob_buy = up_count / total_count
+        
+        prob_buy = min(0.95, max(0.05, prob_buy))
+        
+        return {
+            "probability_buy": prob_buy,
+            "probability_sell": 1.0 - prob_buy,
+            "paths_used": total_count,
+            "garch_params": {"omega": omega, "alpha": alpha, "beta": beta},
+            "market_regime": "high_volatility" if volatility > 0.03 else "low_volatility" if volatility < 0.01 else "normal",
+            "fit_quality": 0.7 + (min(volatility, 0.05) / 0.05 * 0.3)  # Qualidade baseada na volatilidade
+        }
+
+# =========================
+# NOVO: IA de Trajetória Temporal
+# =========================
+
+class TrajectoryIntelligence:
+    def __init__(self):
+        self.pattern_memory = defaultdict(list)
+        
+    def analyze_trajectory_consistency(self, garch_results: Dict) -> Dict:
+        """Analisa consistência entre diferentes horizontes temporais"""
+        buy_probs = [result['probability_buy'] for result in garch_results.values()]
+        sell_probs = [result['probability_sell'] for result in garch_results.values()]
+        
+        # Calcula tendência probabilística
+        buy_trend = self._calculate_trend(buy_probs)
+        sell_trend = self._calculate_trend(sell_probs)
+        
+        # Verifica convergência
+        convergence_score = self._assess_convergence(buy_probs, sell_probs)
+        
+        return {
+            'buy_trend_strength': buy_trend,
+            'sell_trend_strength': sell_trend,
+            'trajectory_consistency': convergence_score,
+            'recommended_horizon': self._suggest_optimal_horizon(garch_results),
+            'trajectory_quality': min(0.95, convergence_score * 0.7 + stats.mean(buy_probs) * 0.3),
+            'horizons_analyzed': len(garch_results),
+            'probability_std': stats.stdev(buy_probs) if len(buy_probs) > 1 else 0.1
+        }
+    
+    def _calculate_trend(self, values: List[float]) -> float:
+        """Calcula força da tendência usando regressão linear simples"""
+        if len(values) < 2:
+            return 0.5
+            
+        x = list(range(len(values)))
+        y = values
+        
+        n = len(x)
+        sum_x = sum(x)
+        sum_y = sum(y)
+        sum_xy = sum(xi * yi for xi, yi in zip(x, y))
+        sum_x2 = sum(xi ** 2 for xi in x)
+        
+        try:
+            slope = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x ** 2)
+            return max(0.0, min(1.0, 0.5 + slope * 2))  # Normaliza para 0-1
+        except:
+            return 0.5
+    
+    def _assess_convergence(self, buy_probs: List[float], sell_probs: List[float]) -> float:
+        """Avalia convergência das probabilidades através dos horizontes"""
+        if len(buy_probs) < 3:
+            return 0.5
+            
+        # Calcula variância - menor variância = maior convergência
+        variance = stats.variance(buy_probs) if len(buy_probs) > 1 else 0.1
+        convergence = 1.0 - min(1.0, variance * 10)  # Normaliza
+        
+        return max(0.3, convergence)
+    
+    def _suggest_optimal_horizon(self, garch_results: Dict) -> str:
+        """Sugere o horizonte temporal mais promissor"""
+        best_score = -1
+        best_horizon = "T1"
+        
+        for horizon, result in garch_results.items():
+            # Score combina probabilidade e confiança
+            score = (result['probability_buy'] * 0.6 + 
+                    result['confidence'] * 0.4)
+            if score > best_score:
+                best_score = score
+                best_horizon = horizon
+                
+        return best_horizon
+
+# =========================
+# NOVO: Agregador Inteligente de Sinais
+# =========================
+
+class IntelligentSignalAggregator:
+    def __init__(self):
+        self.min_trajectory_quality = 0.55  # Mais permissivo para maior frequência
+        self.quality_filter = SignalQualityFilter()
+        
+    def aggregate_signals(self, symbol: str, multi_horizon_data: Dict, 
+                         technical_data: Dict, trajectory_analysis: Dict) -> List[Dict]:
+        """Agrega sinais de múltiplos horizontes de forma inteligente"""
+        signals = []
+        
+        # Gera sinal para cada horizonte que passar nos filtros
+        for horizon, garch_data in multi_horizon_data.items():
+            base_signal = self._create_base_signal(symbol, horizon, garch_data, technical_data)
+            
+            # Aplica filtro de qualidade expandido
+            if self._passes_expanded_filters(base_signal, trajectory_analysis):
+                enhanced_signal = self._enhance_with_trajectory(
+                    base_signal, trajectory_analysis
+                )
+                signals.append(enhanced_signal)
+                    
+        return signals
+    
+    def _create_base_signal(self, symbol: str, horizon: str, garch_data: Dict, 
+                           technical_data: Dict) -> Dict:
+        """Cria sinal base com dados técnicos e GARCH"""
+        horizon_num = int(horizon[1:])  # Remove "T" do horizonte
+        
+        prob_buy = garch_data['probability_buy']
+        direction = 'buy' if prob_buy > 0.5 else 'sell'
+        prob_directional = prob_buy if direction == 'buy' else garch_data['probability_sell']
+        
+        # Confiança base combinada
+        base_confidence = min(0.95, max(0.3, 
+            prob_directional * 0.6 + 
+            technical_data.get('liquidity_score', 0.5) * 0.2 +
+            garch_data['confidence'] * 0.2
+        ))
+        
+        return {
+            'symbol': symbol,
+            'horizon': horizon_num,
+            'direction': direction,
+            'probability_buy': prob_buy,
+            'probability_sell': garch_data['probability_sell'],
+            'confidence': base_confidence,
+            'rsi': technical_data.get('rsi', 50),
+            'adx': technical_data.get('adx', 20),
+            'liquidity_score': technical_data.get('liquidity_score', 0.5),
+            'multi_timeframe': technical_data.get('multi_timeframe', 'neutral'),
+            'price': technical_data.get('price', 0),
+            'garch_confidence': garch_data['confidence'],
+            'market_regime': garch_data.get('market_regime', 'normal'),
+            'timestamp': datetime.now().strftime("%H:%M:%S")
+        }
+    
+    def _passes_expanded_filters(self, signal: Dict, trajectory: Dict) -> bool:
+        """Filtros expandidos que consideram contexto multi-horizon"""
+        base_checks = [
+            signal.get('confidence', 0) > 0.55,  # Reduzido para mais sinais
+            signal.get('liquidity_score', 0) > 0.3,  # Reduzido
+            trajectory['trajectory_quality'] > self.min_trajectory_quality,
+            signal.get('probability_buy', 0.5) > 0.4,  # Probabilidade mínima
+            signal.get('probability_buy', 0.5) < 0.9   # Evita extremos
+        ]
+        
+        # Requer pelo menos 3 de 5 critérios (mais permissivo)
+        return sum(base_checks) >= 3
+    
+    def _enhance_with_trajectory(self, signal: Dict, trajectory: Dict) -> Dict:
+        """Aprimora sinal com análise de trajetória"""
+        # Boost de confiança baseado na qualidade da trajetória
+        trajectory_boost = trajectory['trajectory_quality'] * 0.2
+        enhanced_confidence = min(0.95, signal['confidence'] + trajectory_boost)
+        
+        signal.update({
+            'intelligent_confidence': enhanced_confidence,
+            'trajectory_analysis': trajectory,
+            'is_trajectory_enhanced': True,
+            'recommended_horizon': trajectory['recommended_horizon'],
+            'trajectory_quality': trajectory['trajectory_quality']
+        })
+        
+        return signal
+
+class SignalQualityFilter:
+    """Filtro de qualidade para sinais"""
+    def __init__(self):
+        self.min_volume_ratio = 1.1  # Reduzido para mais sinais
+        self.min_liquidity = 0.3     # Reduzido
+        
+    def evaluate_volume_quality(self, volume_data: List[float]) -> float:
+        """Avalia qualidade baseada no volume"""
+        if not volume_data or len(volume_data) < 10:
+            return 0.5
+            
+        recent_volume = stats.mean(volume_data[-5:])
+        historical_volume = stats.mean(volume_data[-20:])
+        
+        if historical_volume == 0:
+            return 0.5
+            
+        ratio = recent_volume / historical_volume
+        return min(1.0, ratio / 2.0)  # Normaliza para 0-1
+
+# =========================
+# Sistema de Inteligência Avançada (Existente - Modificado)
 # =========================
 
 class MarketMemory:
@@ -81,39 +352,22 @@ class MarketMemory:
         return "|".join(elements)
     
     def learn_from_signal(self, signal: Dict, actual_outcome: bool, price_movement: float):
-        """Aprende com resultado real do sinal com validação robusta"""
-        # Validação do sinal de entrada
-        if not signal or 'rsi' not in signal or 'adx' not in signal:
-            logger.warning("invalid_signal_for_learning", signal_keys=signal.keys() if signal else None)
-            return
-            
+        """Aprende com resultado real do sinal"""
         pattern_key = self._extract_pattern_key(signal)
-        
-        # Filtra movimentos de preço insignificantes
-        if abs(price_movement) < 0.001:  # 0.1% threshold
-            logger.debug("ignoring_insignificant_price_movement", movement=price_movement)
-            return
-            
         self.recent_outcomes.append((pattern_key, actual_outcome))
         
-        # Limita o tamanho da memória para evitar viés histórico excessivo
-        if len(self.recent_outcomes) > 500:
-            self.recent_outcomes.popleft()
-        
-        # Atualiza efetividade com decay factor para adaptabilidade
-        current_success = self.pattern_success.get(pattern_key, 0.5)
-        learning_rate = 0.08  # Reduzido para mais estabilidade
-        
-        adjustment = learning_rate if actual_outcome else -learning_rate
-        new_success = max(0.1, min(0.9, current_success + adjustment))
-        
-        self.pattern_success[pattern_key] = new_success
+        # Atualiza efetividade do padrão
+        if pattern_key not in self.pattern_success:
+            self.pattern_success[pattern_key] = 0.5
+            
+        adjustment = 0.1 if actual_outcome else -0.1
+        self.pattern_success[pattern_key] = max(0.1, min(0.9, 
+            self.pattern_success[pattern_key] + adjustment))
         
         logger.debug("pattern_learned", 
                     pattern=pattern_key, 
-                    success_rate=new_success,
-                    outcome=actual_outcome,
-                    confidence_change=adjustment)
+                    success_rate=self.pattern_success[pattern_key],
+                    outcome=actual_outcome)
     
     def get_pattern_effectiveness(self, signal: Dict) -> float:
         """Retorna efetividade histórica do padrão"""
@@ -141,30 +395,22 @@ class AdaptiveIntelligence:
         self.performance_history: Deque[bool] = deque(maxlen=100)
         
     def calibrate_confidence(self, signal: Dict, actual_outcome: bool):
-        """Calibra confiança com decay e validação"""
-        if not signal or 'market_regime' not in signal or 'direction' not in signal:
-            return
-            
+        """Calibra confiança baseado em resultados reais"""
         regime = signal.get('market_regime', 'normal')
         direction = signal.get('direction', 'neutral')
         
         key = f"{regime}_{direction}"
         current_calibration = self.confidence_calibration.get(key, 1.0)
         
-        # Ajuste mais conservador com decay
-        adjustment_factor = 1.03 if actual_outcome else 0.97
-        new_calibration = current_calibration * adjustment_factor
-        
-        # Limites mais conservadores
-        new_calibration = max(0.6, min(1.4, new_calibration))
+        # Ajusta calibration factor
+        if actual_outcome:
+            new_calibration = min(1.5, current_calibration * 1.05)
+        else:
+            new_calibration = max(0.5, current_calibration * 0.95)
             
         self.confidence_calibration[key] = new_calibration
         self.performance_history.append(actual_outcome)
         
-        # Mantém histórico gerenciável
-        if len(self.performance_history) > 200:
-            self.performance_history.popleft()
-    
     def get_confidence_multiplier(self, signal: Dict) -> float:
         """Retorna multiplicador de confiança calibrado"""
         regime = signal.get('market_regime', 'normal')
@@ -194,9 +440,8 @@ class IntelligentReasoning:
         score = 0.0
         reasons = []
         
-        # RSI Analysis com validação
-        rsi = self._safe_float_conversion(raw_data.get('rsi'), 50)
-        rsi = max(0.0, min(100.0, rsi))  # Garante limites válidos
+        # RSI Analysis
+        rsi = raw_data.get('rsi', 50)
         if rsi < 35:
             score += 0.2
             reasons.append("RSI em oversold")
@@ -204,9 +449,8 @@ class IntelligentReasoning:
             score -= 0.2
             reasons.append("RSI em overbought")
             
-        # ADX Analysis com validação
-        adx = self._safe_float_conversion(raw_data.get('adx'), 20)
-        adx = max(0.0, min(100.0, adx))
+        # ADX Analysis
+        adx = raw_data.get('adx', 20)
         if adx > 25:
             score += 0.15
             reasons.append("Tendência forte")
@@ -227,9 +471,8 @@ class IntelligentReasoning:
         score = 0.0
         reasons = []
         
-        # Liquidity Analysis com validação
-        liquidity = self._safe_float_conversion(raw_data.get('liquidity_score'), 0.5)
-        liquidity = max(0.0, min(1.0, liquidity))
+        # Liquidity Analysis
+        liquidity = raw_data.get('liquidity_score', 0.5)
         if liquidity > 0.7:
             score += 0.15
             reasons.append("Alta liquidez")
@@ -239,8 +482,7 @@ class IntelligentReasoning:
             
         # Reversal Analysis
         if raw_data.get('reversal', False):
-            reversal_proximity = self._safe_float_conversion(raw_data.get('reversal_proximity'), 0)
-            reversal_proximity = max(0.0, min(1.0, reversal_proximity))
+            reversal_proximity = raw_data.get('reversal_proximity', 0)
             score += 0.2 * reversal_proximity
             reasons.append(f"Reversão detectada ({reversal_proximity:.1f})")
             
@@ -259,7 +501,7 @@ class IntelligentReasoning:
         """Camada 3: Reconhecimento de padrões baseado em memória"""
         pattern_effectiveness = market_memory.get_pattern_effectiveness(raw_data)
         
-        score_adjustment = (pattern_effectiveness - 0.5) * 0.3  # ±15%
+        score_adjustment = (pattern_effectiveness - 0.5) * 0.3
         
         reasons = []
         if pattern_effectiveness > 0.6:
@@ -286,7 +528,7 @@ class IntelligentReasoning:
             technical["technical_score"] * weights.get("rsi", 0.25) +
             context["context_score"] * weights.get("adx", 0.25) + 
             pattern["pattern_score"] * weights.get("garch", 0.25) +
-            (self._safe_float_conversion(raw_data.get('probability_buy'), 0.5) - 0.5) * weights.get("garch", 0.25)
+            (raw_data.get('probability_buy', 0.5) - 0.5) * weights.get("garch", 0.25)
         )
         
         # Determina direção
@@ -309,35 +551,19 @@ class IntelligentReasoning:
         }
     
     def _determine_market_regime(self, raw_data: Dict) -> str:
-        """Detecta o regime atual de mercado com validação cruzada"""
-        volatility = self._safe_float_conversion(raw_data.get('volatility'), 0.02)
-        adx = self._safe_float_conversion(raw_data.get('adx'), 20)
-        rsi = self._safe_float_conversion(raw_data.get('rsi'), 50)
+        """Detecta o regime atual de mercado"""
+        volatility = raw_data.get('volatility', 0.02)
+        adx = raw_data.get('adx', 20)
+        rsi = raw_data.get('rsi', 50)
         
-        # Validações de limites razoáveis
-        volatility = max(0.0, min(0.5, volatility))  # Volatilidade entre 0% e 50%
-        adx = max(0.0, min(100.0, adx))
-        rsi = max(0.0, min(100.0, rsi))
-        
-        # Decisão hierárquica com thresholds validados
-        if volatility > 0.035:  # Aumentado threshold para alta volatilidade
+        if volatility > 0.03:
             return "high_volatility"
-        elif volatility < 0.008:  # Ajustado threshold para baixa volatilidade
+        elif volatility < 0.01:
             return "low_volatility"
-        elif adx > 28 and (rsi < 38 or rsi > 62):  # Thresholds mais conservadores
+        elif adx > 25 and (rsi < 40 or rsi > 60):
             return "trending"
         else:
             return "ranging"
-    
-    def _safe_float_conversion(self, value: Any, default: float = 0.0) -> float:
-        """Conversão segura para float com validação robusta"""
-        if value is None:
-            return default
-        try:
-            result = float(value)
-            return result if math.isfinite(result) else default
-        except (ValueError, TypeError):
-            return default
     
     def process(self, raw_data: Dict, market_memory: MarketMemory) -> Dict:
         """Processamento completo do raciocínio inteligente"""
@@ -403,7 +629,7 @@ class IntelligentTradingAI:
         checks = []
         
         # Check 1: Consistência de indicadores
-        rsi = self.reasoning._safe_float_conversion(signal.get('rsi'), 50)
+        rsi = signal.get('rsi', 50)
         macd = signal.get('macd_signal', 'neutral')
         if (rsi < 40 and macd == 'bearish') or (rsi > 60 and macd == 'bullish'):
             checks.append(False)
@@ -411,21 +637,21 @@ class IntelligentTradingAI:
             checks.append(True)
             
         # Check 2: Confirmação de contexto
-        liquidity = self.reasoning._safe_float_conversion(signal.get('liquidity_score'), 0.5)
+        liquidity = signal.get('liquidity_score', 0.5)
         if liquidity < 0.3:
             checks.append(False)
         else:
             checks.append(True)
             
         # Check 3: Força do sinal
-        confidence = self.reasoning._safe_float_conversion(signal.get('intelligent_confidence'), 0.5)
+        confidence = signal.get('intelligent_confidence', 0.5)
         if confidence < 0.6:
             checks.append(False)
         else:
             checks.append(True)
             
         # Check 4: Efetividade do padrão
-        pattern_effectiveness = self.reasoning._safe_float_conversion(signal.get('pattern_effectiveness'), 0.5)
+        pattern_effectiveness = signal.get('pattern_effectiveness', 0.5)
         if pattern_effectiveness < 0.4:
             checks.append(False)
         else:
@@ -450,19 +676,19 @@ class IntelligentTradingAI:
         """Explica fontes de incerteza no sinal"""
         uncertainty_factors = []
         
-        rsi = self.reasoning._safe_float_conversion(signal.get('rsi'), 50)
+        rsi = signal.get('rsi', 50)
         if 40 <= rsi <= 60:
             uncertainty_factors.append("RSI em zona neutra")
             
-        adx = self.reasoning._safe_float_conversion(signal.get('adx'), 20)
+        adx = signal.get('adx', 20)
         if adx < 25:
             uncertainty_factors.append("Tendência fraca (ADX baixo)")
             
-        liquidity = self.reasoning._safe_float_conversion(signal.get('liquidity_score'), 0.5)
+        liquidity = signal.get('liquidity_score', 0.5)
         if liquidity < 0.4:
             uncertainty_factors.append("Liquidez abaixo do ideal")
             
-        confidence = self.reasoning._safe_float_conversion(signal.get('intelligent_confidence'), 0.5)
+        confidence = signal.get('intelligent_confidence', 0.5)
         if confidence < 0.65:
             uncertainty_factors.append("Confiança moderada")
             
@@ -470,33 +696,6 @@ class IntelligentTradingAI:
             'uncertainty_level': len(uncertainty_factors),
             'uncertainty_factors': uncertainty_factors,
             'suggested_action': 'wait' if uncertainty_factors else 'consider'
-        }
-    
-    def get_performance_metrics(self) -> Dict[str, Any]:
-        """Retorna métricas detalhadas de performance"""
-        recent_outcomes = list(self.memory.recent_outcomes)
-        if not recent_outcomes:
-            return {"accuracy": 0.5, "confidence": 0.5, "sample_size": 0}
-        
-        outcomes = [outcome for _, outcome in recent_outcomes]
-        accuracy = sum(outcomes) / len(outcomes)
-        
-        # Calcula confiança estatística
-        sample_size = len(outcomes)
-        if sample_size >= 30:  # Apenas para amostras significativas
-            z_score = 1.96  # 95% confidence
-            margin_of_error = z_score * math.sqrt((accuracy * (1 - accuracy)) / sample_size)
-            confidence_interval = (accuracy - margin_of_error, accuracy + margin_of_error)
-        else:
-            margin_of_error = 0.0
-            confidence_interval = (accuracy, accuracy)
-        
-        return {
-            "accuracy": round(accuracy, 3),
-            "sample_size": sample_size,
-            "margin_of_error": round(margin_of_error, 3),
-            "confidence_interval": [round(ci, 3) for ci in confidence_interval],
-            "recent_trend": sum(outcomes[-50:]) / len(outcomes[-50:]) if len(outcomes) >= 50 else accuracy
         }
 
 # =========================
@@ -508,9 +707,11 @@ FEATURE_FLAGS = {
     "enable_circuit_breaker": True,
     "websocket_provider": "okx",
     "maintenance_mode": False,
-    "enable_ai_intelligence": True,  # NOVO
+    "enable_ai_intelligence": True,
     "enable_learning": True,
-    "enable_self_check": True
+    "enable_self_check": True,
+    "enable_expanded_garch": True,  # NOVO
+    "enable_trajectory_analysis": True  # NOVO
 }
 
 # =========================
@@ -632,7 +833,8 @@ def _safe_returns_from_prices(prices: List[float]) -> List[float]:
 def _rank_key_directional(x: Dict[str, Any]) -> float:
     direction = x.get("direction", "buy")
     prob_directional = x["probability_buy"] if direction == "buy" else x["probability_sell"]
-    return (x["confidence"] * 1000) + (prob_directional * 100)
+    confidence = x.get('intelligent_confidence', x.get('confidence', 0.5))
+    return (confidence * 1000) + (prob_directional * 100)
 
 def _confirm_prob_neutral_zone(prob_up: float, rsi: float, macd_hist: float, adx: float, 
                               boll_signal: str, tf_consensus: str) -> float:
@@ -690,45 +892,6 @@ def _calculate_directional_confidence(prob_direction: float, direction: str, rsi
     total_score *= (0.90 + (liquidity_score * 0.15))
     
     return min(95.0, max(30.0, total_score)) / 100.0
-
-# =========================
-# Utils - Melhorias de Validação
-# =========================
-
-def _safe_float_conversion(value: Any, default: float = 0.0) -> float:
-    """Conversão segura para float com validação robusta"""
-    if value is None:
-        return default
-    try:
-        result = float(value)
-        return result if math.isfinite(result) else default
-    except (ValueError, TypeError):
-        return default
-
-def _validate_ohlcv_data(ohlcv: List[List[float]]) -> bool:
-    """Valida a integridade dos dados OHLCV"""
-    if not ohlcv or len(ohlcv) < 2:
-        return False
-    
-    for candle in ohlcv[-10:]:  # Verifica apenas os últimos candles
-        if len(candle) < 5:
-            return False
-        timestamp, o, h, l, c = candle[:5]
-        
-        # Validações de consistência de preços
-        if not (0 < o < float('inf') and 0 < h < float('inf') and 
-                0 < l < float('inf') and 0 < c < float('inf')):
-            return False
-            
-        # Validações de relação entre preços
-        if l > h or o > h or o < l or c > h or c < l:
-            return False
-            
-        # Timestamp razoável (últimos 30 dias)
-        if timestamp < (time.time() * 1000) - (30 * 24 * 60 * 60 * 1000):
-            return False
-            
-    return True
 
 # =========================
 # WebSocket OKX (mantido do original)
@@ -985,11 +1148,6 @@ class SpotMarket:
                     ohlcv = http
                 logger.debug("http_fallback_used", symbol=symbol, candles_count=len(ohlcv))
 
-        # Validação de dados OHLCV
-        if ohlcv and not _validate_ohlcv_data(ohlcv):
-            logger.warning("invalid_ohlcv_data_detected", symbol=symbol, candles_count=len(ohlcv))
-            ohlcv = []  # Força refetch se dados são inválidos
-
         if ohlcv:
             self._cache.set(key, ohlcv)
             
@@ -1030,29 +1188,8 @@ class TechnicalIndicators:
         return [max(0.0, min(100.0, r)) for r in rsis]
 
     def rsi_wilder(self, closes: List[float], period: int = 14) -> float:
-        """RSI com validação de dados de entrada"""
-        if not closes or len(closes) < period + 1:
-            return 50.0
-            
-        # Valida preços
-        valid_closes = [c for c in closes if c > 0 and math.isfinite(c)]
-        if len(valid_closes) < period + 1:
-            return 50.0
-            
-        # Remove outliers extremos (mais de 10 desvios padrão)
-        if len(valid_closes) > 20:
-            mean_price = stats.mean(valid_closes)
-            stdev_price = stats.stdev(valid_closes)
-            if stdev_price > 0:
-                valid_closes = [p for p in valid_closes 
-                              if abs(p - mean_price) < 10 * stdev_price]
-        
-        try:
-            rsi_series = self.rsi_series_wilder(valid_closes, period)
-            return rsi_series[-1] if rsi_series else 50.0
-        except Exception as e:
-            logger.error("rsi_calculation_error", error=str(e))
-            return 50.0
+        s = self.rsi_series_wilder(closes, period)
+        return s[-1] if s else 50.0
 
     def adx_wilder(self, highs: List[float], lows: List[float], closes: List[float], period: int = 14) -> float:
         n = len(closes)
@@ -1175,7 +1312,7 @@ class ReversalDetector:
         return out
 
 # =========================
-# GARCH(1,1) Light Adaptativo (mantido)
+# GARCH(1,1) Light Adaptativo (modificado para multi-horizon)
 # =========================
 class AdaptiveGARCH11Simulator:
     def _detect_market_regime(self, returns: List[float]) -> str:
@@ -1294,7 +1431,7 @@ class AdaptiveGARCH11Simulator:
 MonteCarloSimulator = AdaptiveGARCH11Simulator
 
 # =========================
-# NOVO: Enhanced Trading System com IA
+# NOVO: Enhanced Trading System com GARCH Expandido
 # =========================
 class EnhancedTradingSystem:
     def __init__(self)->None:
@@ -1306,19 +1443,26 @@ class EnhancedTradingSystem:
         self.spot=SpotMarket()
         self.current_analysis_cache: Dict[str,Any]={}
         
-        # NOVO: Sistema de IA Inteligente
+        # Sistemas de IA
         self.intelligent_ai = IntelligentTradingAI()
+        
+        # NOVOS: Sistemas Expandidos
+        self.expanded_garch = ExpandedGARCHSystem()
+        self.trajectory_intel = TrajectoryIntelligence()
+        self.signal_aggregator = IntelligentSignalAggregator()
 
     def get_brazil_time(self)->datetime:
         return brazil_now()
 
-    def analyze_symbol(self, symbol: str, horizon: int)->Dict[str,Any]:
+    def analyze_symbol_expanded(self, symbol: str) -> List[Dict]:
+        """NOVA: Análise expandida com múltiplos horizontes"""
         start_time = time.time()
-        logger.info("analysis_started", symbol=symbol, horizon=horizon)
+        logger.info("expanded_analysis_started", symbol=symbol)
         
-        # Coleta dados (mantido do original)
+        # Coleta dados
         raw = self.spot.fetch_ohlcv(symbol, "1m", max(800, 720 + 50))
         if len(raw) < 60:
+            # Fallback para dados simulados se necessário
             base = random.uniform(50, 400)
             raw = []
             t = int(time.time() * 1000)
@@ -1335,9 +1479,11 @@ class EnhancedTradingSystem:
         highs  = [x[2] for x in ohlcv_closed]
         lows   = [x[3] for x in ohlcv_closed]
         closes = [x[4] for x in ohlcv_closed]
+        volumes = [x[5] for x in ohlcv_closed]
 
-        price_display = raw[-1][4]
+        price_display = raw[-1][4] if raw else 0
         volume_display = raw[-1][5] if raw and len(raw[-1]) >= 6 else 0.0
+        
         try:
             ws_last = WS_FEED.get_last_candle(symbol)
             if ws_last:
@@ -1346,7 +1492,7 @@ class EnhancedTradingSystem:
         except Exception:
             pass
 
-        # Indicadores técnicos (mantido do original)
+        # Indicadores técnicos
         rsi_series = self.indicators.rsi_series_wilder(closes, 14)
         rsi = rsi_series[-1] if rsi_series else 50.0
         adx = self.indicators.adx_wilder(highs, lows, closes)
@@ -1355,57 +1501,12 @@ class EnhancedTradingSystem:
         tf_cons = self.multi_tf.analyze_consensus(closes)
         liq = self.liquidity.calculate_liquidity_score(highs, lows, closes)
 
-        # Reversão (mantido)
+        # Reversão
         levels = self.revdet.compute_extremes_levels(rsi_series, 720, 6) if rsi_series else {"avg_peak":70.0,"avg_trough":30.0}
         rev_sig = self.revdet.signal_from_levels(rsi, levels, 2.5)
 
-        # Simulador GARCH (mantido)
-        empirical_returns = _safe_returns_from_prices(closes)
-        steps = max(1, min(3, int(horizon)))
-        base_price = closes[-1] if closes else price_display
-
-        mc = self.monte_carlo.simulate_garch11(
-            base_price, 
-            empirical_returns, 
-            steps, 
-            num_paths=MC_PATHS
-        )
-
-        # Ajuste de probabilidade (mantido)
-        prob_buy_original = mc['probability_buy']
-        prob_sell_original = mc['probability_sell']
-
-        macd_hist = 0.0
-        try:
-            macd_result = self.indicators.macd(closes)
-            if macd_result["signal"] == "bullish":
-                macd_hist = macd_result["strength"]
-            elif macd_result["signal"] == "bearish":
-                macd_hist = -macd_result["strength"]
-        except:
-            macd_hist = 0.0
-
-        prob_buy_adjusted = _confirm_prob_neutral_zone(
-            prob_buy_original, rsi, macd_hist, adx, 
-            boll['signal'], tf_cons
-        )
-        prob_sell_adjusted = 1.0 - prob_buy_adjusted
-
-        direction = 'buy' if prob_buy_adjusted > 0.5 else 'sell'
-
-        mc['probability_buy'] = prob_buy_adjusted
-        mc['probability_sell'] = prob_buy_adjusted
-
-        prob_dir = prob_buy_adjusted if direction == 'buy' else prob_sell_adjusted
-        confidence = _calculate_directional_confidence(
-            prob_dir, direction, rsi, adx, macd['signal'], boll['signal'], 
-            tf_cons, rev_sig, liq
-        )
-
-        # NOVO: Análise bruta para IA
-        raw_analysis = {
-            'symbol': symbol,
-            'horizon': horizon,
+        # Dados técnicos consolidados
+        technical_data = {
             'rsi': rsi,
             'adx': adx,
             'macd_signal': macd['signal'],
@@ -1415,109 +1516,98 @@ class EnhancedTradingSystem:
             'reversal': rev_sig['reversal'],
             'reversal_side': rev_sig['side'],
             'reversal_proximity': rev_sig['proximity'],
-            'probability_buy': prob_buy_adjusted,
-            'probability_sell': prob_sell_adjusted,
             'price': price_display,
-            'volatility': stats.stdev(empirical_returns) if empirical_returns else 0.02,
-            'market_regime': mc.get('market_regime', 'normal')
+            'volume': volume_display
         }
 
-        # NOVO: Aplicar inteligência artificial se habilitada
-        if FEATURE_FLAGS["enable_ai_intelligence"]:
-            intelligent_result = self.intelligent_ai.analyze_with_intelligence(raw_analysis)
-            
-            # Sobrescreve direção e confiança com decisão inteligente
-            direction = intelligent_result['direction']
-            confidence = intelligent_result['intelligent_confidence']
-            
-            # NOVO: Auto-crítica
-            if FEATURE_FLAGS["enable_self_check"]:
-                self_check = self.intelligent_ai.intelligent_self_check(intelligent_result)
-                intelligent_result['self_check'] = self_check
-            
-            # NOVO: Análise de incerteza
-            uncertainty = self.intelligent_ai.explain_uncertainty(intelligent_result)
-            intelligent_result['uncertainty'] = uncertainty
-            
-            # Adiciona resultados da IA ao analysis final
-            raw_analysis.update(intelligent_result)
+        # NOVO: GARCH Expandido para múltiplos horizontes
+        empirical_returns = _safe_returns_from_prices(closes)
+        base_price = closes[-1] if closes else price_display
 
-        analysis_duration = (time.time() - start_time) * 1000
+        if FEATURE_FLAGS["enable_expanded_garch"]:
+            multi_horizon_garch = self.expanded_garch.run_multi_horizon_garch(
+                base_price, empirical_returns
+            )
+            
+            # IA de Trajetória Temporal
+            trajectory_analysis = self.trajectory_intel.analyze_trajectory_consistency(
+                multi_horizon_garch
+            )
+            
+            # Agregação Inteligente de Sinais
+            signals = self.signal_aggregator.aggregate_signals(
+                symbol, multi_horizon_garch, technical_data, trajectory_analysis
+            )
+            
+            # Aplica IA Inteligente nos sinais filtrados
+            final_signals = []
+            for signal in signals:
+                if FEATURE_FLAGS["enable_ai_intelligence"]:
+                    try:
+                        intelligent_signal = self.intelligent_ai.analyze_with_intelligence({
+                            **signal,
+                            'volatility': stats.stdev(empirical_returns) if empirical_returns else 0.02,
+                            'volume_quality': self.signal_aggregator.quality_filter.evaluate_volume_quality(volumes)
+                        })
+                        final_signals.append(intelligent_signal)
+                    except Exception as e:
+                        logger.error("ai_processing_error", symbol=symbol, error=str(e))
+                        final_signals.append(signal)
+                else:
+                    final_signals.append(signal)
+                    
+            analysis_duration = (time.time() - start_time) * 1000
+            logger.info("expanded_analysis_completed", 
+                       symbol=symbol, 
+                       signals_count=len(final_signals),
+                       duration_ms=analysis_duration)
+            
+            return final_signals
+        else:
+            # Fallback para análise original se GARCH expandido estiver desativado
+            return self._analyze_symbol_legacy(symbol, 1)
+
+    def _analyze_symbol_legacy(self, symbol: str, horizon: int) -> List[Dict]:
+        """Método legado para compatibilidade"""
+        result = self.analyze_symbol_expanded(symbol)
+        return [r for r in result if r.get('horizon') == horizon] if result else []
+
+    def scan_symbols_expanded(self, symbols: List[str]) -> Dict[str, Any]:
+        """NOVA: Scan expandido com múltiplos horizontes"""
+        all_signals = []
         
-        # Resultado final
-        result = {
-            'symbol': symbol,
-            'horizon': steps,
-            'direction': direction,
-            'probability_buy': prob_buy_adjusted,
-            'probability_sell': prob_sell_adjusted,
-            'confidence': confidence,
-            'rsi': rsi, 'adx': adx, 'multi_timeframe': tf_cons,
-            'monte_carlo_quality': mc['quality'],
-            'garch_model': mc['sim_model'],
-            'simulations_count': mc.get('paths_used', MC_PATHS),
-            'market_regime': mc.get('market_regime', 'normal'),
-            'fit_quality': mc.get('fit_quality', 0.7),
-            'price': price_display,
-            'liquidity_score': liq,
-            'timestamp': datetime.now().strftime("%H:%M:%S"),
-            'rev_levels': levels,
-            'reversal': rev_sig["reversal"],
-            'reversal_side': rev_sig["side"],
-            'reversal_proximity': round(rev_sig["proximity"], 3),
-            'sim_model': mc.get('sim_model', 'garch11'),
-            'last_volume_1m': round(volume_display, 8),
-            'data_source': 'WS_COINAPI' if WS_FEED.enabled else ('CCXT' if self.spot._has_ccxt else 'HTTP'),
-            'analysis_time_ms': round(analysis_duration, 2)
+        for symbol in symbols:
+            try:
+                signals = self.analyze_symbol_expanded(symbol)
+                all_signals.extend(signals)
+                logger.debug("symbol_analysis_completed", symbol=symbol, signals_count=len(signals))
+            except Exception as e:
+                logger.error("symbol_analysis_error", symbol=symbol, error=str(e))
+                # Adiciona sinal neutro em caso de erro
+                all_signals.append({
+                    "symbol": symbol, "horizon": 1, "direction": "neutral",
+                    "probability_buy": 0.5, "probability_sell": 0.5,
+                    "confidence": 0.5, "error": str(e)
+                })
+        
+        # Ordena por qualidade (trajetória + confiança)
+        if all_signals:
+            all_signals.sort(key=lambda x: (
+                x.get('trajectory_quality', 0.5) * 0.6 +
+                x.get('intelligent_confidence', x.get('confidence', 0.5)) * 0.4
+            ), reverse=True)
+        
+        return {
+            'signals': all_signals,
+            'total_signals': len(all_signals),
+            'symbols_analyzed': len(symbols),
+            'avg_trajectory_quality': stats.mean([
+                s.get('trajectory_quality', 0.5) for s in all_signals
+            ]) if all_signals else 0
         }
-
-        # NOVO: Adiciona dados de inteligência se habilitada
-        if FEATURE_FLAGS["enable_ai_intelligence"]:
-            result.update({
-                'intelligent_confidence': raw_analysis.get('intelligent_confidence', confidence),
-                'reasoning': raw_analysis.get('reasoning', []),
-                'pattern_effectiveness': raw_analysis.get('pattern_effectiveness', 0.5),
-                'system_accuracy': raw_analysis.get('system_accuracy', 0.5),
-                'market_regime': raw_analysis.get('market_regime', 'normal'),
-                'synthesis_score': raw_analysis.get('synthesis_score', 0),
-                'self_check': raw_analysis.get('self_check', {}),
-                'uncertainty': raw_analysis.get('uncertainty', {}),
-                'reasoning_depth': 'multilayer_intelligence'
-            })
-
-        logger.info("analysis_completed", 
-                   symbol=symbol, 
-                   horizon=horizon, 
-                   duration_ms=analysis_duration,
-                   direction=direction,
-                   confidence=confidence,
-                   intelligent_ai=FEATURE_FLAGS["enable_ai_intelligence"])
-
-        return result
-
-    def scan_symbols_tplus(self, symbols: List[str])->Dict[str,Any]:
-        por_ativo={}; candidatos=[]
-        for sym in symbols:
-            tplus=[]
-            for h in (1,2,3):
-                try:
-                    r=self.analyze_symbol(sym,h)
-                    r['label']=f"{sym} T+{h}"
-                    tplus.append(r); candidatos.append(r)
-                except Exception as e:
-                    logger.error("symbol_analysis_error", symbol=sym, horizon=h, error=str(e))
-                    tplus.append({
-                        "symbol":sym,"horizon":h,"error":str(e),
-                        "direction":"buy","probability_buy":0.5,"probability_sell":0.5,
-                        "confidence":0.5,"label":f"{sym} T+{h}",
-                        "timestamp": datetime.now().strftime("%H:%M:%S")
-                    })
-            por_ativo[sym]={"tplus":tplus,"best_for_symbol":max(tplus,key=_rank_key_directional)}
-        best_overall=max(candidatos,key=_rank_key_directional) if candidatos else None
-        return {"por_ativo":por_ativo,"best_overall":best_overall}
 
 # =========================
-# Manager / API / UI
+# Manager / API / UI Atualizado
 # =========================
 class AnalysisManager:
     def __init__(self)->None:
@@ -1539,24 +1629,27 @@ class AnalysisManager:
         self.is_analyzing=True
         logger.info("batch_analysis_started", symbols_count=len(symbols), simulations=sims)
         try:
-            result = self.system.scan_symbols_tplus(symbols)
-            flat=[]
-            for sym, bloco in result["por_ativo"].items():
-                flat.extend(bloco["tplus"])
-            self.current_results = flat
-            if flat:
-                best=max(flat, key=_rank_key_directional)
-                best=dict(best)
-                best["entry_time"]=self.calculate_entry_time_brazil(best.get("horizon",1))
-                self.best_opportunity=best
+            # NOVO: Usa scan expandido
+            result = self.system.scan_symbols_expanded(symbols)
+            self.current_results = result['signals']
+            
+            if self.current_results:
+                best = max(self.current_results, key=_rank_key_directional)
+                best = dict(best)
+                best["entry_time"] = self.calculate_entry_time_brazil(best.get("horizon",1))
+                self.best_opportunity = best
                 logger.info("best_opportunity_found", 
                            symbol=best['symbol'], 
                            direction=best['direction'],
-                           confidence=best['confidence'])
+                           confidence=best.get('intelligent_confidence', best.get('confidence', 0.5)),
+                           trajectory_quality=best.get('trajectory_quality', 0.5))
             else:
-                self.best_opportunity=None
+                self.best_opportunity = None
+                
             self.analysis_time = br_full(self.get_brazil_time())
-            logger.info("batch_analysis_completed", results_count=len(flat))
+            logger.info("batch_analysis_completed", 
+                       results_count=len(self.current_results),
+                       avg_trajectory_quality=result.get('avg_trajectory_quality', 0))
         except Exception as e:
             logger.error("batch_analysis_error", error=str(e))
             self.current_results=[]
@@ -1568,7 +1661,7 @@ class AnalysisManager:
 manager=AnalysisManager()
 
 # =========================
-# NOVO: Endpoints para IA
+# Endpoints para IA
 # =========================
 @app.post("/api/ai/learn")
 def api_ai_learn():
@@ -1619,32 +1712,13 @@ def api_ai_status():
         "system_accuracy": ai.adaptation.get_overall_accuracy(),
         "patterns_learned": len(ai.memory.pattern_success),
         "recent_accuracy": ai.memory.get_recent_accuracy(),
-        "confidence_calibration": ai.adaptation.confidence_calibration
-    })
-
-@app.get("/api/ai/metrics")
-def api_ai_metrics():
-    """Métricas detalhadas de performance da IA"""
-    if not FEATURE_FLAGS["enable_ai_intelligence"]:
-        return jsonify({"success": False, "error": "IA não habilitada"}), 404
-        
-    ai = manager.system.intelligent_ai
-    metrics = ai.get_performance_metrics()
-    
-    return jsonify({
-        "success": True,
-        "performance_metrics": metrics,
-        "patterns_learned": len(ai.memory.pattern_success),
         "confidence_calibration": ai.adaptation.confidence_calibration,
-        "system_health": {
-            "learning_enabled": ai.learning_enabled,
-            "memory_size": len(ai.memory.recent_outcomes),
-            "calibration_entries": len(ai.adaptation.confidence_calibration)
-        }
+        "expanded_garch_enabled": FEATURE_FLAGS["enable_expanded_garch"],
+        "trajectory_analysis_enabled": FEATURE_FLAGS["enable_trajectory_analysis"]
     })
 
 # =========================
-# Endpoints originais (mantidos)
+# Endpoints principais
 # =========================
 @app.post("/api/analyze")
 def api_analyze():
@@ -1661,42 +1735,25 @@ def api_analyze():
         
     try:
         data = request.get_json(silent=True) or {}
-        raw_symbols = data.get("symbols") or manager.symbols_default
-        
-        # Validação robusta de símbolos
-        if not raw_symbols:
-            return jsonify({"success": False, "error": "Nenhum símbolo fornecido"}), 400
-            
-        symbols = []
-        for s in raw_symbols:
-            if isinstance(s, str) and s.strip():
-                clean_symbol = s.strip().upper()
-                # Valida formato básico do símbolo
-                if len(clean_symbol) >= 3 and '/' in clean_symbol:
-                    symbols.append(clean_symbol)
-        
+        symbols = [s.strip().upper() for s in (data.get("symbols") or manager.symbols_default) if s.strip()]
         if not symbols:
-            return jsonify({"success": False, "error": "Nenhum símbolo válido encontrado"}), 400
-            
-        # Limite razoável de símbolos por requisição
-        if len(symbols) > 20:
-            return jsonify({"success": False, "error": "Máximo de 20 símbolos por análise"}), 400
+            return jsonify({"success": False, "error": "Selecione pelo menos um ativo"}), 400
             
         sims = MC_PATHS
         th = threading.Thread(target=manager.analyze_symbols_thread, args=(symbols, sims, None))
         th.daemon = True
         th.start()
         
-        logger.info("analysis_request", client_id=client_id, symbols_count=len(symbols), symbols=symbols)
+        logger.info("analysis_request", client_id=client_id, symbols_count=len(symbols))
         return jsonify({
             "success": True, 
-            "message": f"Analisando {len(symbols)} ativos com {sims} simulações.", 
+            "message": f"Analisando {len(symbols)} ativos com GARCH Expandido + IA.", 
             "symbols_count": len(symbols),
-            "symbols_processed": symbols
+            "expanded_analysis": True
         })
     except Exception as e:
-        logger.error("analysis_request_error", error=str(e), client_id=client_id, stack_info=True)
-        return jsonify({"success": False, "error": "Erro interno do servidor"}), 500
+        logger.error("analysis_request_error", error=str(e), client_id=client_id)
+        return jsonify({"success": False, "error": str(e)}), 500
 
 @app.get("/api/results")
 def api_results():
@@ -1707,7 +1764,9 @@ def api_results():
         "analysis_time": manager.analysis_time,
         "total_signals": len(manager.current_results),
         "is_analyzing": manager.is_analyzing,
-        "ai_intelligence": FEATURE_FLAGS["enable_ai_intelligence"]
+        "ai_intelligence": FEATURE_FLAGS["enable_ai_intelligence"],
+        "expanded_garch": FEATURE_FLAGS["enable_expanded_garch"],
+        "trajectory_analysis": FEATURE_FLAGS["enable_trajectory_analysis"]
     })
 
 @app.get("/health")
@@ -1721,7 +1780,8 @@ def health():
         "feature_flags": FEATURE_FLAGS,
         "cache_size": len(manager.system.spot._cache._cache),
         "ai_intelligence": FEATURE_FLAGS["enable_ai_intelligence"],
-        "ai_accuracy": manager.system.intelligent_ai.adaptation.get_overall_accuracy() if FEATURE_FLAGS["enable_ai_intelligence"] else None
+        "ai_accuracy": manager.system.intelligent_ai.adaptation.get_overall_accuracy() if FEATURE_FLAGS["enable_ai_intelligence"] else None,
+        "expanded_garch": FEATURE_FLAGS["enable_expanded_garch"]
     }
     return jsonify(health_status), 200
 
@@ -1757,6 +1817,11 @@ def deep_health():
                 "patterns_learned": len(manager.system.intelligent_ai.memory.pattern_success),
                 "system_accuracy": manager.system.intelligent_ai.adaptation.get_overall_accuracy(),
                 "learning_enabled": FEATURE_FLAGS["enable_learning"]
+            },
+            "expanded_garch": {
+                "enabled": FEATURE_FLAGS["enable_expanded_garch"],
+                "horizons_analyzed": 6,
+                "paths_per_horizon": MC_PATHS
             }
         },
         "feature_flags": FEATURE_FLAGS
@@ -1770,7 +1835,7 @@ def index():
     HTML = """<!doctype html>
 <html lang="pt-br"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>IA Signal Pro - PREÇOS REAIS + SIMULAÇÕES + IA INTELIGENTE</title>
+<title>IA Signal Pro - GARCH EXPANDIDO + IA AVANÇADA</title>
 <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0"/>
 <style>
 :root{--bg:#0f1120;--panel:#181a2e;--panel2:#223148;--tx:#dfe6ff;--muted:#9fb4ff;--accent:#2aa9ff;--gold:#f2a93b;--ok:#29d391;--err:#ff5b5b;}
@@ -1800,36 +1865,37 @@ button{background:#2a9df4;cursor:pointer} button:disabled{opacity:.6;cursor:not-
 .tag{display:inline-block;padding:2px 6px;border-radius:6px;font-size:10px;margin-left:6px;background:#0d2033;border:1px solid #3e6fa8}
 .right{float:right}
 .ai-badge{background:#4a1f5f;border-color:#b362ff}
+.trajectory-badge{background:#1f5f4a;border-color:#62ffb3}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="hline">
-    <h1>IA Signal Pro - PREÇOS REAIS + 3000 SIMULAÇÕES + IA INTELIGENTE</h1>
+    <h1>IA Signal Pro - GARCH EXPANDIDO (6 horizontes) + IA AVANÇADA</h1>
     <div class="clock" id="clock">--:--:-- BRT</div>
-    <div class="sub">✅ CoinAPI (WS) · Binance REST fallback · RSI/ADX (Wilder) · Liquidez (ATR%) · Reversão RSI (12h) · GARCH(1,1) Adaptativo · 🧠 IA MULTICAMADAS INTELIGENTE</div>
+    <div class="sub">✅ GARCH Expandido (T1-T15) · 7200 simulações · IA Trajetória Temporal · Filtros Inteligentes · 🧠 IA MULTICAMADAS AVANÇADA</div>
     <div class="controls">
       <div class="chips" id="chips"></div>
       <div class="row">
         <select id="mcsel">
-          <option value="3000" selected>3000 simulações GARCH</option>
-          <option value="1000">1000 simulações</option>
-          <option value="5000">5000 simulações</option>
+          <option value="1200" selected>1200 simulações por horizonte (7200 total)</option>
+          <option value="800">800 simulações por horizonte</option>
+          <option value="1500">1500 simulações por horizonte</option>
         </select>
         <button type="button" onclick="selectAll()">Selecionar todos</button>
         <button type="button" onclick="clearAll()">Limpar</button>
-        <button id="go" onclick="runAnalyze()">🧠 Analisar com IA Inteligente</button>
+        <button id="go" onclick="runAnalyze()">🚀 Analisar com GARCH Expandido</button>
       </div>
     </div>
   </div>
 
   <div class="section" id="bestSec" style="display:none">
-    <div class="title">🥇 MELHOR OPORTUNIDADE GLOBAL (IA INTELIGENTE)</div>
+    <div class="title">🥇 MELHOR OPORTUNIDADE GLOBAL (GARCH EXPANDIDO + IA)</div>
     <div class="card" id="bestCard"></div>
   </div>
 
   <div class="section" id="allSec" style="display:none">
-    <div class="title">📊 TODOS OS HORIZONTES DE CADA ATIVO</div>
+    <div class="title">📊 TODOS OS HORIZONTES E ATIVOS ANALISADOS</div>
     <div class="grid-syms" id="grid"></div>
   </div>
 </div>
@@ -1892,9 +1958,9 @@ function badgeDir(d){ return `<span class="badge ${d==='buy'?'buy':'sell'}">${d=
 async function runAnalyze(){
   const btn = document.getElementById('go');
   btn.disabled = true;
-  btn.textContent = '⏳ IA Analisando...';
+  btn.textContent = '⏳ GARCH Expandido Analisando...';
   const syms = selSymbols();
-  if(!syms.length){ alert('Selecione pelo menos um ativo.'); btn.disabled=false; btn.textContent='🧠 Analisar com IA Inteligente'; return; }
+  if(!syms.length){ alert('Selecione pelo menos um ativo.'); btn.disabled=false; btn.textContent='🚀 Analisar com GARCH Expandido'; return; }
   await fetch('/api/analyze', {
     method:'POST',
     headers:{'Content-Type':'application/json','Cache-Control':'no-store'},
@@ -1913,9 +1979,9 @@ function startPollingResults(){
       pollTimer = null;
       const btn = document.getElementById('go');
       btn.disabled = false;
-      btn.textContent = '🧠 Analisar com IA Inteligente';
+      btn.textContent = '🚀 Analisar com GARCH Expandido';
     }
-  }, 700);
+  }, 1000);
 }
 
 async function fetchAndRenderResults(){
@@ -1941,6 +2007,7 @@ async function fetchAndRenderResults(){
           <span class="tag">Liquidez: ${Number(bestLocal?.liquidity_score||0).toFixed(2)}</span>
           ${bestLocal?.reversal ? `<span class="tag">🔄 Reversão (${bestLocal.reversal_side})</span>`:''}
           <span class="tag ai-badge">🧠 IA Inteligente</span>
+          <span class="tag trajectory-badge">📈 GARCH Expandido</span>
         </div>
         ${arr.map(item=>renderTbox(item, bestLocal)).join('')}
       </div>`;
@@ -1954,32 +2021,38 @@ async function fetchAndRenderResults(){
 function rank(it){ 
   const direction = it.direction || 'buy';
   const prob_directional = direction === 'buy' ? it.probability_buy : it.probability_sell;
-  // Prefere confiança inteligente se disponível
   const confidence = it.intelligent_confidence || it.confidence;
-  return (confidence * 1000) + (prob_directional * 100);
+  const trajectory_quality = it.trajectory_quality || 0.5;
+  return (confidence * 800) + (trajectory_quality * 500) + (prob_directional * 100);
 }
 
 function renderBest(best, analysisTime){
   if(!best) return '<div class="small">Sem oportunidade no momento.</div>';
   const rev = best.reversal ? ` <span class="tag">🔄 Reversão (${best.reversal_side})</span>` : '';
   const confidence = best.intelligent_confidence || best.confidence;
+  const trajectory_quality = best.trajectory_quality || 0.5;
   const reasoning = best.reasoning ? `<div class="small" style="margin-top:8px;color:#8ccf9d">🧠 ${best.reasoning.slice(0,3).join(' · ')}</div>` : '';
   
   return `
-    <div class="small muted">Atualizado: ${analysisTime} (Horário Brasil) · IA Inteligente Ativa</div>
+    <div class="small muted">Atualizado: ${analysisTime} · GARCH Expandido + IA Trajetória</div>
     <div class="line"></div>
-    <div><b>${best.symbol} T+${best.horizon}</b> ${badgeDir(best.direction)} <span class="tag">🥇 MELHOR ENTRE TODOS OS HORIZONTES</span>${rev} <span class="tag ai-badge">🧠 IA INTELIGENTE</span></div>
+    <div><b>${best.symbol} T+${best.horizon}</b> ${badgeDir(best.direction)} 
+      <span class="tag">🥇 MELHOR GLOBAL</span>${rev} 
+      <span class="tag ai-badge">🧠 IA</span>
+      <span class="tag trajectory-badge">📈 Trajetória: ${(trajectory_quality*100).toFixed(1)}%</span>
+    </div>
     <div class="kpis">
       <div class="kpi"><b>Prob Compra</b>${pct(best.probability_buy||0)}</div>
       <div class="kpi"><b>Prob Venda</b>${pct(best.probability_sell||0)}</div>
       <div class="kpi"><b>Confiança IA</b>${pct(confidence)}</div>
+      <div class="kpi"><b>Qualidade Trajetória</b>${pct(trajectory_quality)}</div>
       <div class="kpi"><b>ADX</b>${(best.adx||0).toFixed(1)}</div>
       <div class="kpi"><b>RSI</b>${(best.rsi||0).toFixed(1)}</div>
-      <div class="kpi"><b>Liquidez</b>${Number(best.liquidity_score||0).toFixed(2)}</div>
     </div>
     ${reasoning}
     <div class="small" style="margin-top:8px;">
-      Pontuação IA: <span class="ok">${(confidence*100).toFixed(1)}%</span> · TF: <b>${best.multi_timeframe||'neutral'}</b> · Price: <b>${Number(best.price||0).toFixed(6)}</b>
+      Horizonte Recomendado: <b>${best.recommended_horizon || 'T1'}</b> · 
+      Price: <b>${Number(best.price||0).toFixed(6)}</b>
       <span class="right">Entrada: <b>${best.entry_time||'-'}</b></span>
     </div>`;
 }
@@ -1988,15 +2061,20 @@ function renderTbox(it, bestLocal){
   const isBest = bestLocal && it.symbol===bestLocal.symbol && it.horizon===bestLocal.horizon;
   const rev = it.reversal ? ` <span class="tag">🔄 REVERSÃO (${it.reversal_side})</span>` : '';
   const confidence = it.intelligent_confidence || it.confidence;
+  const trajectory_quality = it.trajectory_quality || 0.5;
   const reasoning = it.reasoning ? `<div class="small" style="color:#8ccf9d;margin-top:4px">🧠 ${it.reasoning.slice(0,2).join(' · ')}</div>` : '';
   
   return `
     <div class="tbox">
-      <div><b>T+${it.horizon}</b> ${badgeDir(it.direction)} ${isBest?'<span class="tag">🥇 MELHOR DO ATIVO</span>':''}${rev} <span class="tag ai-badge">🧠 IA</span></div>
+      <div><b>T+${it.horizon}</b> ${badgeDir(it.direction)} 
+        ${isBest?'<span class="tag">🥇 MELHOR DO ATIVO</span>':''}${rev} 
+        <span class="tag ai-badge">🧠 IA</span>
+        <span class="tag trajectory-badge">📈 ${(trajectory_quality*100).toFixed(0)}%</span>
+      </div>
       <div class="small">
         Prob: <span class="${it.direction==='buy'?'ok':'err'}">${pct(it.probability_buy||0)}/${pct(it.probability_sell||0)}</span>
         · Conf IA: <span class="ok">${pct(confidence)}</span>
-        · RSI≈Pico: ${(it.rev_levels?.avg_peak||0).toFixed(1)} · RSI≈Vale: ${(it.rev_levels?.avg_trough||0).toFixed(1)}
+        · Trajetória: <span class="ok">${pct(trajectory_quality)}</span>
       </div>
       <div class="small">ADX: ${(it.adx||0).toFixed(1)} | RSI: ${(it.rsi||0).toFixed(1)} | TF: <b>${it.multi_timeframe||'neutral'}</b></div>
       ${reasoning}
@@ -2013,7 +2091,8 @@ function renderTbox(it, bestLocal){
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
     logger.info("application_starting", port=port, features_enabled=FEATURE_FLAGS)
-    logger.info("ai_intelligence_enabled", 
-                enabled=FEATURE_FLAGS["enable_ai_intelligence"],
-                learning=FEATURE_FLAGS["enable_learning"])
+    logger.info("garch_expanded_enabled", 
+                expanded_garch=FEATURE_FLAGS["enable_expanded_garch"],
+                trajectories=FEATURE_FLAGS["enable_trajectory_analysis"],
+                total_simulations=1200*6)
     app.run(host="0.0.0.0", port=port, threaded=True, debug=False)
