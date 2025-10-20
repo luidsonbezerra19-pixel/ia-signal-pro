@@ -4,5 +4,5 @@ requests==2.32.3
 urllib3>=2.0.7
 gunicorn>=22.0.0
 ccxt==4.4.46
-websocket-client==1.8.0
+websocket-client==12.0
 structlog>=23.0.0
