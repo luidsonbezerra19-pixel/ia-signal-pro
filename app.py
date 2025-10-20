@@ -1,4 +1,4 @@
-# app.py — RODA IA COM GARCH EXPANDIDO + IA AVANÇADA
+# app.py — RODA IA COM GARCH EXPANDIDO + IA AVANÇADA + DETECÇÃO DE REVERSÃO
 from __future__ import annotations
 import os, re, time, math, random, threading, json, statistics as stats
 from typing import Any, Dict, List, Tuple, Optional, Deque
@@ -46,12 +46,214 @@ WS_BUFFER_MINUTES = 720
 WS_SYMBOLS = DEFAULT_SYMBOLS[:]
 REALTIME_PROVIDER = "binance"  # ✅ MUDADO PARA BINANCE
 
+# CONFIGURAÇÕES DA IA DE REVERSÃO
+ZONA_SOBREVENDA_EXTREMA = 20    # RSI < 20 → Reversão FORTE para CIMA
+ZONA_SOBREVENDA = 25            # RSI < 25 → Reversão MÉDIA para CIMA  
+ZONA_SOBRECOMPRA = 75           # RSI > 75 → Reversão MÉDIA para BAIXO
+ZONA_SOBRECOMPRA_EXTREMA = 80   # RSI > 80 → Reversão FORTE para BAIXO
+
 BINANCE_WS_URL = "wss://stream.binance.com:9443/ws"
 app = Flask(__name__)
 CORS(app)
 
 # =========================
-# CLASSES AUXILIARES
+# NOVO: Binance Candle Calculator (Solução 1)
+# =========================
+
+class BinanceCandleCalculator:
+    def __init__(self):
+        self.current_candles: Dict[str, List[Dict]] = {}
+        self.candle_data: Dict[str, List[List[float]]] = {}
+        
+    def update_from_ticker(self, symbol: str, price: float, volume: float, timestamp: int):
+        """Constrói candles em tempo real a partir dos dados do ticker"""
+        symbol = symbol.upper()
+        if symbol not in self.current_candles:
+            self.current_candles[symbol] = []
+            self.candle_data[symbol] = []
+            
+        current_time = timestamp // 60000 * 60000  # Arredonda para minuto
+        
+        if not self.current_candles[symbol] or self.current_candles[symbol][-1]['timestamp'] != current_time:
+            # Novo candle
+            new_candle = {
+                'timestamp': current_time,
+                'open': price,
+                'high': price,
+                'low': price,
+                'close': price,
+                'volume': volume
+            }
+            self.current_candles[symbol].append(new_candle)
+            
+            # Manter apenas últimos 200 candles
+            if len(self.current_candles[symbol]) > 200:
+                self.current_candles[symbol].pop(0)
+                
+            # Atualizar dados OHLCV
+            self._update_ohlcv_data(symbol)
+        else:
+            # Atualizar candle atual
+            current_candle = self.current_candles[symbol][-1]
+            current_candle['high'] = max(current_candle['high'], price)
+            current_candle['low'] = min(current_candle['low'], price)
+            current_candle['close'] = price
+            current_candle['volume'] += volume
+            
+            self._update_ohlcv_data(symbol)
+    
+    def _update_ohlcv_data(self, symbol: str):
+        """Converte candles para formato OHLCV"""
+        candles = self.current_candles[symbol]
+        ohlcv = []
+        for candle in candles:
+            ohlcv.append([
+                candle['timestamp'],
+                candle['open'],
+                candle['high'], 
+                candle['low'],
+                candle['close'],
+                candle['volume']
+            ])
+        self.candle_data[symbol] = ohlcv
+    
+    def get_ohlcv(self, symbol: str, limit: int = 100) -> List[List[float]]:
+        """Retorna dados OHLCV para cálculo de indicadores"""
+        symbol = symbol.upper()
+        if symbol not in self.candle_data:
+            return []
+        data = self.candle_data[symbol][-limit:]
+        # Retorna apenas [open, high, low, close, volume] sem timestamp
+        return [[c[1], c[2], c[3], c[4], c[5]] for c in data]
+
+# =========================
+# NOVO: IA de Detecção de Reversão (Solução 3)
+# =========================
+
+class ReversalIntelligence:
+    def __init__(self):
+        self.reversal_history = defaultdict(list)
+        
+    def detect_extreme_reversal(self, rsi: float, rsi_history: List[float], 
+                               price: float, price_history: List[float],
+                               volume: float, volume_history: List[float]) -> Dict[str, Any]:
+        """
+        Detecta se está em zona de reversão baseado em:
+        - RSI em extremos históricos
+        - Divergências de preço vs RSI
+        - Volume na reversão
+        """
+        reversal_info = {
+            'reversal_detected': False,
+            'direction': None,
+            'confidence': 0.0,
+            'reason': '',
+            'rsi_level': rsi,
+            'pattern': None,
+            'intensity': 'low'
+        }
+        
+        # ✅ DETECÇÃO POR ZONAS DE RSI
+        if rsi <= ZONA_SOBREVENDA_EXTREMA:
+            reversal_info.update({
+                'reversal_detected': True,
+                'direction': 'bullish',
+                'confidence': 0.85,
+                'reason': f'RSI oversold extremo ({rsi:.1f}) - Reversão bullish provável',
+                'pattern': 'rsi_oversold_extreme',
+                'intensity': 'high'
+            })
+            
+        elif rsi <= ZONA_SOBREVENDA:
+            reversal_info.update({
+                'reversal_detected': True,
+                'direction': 'bullish', 
+                'confidence': 0.70,
+                'reason': f'RSI em oversold ({rsi:.1f}) - Possível reversão bullish',
+                'pattern': 'rsi_oversold',
+                'intensity': 'medium'
+            })
+            
+        elif rsi >= ZONA_SOBRECOMPRA_EXTREMA:
+            reversal_info.update({
+                'reversal_detected': True,
+                'direction': 'bearish',
+                'confidence': 0.85,
+                'reason': f'RSI overbought extremo ({rsi:.1f}) - Reversão bearish provável',
+                'pattern': 'rsi_overbought_extreme',
+                'intensity': 'high'
+            })
+            
+        elif rsi >= ZONA_SOBRECOMPRA:
+            reversal_info.update({
+                'reversal_detected': True,
+                'direction': 'bearish',
+                'confidence': 0.70,
+                'reason': f'RSI em overbought ({rsi:.1f}) - Possível reversão bearish',
+                'pattern': 'rsi_overbought',
+                'intensity': 'medium'
+            })
+        
+        # ✅ DETECÇÃO DE DIVERGÊNCIAS
+        divergence_signal = self._detect_divergence(price_history, rsi_history)
+        if divergence_signal['detected']:
+            # Aumenta confiança se já havia sinal de reversão
+            if reversal_info['reversal_detected']:
+                reversal_info['confidence'] = min(0.95, reversal_info['confidence'] + 0.15)
+                reversal_info['reason'] += f" + {divergence_signal['reason']}"
+            else:
+                reversal_info.update({
+                    'reversal_detected': True,
+                    'direction': divergence_signal['direction'],
+                    'confidence': 0.75,
+                    'reason': divergence_signal['reason'],
+                    'pattern': divergence_signal['pattern'],
+                    'intensity': 'medium'
+                })
+        
+        # ✅ CONFIRMAÇÃO COM VOLUME
+        if reversal_info['reversal_detected'] and len(volume_history) >= 5:
+            recent_volume = stats.mean(volume_history[-3:])
+            avg_volume = stats.mean(volume_history[-10:])
+            if recent_volume > avg_volume * 1.2:  # Volume 20% acima da média
+                reversal_info['confidence'] = min(0.95, reversal_info['confidence'] + 0.10)
+                reversal_info['reason'] += " + Volume de confirmação"
+        
+        return reversal_info
+    
+    def _detect_divergence(self, prices: List[float], rsis: List[float]) -> Dict[str, Any]:
+        """Detecta divergências entre preço e RSI"""
+        if len(prices) < 10 or len(rsis) < 10:
+            return {'detected': False}
+            
+        # Últimos 5 pontos para análise
+        recent_prices = prices[-5:]
+        recent_rsis = rsis[-5:]
+        
+        # Bullish Divergence: Preço faz fundo menor, RSI faz fundo maior
+        if (recent_prices[0] > recent_prices[2] and recent_prices[2] > recent_prices[4] and
+            recent_rsis[0] < recent_rsis[2] and recent_rsis[2] < recent_rsis[4]):
+            return {
+                'detected': True,
+                'direction': 'bullish',
+                'reason': 'Divergência bullish: Preço ↓ RSI ↑',
+                'pattern': 'divergence_bullish'
+            }
+        
+        # Bearish Divergence: Preço faz topo maior, RSI faz topo menor  
+        if (recent_prices[0] < recent_prices[2] and recent_prices[2] < recent_prices[4] and
+            recent_rsis[0] > recent_rsis[2] and recent_rsis[2] > recent_rsis[4]):
+            return {
+                'detected': True,
+                'direction': 'bearish',
+                'reason': 'Divergência bearish: Preço ↑ RSI ↓',
+                'pattern': 'divergence_bearish'
+            }
+            
+        return {'detected': False}
+
+# =========================
+# CLASSES AUXILIARES EXISTENTES (MANTIDAS)
 # =========================
 
 class TechnicalIndicators:
@@ -222,7 +424,7 @@ class SignalQualityFilter:
         return min(1.0, ratio / 2.0)
 
 # =========================
-# NOVO: Sistema de GARCH Expandido - CORRIGIDO
+# Sistema de GARCH Expandido - CORRIGIDO
 # =========================
 
 class ExpandedGARCHSystem:
@@ -312,7 +514,7 @@ class ExpandedGARCHSystem:
         }
 
 # =========================
-# NOVO: IA de Trajetória Temporal - CORRIGIDO
+# IA de Trajetória Temporal - CORRIGIDO
 # =========================
 
 class TrajectoryIntelligence:
@@ -378,17 +580,19 @@ class TrajectoryIntelligence:
         return best_horizon
 
 # =========================
-# Agregador Inteligente de Sinais - CORRIGIDO
+# Agregador Inteligente de Sinais - ATUALIZADO COM REVERSÃO
 # =========================
 
 class IntelligentSignalAggregator:
     def __init__(self):
         self.min_trajectory_quality = 0.25
         self.quality_filter = SignalQualityFilter()
+        self.reversal_ai = ReversalIntelligence()  # ✅ NOVA IA DE REVERSÃO
         
     def aggregate_signals(self, symbol: str, multi_horizon_data: Dict, 
-                         technical_data: Dict, trajectory_analysis: Dict) -> List[Dict]:
-        """Agrega sinais apenas do T+1 - SEM FILTROS"""
+                         technical_data: Dict, trajectory_analysis: Dict,
+                         price_history: List[float], volume_history: List[float]) -> List[Dict]:  # ✅ NOVO PARÂMETRO
+        """Agrega sinais apenas do T+1 - COM DETECÇÃO DE REVERSÃO"""
         signals = []
         
         logger.debug("aggregate_signals_start", symbol=symbol, horizons_available=list(multi_horizon_data.keys()))
@@ -398,6 +602,10 @@ class IntelligentSignalAggregator:
         if horizon in multi_horizon_data:
             garch_data = multi_horizon_data[horizon]
             base_signal = self._create_base_signal(symbol, horizon, garch_data, technical_data)
+            
+            # ✅ APLICA DETECÇÃO DE REVERSÃO
+            base_signal = self._apply_reversal_detection(base_signal, technical_data, price_history, volume_history)
+            
             enhanced_signal = self._enhance_with_trajectory(base_signal, trajectory_analysis)
             
             logger.debug("signal_created", symbol=symbol, direction=enhanced_signal['direction'], 
@@ -413,6 +621,48 @@ class IntelligentSignalAggregator:
                     
         logger.debug("aggregate_signals_end", symbol=symbol, signals_count=len(signals))
         return signals
+    
+    def _apply_reversal_detection(self, signal: Dict, technical_data: Dict, 
+                                price_history: List[float], volume_history: List[float]) -> Dict:
+        """Aplica detecção de reversão e ajusta o sinal"""
+        rsi = technical_data.get('rsi', 50)
+        rsi_history = technical_data.get('rsi_history', [rsi])
+        price = technical_data.get('price', 0)
+        
+        # ✅ DETECTA REVERSÃO
+        reversal_info = self.reversal_ai.detect_extreme_reversal(
+            rsi, rsi_history, price, price_history, 
+            technical_data.get('volume', 0), volume_history
+        )
+        
+        if reversal_info['reversal_detected']:
+            logger.info("reversal_detected", 
+                       symbol=signal['symbol'],
+                       direction=reversal_info['direction'],
+                       confidence=reversal_info['confidence'],
+                       reason=reversal_info['reason'])
+            
+            # ✅ SE DETECTOU REVERSÃO, SOBRESCREVE A DIREÇÃO DO SINAL
+            if reversal_info['confidence'] > 0.7:  # Só sobrescreve se confiança alta
+                signal['direction'] = reversal_info['direction']
+                signal['reversal_detected'] = True
+                signal['reversal_side'] = reversal_info['direction']
+                signal['reversal_confidence'] = reversal_info['confidence']
+                signal['reversal_reason'] = reversal_info['reason']
+                signal['reversal_intensity'] = reversal_info['intensity']
+                
+                # ✅ AJUSTA PROBABILIDADES BASEADO NA REVERSÃO
+                if reversal_info['direction'] == 'bullish':
+                    signal['probability_buy'] = max(0.8, signal['probability_buy'])
+                    signal['probability_sell'] = 1.0 - signal['probability_buy']
+                else:
+                    signal['probability_sell'] = max(0.8, signal['probability_sell'])
+                    signal['probability_buy'] = 1.0 - signal['probability_sell']
+                
+                # ✅ BOOST NA CONFIANÇA
+                signal['confidence'] = min(0.95, signal['confidence'] + reversal_info['confidence'] * 0.2)
+        
+        return signal
     
     def _create_base_signal(self, symbol: str, horizon: str, garch_data: Dict, 
                            technical_data: Dict) -> Dict:
@@ -510,7 +760,8 @@ FEATURE_FLAGS = {
     "enable_self_check": False,  # ✅ DESLIGADO PARA MAIS SINAIS
     "enable_expanded_garch": True,
     "enable_trajectory_analysis": True,
-    "focus_t1_only": True
+    "focus_t1_only": True,
+    "enable_reversal_detection": True  # ✅ NOVA FLAG PARA REVERSÃO
 }
 
 # =========================
@@ -739,7 +990,7 @@ class IntelligentTradingAI:
                    system_accuracy=self.adaptation.get_overall_accuracy())
 
 # =========================
-# WEBSOCKET BINANCE REAL-TIME - CORRIGIDO
+# WEBSOCKET BINANCE REAL-TIME - ATUALIZADO COM CÁLCULO DE CANDLES
 # =========================
 
 class BinanceWebSocket:
@@ -753,6 +1004,7 @@ class BinanceWebSocket:
         self._ws = None
         self._running = False
         self._ws_available = False
+        self.candle_calculator = BinanceCandleCalculator()  # ✅ NOVO CALCULADOR
         
         try:
             import websocket
@@ -786,28 +1038,17 @@ class BinanceWebSocket:
             if 's' in data and 'c' in data:
                 symbol = data['s'].replace("USDT", "/USDT").upper()
                 current_price = float(data['c'])
+                volume = float(data.get('v', 0))
+                timestamp = int(data.get('E', time.time() * 1000))
                 
                 with self._lock:
                     self._current_prices[symbol] = current_price
                     
-                    # Atualizar dados OHLCV
-                    if symbol not in self._ohlcv_data:
-                        self._ohlcv_data[symbol] = []
+                    # ✅ ATUALIZAR CÁLCULO DE CANDLES EM TEMPO REAL
+                    self.candle_calculator.update_from_ticker(symbol, current_price, volume, timestamp)
                     
-                    # Adicionar novo candle (simplificado)
-                    timestamp = int(data.get('E', time.time() * 1000))
-                    open_price = float(data.get('o', current_price))
-                    high_price = float(data.get('h', current_price))
-                    low_price = float(data.get('l', current_price))
-                    close_price = current_price
-                    volume = float(data.get('v', 0))
-                    
-                    new_candle = [timestamp, open_price, high_price, low_price, close_price, volume]
-                    
-                    # Manter apenas os últimos 1000 candles
-                    if len(self._ohlcv_data[symbol]) >= 1000:
-                        self._ohlcv_data[symbol].pop(0)
-                    self._ohlcv_data[symbol].append(new_candle)
+                    # ✅ USAR CANDLES CALCULADOS PARA DADOS OHLCV
+                    self._ohlcv_data[symbol] = self.candle_calculator.get_ohlcv(symbol, 100)
                     
         except Exception as e:
             logger.error("websocket_message_error", error=str(e))
@@ -856,7 +1097,7 @@ class BinanceWebSocket:
             return self._current_prices.get(symbol.upper(), 0.0)
 
     def get_ohlcv(self, symbol: str, limit: int = 100) -> List[List[float]]:
-        """Retorna dados OHLCV recentes"""
+        """Retorna dados OHLCV recentes (calculados em tempo real)"""
         with self._lock:
             symbol_key = symbol.upper()
             if symbol_key in self._ohlcv_data:
@@ -950,7 +1191,7 @@ def _rank_key_directional(x: Dict[str, Any]) -> float:
     return (confidence * 1000) + (prob_directional * 100)
 
 # =========================
-# Enhanced Trading System - CORRIGIDO PARA USAR WEBSOCKET BINANCE
+# Enhanced Trading System - ATUALIZADO COM REVERSÃO
 # =========================
 
 class EnhancedTradingSystem:
@@ -970,7 +1211,7 @@ class EnhancedTradingSystem:
         self.signal_aggregator = IntelligentSignalAggregator()
 
     def analyze_symbol_expanded(self, symbol: str) -> List[Dict]:
-        """Analisa com dados reais do WebSocket Binance"""
+        """Analisa com dados reais do WebSocket Binance + DETECÇÃO DE REVERSÃO"""
         start_time = time.time()
         logger.info("t1_analysis_started", symbol=symbol, simulations=5000)
         
@@ -1032,9 +1273,10 @@ class EnhancedTradingSystem:
         except:
             liq = 0.5
 
-        # ✅ DADOS TÉCNICOS COM VALORES REAIS
+        # ✅ DADOS TÉCNICOS COM VALORES REAIS + HISTÓRICO PARA REVERSÃO
         technical_data = {
             'rsi': round(rsi, 2),
+            'rsi_history': rsi_series[-20:] if rsi_series else [rsi],  # ✅ HISTÓRICO PARA REVERSÃO
             'adx': round(adx, 2),
             'macd_signal': macd.get('signal', 'neutral'),
             'boll_signal': boll.get('signal', 'neutral'),
@@ -1058,8 +1300,10 @@ class EnhancedTradingSystem:
                 multi_horizon_garch
             )
             
+            # ✅ AGREGAR SINAIS COM DETECÇÃO DE REVERSÃO
             signals = self.signal_aggregator.aggregate_signals(
-                symbol, multi_horizon_garch, technical_data, trajectory_analysis
+                symbol, multi_horizon_garch, technical_data, trajectory_analysis,
+                closes, volumes  # ✅ ENVIA HISTÓRICO PARA REVERSÃO
             )
             
         except Exception as e:
@@ -1096,7 +1340,7 @@ class EnhancedTradingSystem:
         return final_signals
 
     def scan_symbols_expanded(self, symbols: List[str]) -> Dict[str, Any]:
-        """Scan para TODOS OS 6 ATIVOS com dados reais"""
+        """Scan para TODOS OS 6 ATIVOS com dados reais + DETECÇÃO DE REVERSÃO"""
         all_signals = []
         
         for symbol in symbols:
@@ -1119,7 +1363,7 @@ class EnhancedTradingSystem:
             'signals': all_signals,
             'total_signals': len(all_signals),
             'symbols_analyzed': len(symbols),
-            'analysis_type': 'T1_ONLY_5000_SIMS_REAL_DATA',
+            'analysis_type': 'T1_ONLY_5000_SIMS_REAL_DATA_REVERSAL',
             'best_global': all_signals[0] if all_signals else None
         }
 
@@ -1233,7 +1477,7 @@ def api_analyze():
         logger.info("analysis_request", client_id=client_id, symbols_count=len(symbols))
         return jsonify({
             "success": True, 
-            "message": f"Analisando {len(symbols)} ativos com GARCH T+1 + IA.", 
+            "message": f"Analisando {len(symbols)} ativos com GARCH T+1 + IA + DETECÇÃO DE REVERSÃO.", 
             "symbols_count": len(symbols),
             "expanded_analysis": True
         })
@@ -1270,7 +1514,7 @@ def health():
         "provider": "binance",
         "ts": datetime.now(timezone.utc).isoformat(),
         "feature_flags": FEATURE_FLAGS,
-        "focus": "T1_ONLY_5000_SIMS_REAL_DATA"
+        "focus": "T1_ONLY_5000_SIMS_REAL_DATA_REVERSAL"
     }
     return jsonify(health_status), 200
 
@@ -1280,7 +1524,7 @@ def index():
     HTML = """<!doctype html>
 <html lang="pt-br"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>IA Signal Pro - GARCH T+1 (5000 simulações) + IA AVANÇADA</title>
+<title>IA Signal Pro - GARCH T+1 (5000 simulações) + IA AVANÇADA + DETECÇÃO DE REVERSÃO</title>
 <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0"/>
 <style>
 :root{--bg:#0f1120;--panel:#181a2e;--panel2:#223148;--tx:#dfe6ff;--muted:#9fb4ff;--accent:#2aa9ff;--gold:#f2a93b;--ok:#29d391;--err:#ff5b5b;}
@@ -1311,20 +1555,21 @@ button{background:#2a9df4;cursor:pointer} button:disabled{opacity:.6;cursor:not-
 .right{float:right}
 .ai-badge{background:#4a1f5f;border-color:#b362ff}
 .trajectory-badge{background:#1f5f4a;border-color:#62ffb3}
+.reversal-badge{background:#5f1f1f;border-color:#ff6262}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="hline">
-    <h1>IA Signal Pro - GARCH T+1 (5000 simulações) + IA AVANÇADA</h1>
+    <h1>IA Signal Pro - GARCH T+1 (5000 simulações) + IA AVANÇADA + DETECÇÃO DE REVERSÃO</h1>
     <div class="clock" id="clock">--:--:-- BRT</div>
-    <div class="sub">✅ GARCH T+1 · 5000 simulações · IA Trajetória Temporal · Filtros Inteligentes · 🧠 IA MULTICAMADAS AVANÇADA</div>
+    <div class="sub">✅ GARCH T+1 · 5000 simulações · IA Trajetória Temporal · 🧠 IA MULTICAMADAS · 🔄 DETECÇÃO DE REVERSÃO EM EXTREMOS</div>
     <div class="controls">
       <div class="chips" id="chips"></div>
       <div class="row">
         <button type="button" onclick="selectAll()">Selecionar todos</button>
         <button type="button" onclick="clearAll()">Limpar</button>
-        <button id="go" onclick="runAnalyze()">🚀 Analisar com GARCH T+1</button>
+        <button id="go" onclick="runAnalyze()">🚀 Analisar com GARCH T+1 + Reversão</button>
         <button onclick="checkPrices()">📊 Ver Preços Atuais</button>
       </div>
     </div>
@@ -1415,9 +1660,9 @@ async function checkPrices() {
 async function runAnalyze(){
   const btn = document.getElementById('go');
   btn.disabled = true;
-  btn.textContent = '⏳ GARCH T+1 Analisando...';
+  btn.textContent = '⏳ GARCH T+1 + Reversão Analisando...';
   const syms = selSymbols();
-  if(!syms.length){ alert('Selecione pelo menos um ativo.'); btn.disabled=false; btn.textContent='🚀 Analisar com GARCH T+1'; return; }
+  if(!syms.length){ alert('Selecione pelo menos um ativo.'); btn.disabled=false; btn.textContent='🚀 Analisar com GARCH T+1 + Reversão'; return; }
   try {
     const response = await fetch('/api/analyze', {
       method:'POST',
@@ -1429,14 +1674,14 @@ async function runAnalyze(){
     if (!data.success) {
       alert('Erro: ' + data.error);
       btn.disabled = false;
-      btn.textContent = '🚀 Analisar com GARCH T+1';
+      btn.textContent = '🚀 Analisar com GARCH T+1 + Reversão';
       return;
     }
     startPollingResults();
   } catch (error) {
     alert('Erro de conexão: ' + error);
     btn.disabled = false;
-    btn.textContent = '🚀 Analisar com GARCH T+1';
+    btn.textContent = '🚀 Analisar com GARCH T+1 + Reversão';
   }
 }
 
@@ -1449,7 +1694,7 @@ function startPollingResults(){
       pollTimer = null;
       const btn = document.getElementById('go');
       btn.disabled = false;
-      btn.textContent = '🚀 Analisar com GARCH T+1';
+      btn.textContent = '🚀 Analisar com GARCH T+1 + Reversão';
     }
   }, 1000);
 }
@@ -1476,7 +1721,7 @@ async function fetchAndRenderResults(){
           <div class="sym-head"><b>${sym}</b>
             <span class="tag">TF: ${bestLocal?.multi_timeframe||'neutral'}</span>
             <span class="tag">Liquidez: ${Number(bestLocal?.liquidity_score||0).toFixed(2)}</span>
-            ${bestLocal?.reversal ? `<span class="tag">🔄 Reversão (${bestLocal.reversal_side})</span>`:''}
+            ${bestLocal?.reversal_detected ? `<span class="tag reversal-badge">🔄 Reversão ${bestLocal.reversal_side} (${bestLocal.reversal_intensity})</span>`:''}
             <span class="tag ai-badge">🧠 IA Inteligente</span>
             <span class="tag trajectory-badge">📈 GARCH T+1</span>
           </div>
@@ -1503,13 +1748,14 @@ function rank(it){
 
 function renderBest(best, analysisTime){
   if(!best || best.error) return '<div class="small">Sem oportunidade no momento.</div>';
-  const rev = best.reversal ? ` <span class="tag">🔄 Reversão (${best.reversal_side})</span>` : '';
+  const rev = best.reversal_detected ? ` <span class="tag reversal-badge">🔄 Reversão ${best.reversal_side} (${best.reversal_intensity})</span>` : '';
   const confidence = best.intelligent_confidence || best.confidence;
   const trajectory_quality = best.trajectory_quality || 0.5;
   const reasoning = best.reasoning ? `<div class="small" style="margin-top:8px;color:#8ccf9d">🧠 ${best.reasoning.slice(0,3).join(' · ')}</div>` : '';
+  const reversal_reason = best.reversal_reason ? `<div class="small" style="margin-top:4px;color:#ff9999">🔄 ${best.reversal_reason}</div>` : '';
   
   return `
-    <div class="small muted">Atualizado: ${analysisTime} · GARCH T+1 + IA Trajetória</div>
+    <div class="small muted">Atualizado: ${analysisTime} · GARCH T+1 + IA Trajetória + Detecção de Reversão</div>
     <div class="line"></div>
     <div><b>${best.symbol} T+${best.horizon}</b> ${badgeDir(best.direction)} 
       <span class="tag">🥇 MELHOR GLOBAL</span>${rev} 
@@ -1524,6 +1770,7 @@ function renderBest(best, analysisTime){
       <div class="kpi"><b>ADX</b>${(best.adx||0).toFixed(1)}</div>
       <div class="kpi"><b>RSI</b>${(best.rsi||0).toFixed(1)}</div>
     </div>
+    ${reversal_reason}
     ${reasoning}
     <div class="small" style="margin-top:8px;">
       Horizonte: <b>T+1</b> · 
@@ -1534,10 +1781,11 @@ function renderBest(best, analysisTime){
 
 function renderTbox(it, bestLocal){
   const isBest = bestLocal && it.symbol===bestLocal.symbol && it.horizon===bestLocal.horizon;
-  const rev = it.reversal ? ` <span class="tag">🔄 REVERSÃO (${it.reversal_side})</span>` : '';
+  const rev = it.reversal_detected ? ` <span class="tag reversal-badge">🔄 REVERSÃO ${it.reversal_side}</span>` : '';
   const confidence = it.intelligent_confidence || it.confidence;
   const trajectory_quality = it.trajectory_quality || 0.5;
   const reasoning = it.reasoning ? `<div class="small" style="color:#8ccf9d;margin-top:4px">🧠 ${it.reasoning.slice(0,2).join(' · ')}</div>` : '';
+  const reversal_reason = it.reversal_reason ? `<div class="small" style="color:#ff9999;margin-top:2px">🔄 ${it.reversal_reason}</div>` : '';
   
   return `
     <div class="tbox">
@@ -1552,6 +1800,7 @@ function renderTbox(it, bestLocal){
         · Trajetória: <span class="ok">${pct(trajectory_quality)}</span>
       </div>
       <div class="small">ADX: ${(it.adx||0).toFixed(1)} | RSI: ${(it.rsi||0).toFixed(1)} | TF: <b>${it.multi_timeframe||'neutral'}</b></div>
+      ${reversal_reason}
       ${reasoning}
       <div class="small muted">⏱️ ${it.timestamp||'-'} · Price: ${Number(it.price||0).toFixed(6)}</div>
     </div>`;
@@ -1569,5 +1818,6 @@ if __name__ == "__main__":
                 port=port, 
                 simulations=MC_PATHS,
                 symbols_count=len(DEFAULT_SYMBOLS),
-                provider="binance")
+                provider="binance",
+                reversal_detection=True)
     app.run(host="0.0.0.0", port=port, threaded=True, debug=False)
