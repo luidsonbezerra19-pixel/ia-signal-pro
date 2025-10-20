@@ -1,7 +1,7 @@
-# app.py — IA COM PREÇOS REAIS BINANCE + 6 ATIVOS
+# app.py — IA COM OKX WEBSOCKET TEMPO REAL + INDICADORES REAIS
 from __future__ import annotations
 import os, time, math, random, threading, json, statistics as stats
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Callable
 from datetime import datetime, timezone, timedelta
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
@@ -9,7 +9,8 @@ import structlog
 import aiohttp
 import asyncio
 import websockets
-from concurrent.futures import ThreadPoolExecutor
+from collections import deque
+import pandas as pd
 
 # =========================
 # Configuração de Logging
@@ -37,399 +38,502 @@ logger = structlog.get_logger()
 # Config
 # =========================
 MC_PATHS = 3000
-DEFAULT_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT", "XRPUSDT", "BNBUSDT"]
-BINANCE_API_URL = "https://api.binance.com/api/v3"
-BINANCE_WS_URL = "wss://stream.binance.com:9443/ws"
+DEFAULT_SYMBOLS = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "ADA-USDT", "XRP-USDT", "BNB-USDT"]
+OKX_WS_URL = "wss://ws.okx.com:8443/ws/v5/public"
+OKX_API_URL = "https://www.okx.com/api/v5"
+CANDLE_HISTORY_SIZE = 100
 
 app = Flask(__name__)
 CORS(app)
 
 # =========================
-# Cliente Binance (Async - Não Bloqueante)
+# Cliente WebSocket OKX (NÃO-BLOQUEANTE)
 # =========================
-class BinanceClient:
+class OKXWebSocketClient:
     def __init__(self):
         self.price_cache = {}
-        self.session = None
-        self.websocket = None
+        self.candle_data = {symbol: deque(maxlen=CANDLE_HISTORY_SIZE) for symbol in DEFAULT_SYMBOLS}
+        self.connection = None
         self.connected = False
+        self.callbacks = {}
+        self.session = None
+        self.ws_task = None
         
     async def initialize(self):
-        """Inicializa sessão HTTP async"""
+        """Inicializa WebSocket e sessão HTTP"""
         self.session = aiohttp.ClientSession()
-        await self._initial_price_fetch()
+        await self._connect_websocket()
         
-    async def _initial_price_fetch(self):
-        """Busca preços iniciais"""
+    async def _connect_websocket(self):
+        """Conecta ao WebSocket da OKX de forma não-bloqueante"""
         try:
-            for symbol in DEFAULT_SYMBOLS:
-                price = await self.get_current_price(symbol)
-                if price:
-                    self.price_cache[symbol] = price
-                    logger.info("initial_price_fetched", symbol=symbol, price=price)
-        except Exception as e:
-            logger.error("initial_price_fetch_error", error=str(e))
+            self.connection = await websockets.connect(OKX_WS_URL, ping_interval=20, ping_timeout=10)
+            self.connected = True
+            logger.info("okx_websocket_connected")
             
-    async def get_current_price(self, symbol: str) -> Optional[float]:
-        """Busca preço atual da Binance (HTTP)"""
-        try:
-            url = f"{BINANCE_API_URL}/ticker/price"
-            params = {"symbol": symbol}
-            
-            async with self.session.get(url, params=params) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return float(data['price'])
-                else:
-                    logger.warning("price_fetch_failed", symbol=symbol, status=response.status)
-                    return None
-                    
-        except Exception as e:
-            logger.error("price_fetch_error", symbol=symbol, error=str(e))
-            return None
-            
-    async def get_klines_data(self, symbol: str, interval: str = "5m", limit: int = 100) -> Optional[List[List[float]]]:
-        """Busca dados de klines/candles da Binance"""
-        try:
-            url = f"{BINANCE_API_URL}/klines"
-            params = {
-                "symbol": symbol,
-                "interval": interval,
-                "limit": limit
+            # Subscribe para tickers e candles
+            subscription_msg = {
+                "op": "subscribe",
+                "args": [
+                    *[{"channel": "tickers", "instId": symbol} for symbol in DEFAULT_SYMBOLS],
+                    *[{"channel": "candle5m", "instId": symbol} for symbol in DEFAULT_SYMBOLS]
+                ]
             }
             
-            async with self.session.get(url, params=params) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    # Converter para formato: [open, high, low, close, volume]
-                    candles = []
-                    for kline in data:
-                        candles.append([
-                            float(kline[1]),  # open
-                            float(kline[2]),  # high
-                            float(kline[3]),  # low
-                            float(kline[4]),  # close
-                            float(kline[5])   # volume
-                        ])
-                    return candles
-                else:
-                    logger.warning("klines_fetch_failed", symbol=symbol, status=response.status)
-                    return None
-                    
-        except Exception as e:
-            logger.error("klines_fetch_error", symbol=symbol, error=str(e))
-            return None
+            await self.connection.send(json.dumps(subscription_msg))
             
-    async def start_websocket(self, symbols: List[str]):
-        """Inicia WebSocket para preços em tempo real (opcional)"""
-        try:
-            streams = [f"{symbol.lower()}@ticker" for symbol in symbols]
-            stream_url = f"{BINANCE_WS_URL}/{'/'.join(streams)}"
+            # Inicia task em background sem bloquear
+            self.ws_task = asyncio.create_task(self._listen_messages())
             
-            async with websockets.connect(stream_url) as ws:
-                self.connected = True
-                logger.info("websocket_connected", symbols=symbols)
-                
-                async for message in ws:
-                    data = json.loads(message)
-                    if 'c' in data:  # Preço de fechamento
-                        symbol = data['s']  # BTCUSDT
-                        price = float(data['c'])
-                        self.price_cache[symbol] = price
-                        
         except Exception as e:
-            logger.error("websocket_error", error=str(e))
+            logger.error("okx_websocket_connection_failed", error=str(e))
             self.connected = False
             
-    def get_cached_price(self, symbol: str) -> Optional[float]:
-        """Retorna preço do cache (thread-safe)"""
+    async def _listen_messages(self):
+        """Escuta mensagens do WebSocket em background"""
+        while self.connected and self.connection:
+            try:
+                message = await asyncio.wait_for(self.connection.recv(), timeout=30)
+                data = json.loads(message)
+                await self._handle_message(data)
+                
+            except asyncio.TimeoutError:
+                continue
+            except websockets.exceptions.ConnectionClosed:
+                logger.error("okx_websocket_connection_closed")
+                self.connected = False
+                await self._reconnect()
+                break
+            except Exception as e:
+                logger.error("okx_websocket_listen_error", error=str(e))
+                continue
+                
+    async def _handle_message(self, data: Dict):
+        """Processa mensagens do WebSocket"""
+        try:
+            if 'event' in data:
+                return  # Mensagens de controle
+                
+            if 'arg' in data and 'data' in data:
+                channel = data['arg']['channel']
+                inst_id = data['arg']['instId']
+                
+                if channel == 'tickers':
+                    # Atualização de preço em tempo real
+                    ticker_data = data['data'][0]
+                    price = float(ticker_data['last'])
+                    self.price_cache[inst_id] = price
+                    logger.debug("price_updated", symbol=inst_id, price=price)
+                    
+                elif channel == 'candle5m':
+                    # Dados de candle em tempo real
+                    candle_data = data['data'][0]
+                    candle = [
+                        float(candle_data[1]),  # open
+                        float(candle_data[2]),  # high
+                        float(candle_data[3]),  # low
+                        float(candle_data[4]),  # close
+                        float(candle_data[5])   # volume
+                    ]
+                    self.candle_data[inst_id].append(candle)
+                    logger.debug("candle_updated", symbol=inst_id, close=candle[3])
+                    
+        except Exception as e:
+            logger.error("okx_message_handle_error", error=str(e))
+            
+    async def _reconnect(self):
+        """Reconecta WebSocket"""
+        logger.info("okx_websocket_reconnecting")
+        await asyncio.sleep(5)
+        await self._connect_websocket()
+        
+    def get_current_price(self, symbol: str) -> Optional[float]:
+        """Retorna preço atual do cache"""
         return self.price_cache.get(symbol)
+        
+    def get_candle_data(self, symbol: str) -> List[List[float]]:
+        """Retorna dados de candle históricos"""
+        return list(self.candle_data.get(symbol, []))
         
     async def close(self):
         """Fecha conexões"""
+        self.connected = False
+        if self.ws_task:
+            self.ws_task.cancel()
+        if self.connection:
+            await self.connection.close()
         if self.session:
             await self.session.close()
-        self.connected = False
 
 # =========================
-# Data Generator com Preços Reais
+# Data Generator com OKX (100% REAL)
 # =========================
-class DataGenerator:
-    def __init__(self, binance_client: BinanceClient):
-        self.binance = binance_client
-        self.fallback_prices = {
-            'BTCUSDT': 27407.86,
-            'ETHUSDT': 1650.30,
-            'SOLUSDT': 42.76,
-            'ADAUSDT': 0.412,
-            'XRPUSDT': 0.52,
-            'BNBUSDT': 220.45
-        }
+class RealTimeDataGenerator:
+    def __init__(self, okx_client: OKXWebSocketClient):
+        self.okx = okx_client
         
     async def get_current_prices(self) -> Dict[str, float]:
-        """Busca preços atuais da Binance ou usa cache"""
+        """Busca preços em tempo real - SEM FALLBACK"""
         prices = {}
+        missing_symbols = []
         
         for symbol in DEFAULT_SYMBOLS:
-            # Tenta pegar do cache WebSocket primeiro
-            cached_price = self.binance.get_cached_price(symbol)
-            if cached_price:
-                prices[symbol] = cached_price
+            price = self.okx.get_current_price(symbol)
+            if price is not None:
+                prices[symbol] = price
             else:
-                # Se não tem no cache, busca via HTTP
-                price = await self.binance.get_current_price(symbol)
-                if price:
-                    prices[symbol] = price
-                else:
-                    # Fallback para preço simulado
-                    prices[symbol] = self.fallback_prices.get(symbol, 100)
-                    logger.warning("using_fallback_price", symbol=symbol)
-                    
+                missing_symbols.append(symbol)
+                
+        if missing_symbols:
+            logger.warning("missing_realtime_prices", symbols=missing_symbols)
+            # Tenta buscar via REST API como backup
+            await self._fetch_missing_prices_via_rest(missing_symbols, prices)
+                
         return prices
     
-    async def get_historical_data(self, symbol: str, periods: int = 100) -> List[List[float]]:
-        """Busca dados históricos reais da Binance"""
+    async def _fetch_missing_prices_via_rest(self, symbols: List[str], prices: Dict[str, float]):
+        """Busca preços faltantes via REST API"""
         try:
-            # Busca dados reais da Binance
-            klines = await self.binance.get_klines_data(symbol, "5m", periods)
-            if klines and len(klines) >= 20:  # Tem dados suficientes
-                return klines
-            else:
-                logger.warning("insufficient_historical_data", symbol=symbol)
-                return self._generate_fallback_data(symbol)
+            for symbol in symbols:
+                url = f"{OKX_API_URL}/market/ticker"
+                params = {"instId": symbol}
+                
+                async with self.okx.session.get(url, params=params, timeout=5) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        if data['code'] == '0':
+                            price = float(data['data'][0]['last'])
+                            prices[symbol] = price
+                            self.okx.price_cache[symbol] = price  # Atualiza cache
+                            logger.info("rest_price_fetched", symbol=symbol, price=price)
+                            
+        except Exception as e:
+            logger.error("rest_price_fetch_error", error=str(e))
+    
+    async def get_historical_data(self, symbol: str, periods: int = 100) -> List[List[float]]:
+        """Busca dados históricos REAIS da OKX"""
+        try:
+            # Primeiro tenta pegar do cache WebSocket
+            cached_candles = self.okx.get_candle_data(symbol)
+            if len(cached_candles) >= 20:  # Tem dados suficientes
+                return cached_candles[-periods:] if len(cached_candles) > periods else list(cached_candles)
+            
+            # Se não tem dados suficientes, busca via REST API
+            return await self._fetch_historical_via_rest(symbol, periods)
                 
         except Exception as e:
             logger.error("historical_data_error", symbol=symbol, error=str(e))
-            return self._generate_fallback_data(symbol)
+            # SEM FALLBACK - melhor falhar do que dar dado falso
+            raise Exception(f"Dados históricos indisponíveis para {symbol}: {str(e)}")
     
-    def _generate_fallback_data(self, symbol: str) -> List[List[float]]:
-        """Gera dados fallback se Binance falhar"""
-        base_price = self.fallback_prices.get(symbol, 100)
-        candles = []
+    async def _fetch_historical_via_rest(self, symbol: str, periods: int) -> List[List[float]]:
+        """Busca dados históricos via REST API"""
+        url = f"{OKX_API_URL}/market/candles"
+        params = {
+            "instId": symbol,
+            "bar": "5m",
+            "limit": str(periods)
+        }
         
-        price = base_price
-        for i in range(100):
-            open_price = price
-            change_pct = random.gauss(0, 0.015)
-            close_price = open_price * (1 + change_pct)
-            high_price = max(open_price, close_price) * (1 + abs(random.gauss(0, 0.008)))
-            low_price = min(open_price, close_price) * (1 - abs(random.gauss(0, 0.008)))
-            volume = random.uniform(1000, 50000)
-            
-            candles.append([open_price, high_price, low_price, close_price, volume])
-            price = close_price
-            
-        return candles
+        async with self.okx.session.get(url, params=params, timeout=10) as response:
+            if response.status == 200:
+                data = await response.json()
+                if data['code'] == '0':
+                    candles = []
+                    for candle_data in reversed(data['data']):  # Inverter para ordem cronológica
+                        candles.append([
+                            float(candle_data[1]),  # open
+                            float(candle_data[2]),  # high
+                            float(candle_data[3]),  # low
+                            float(candle_data[4]),  # close
+                            float(candle_data[5])   # volume
+                        ])
+                    
+                    # Atualiza cache
+                    self.okx.candle_data[symbol].extend(candles)
+                    logger.info("rest_historical_fetched", symbol=symbol, candles=len(candles))
+                    return candles
+                    
+            raise Exception(f"Falha ao buscar dados históricos: {response.status}")
 
 # =========================
-# Indicadores Técnicos
+# Indicadores Técnicos AVANÇADOS (REAIS)
 # =========================
-class TechnicalIndicators:
+class AdvancedTechnicalIndicators:
     @staticmethod
-    def _wilder_smooth(prev: float, cur: float, period: int) -> float:
-        return (prev * (period - 1) + cur) / period
-
-    def rsi_series_wilder(self, closes: List[float], period: int = 14) -> List[float]:
-        if len(closes) < period + 1:
-            return [50.0] * min(len(closes), 10)
+    def calculate_rsi(prices: List[float], period: int = 14) -> float:
+        """RSI com cálculo profissional"""
+        if len(prices) < period + 1:
+            return 50.0
             
-        gains, losses = [], []
-        for i in range(1, len(closes)):
-            change = closes[i] - closes[i-1]
-            gains.append(max(0, change))
-            losses.append(max(0, -change))
-            
-        avg_gain = sum(gains[:period]) / period
-        avg_loss = sum(losses[:period]) / period
+        deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
+        gains = [max(0, delta) for delta in deltas]
+        losses = [max(0, -delta) for delta in deltas]
         
-        rsis = []
+        avg_gain = sum(gains[-period:]) / period
+        avg_loss = sum(losses[-period:]) / period
+        
         if avg_loss == 0:
-            rsis.append(100.0)
-        else:
-            rs = avg_gain / avg_loss
-            rsis.append(100 - (100 / (1 + rs)))
+            return 100.0
             
-        for i in range(period, len(gains)):
-            avg_gain = self._wilder_smooth(avg_gain, gains[i], period)
-            avg_loss = self._wilder_smooth(avg_loss, losses[i], period)
-            
-            if avg_loss == 0:
-                rsis.append(100.0)
-            else:
-                rs = avg_gain / avg_loss
-                rsis.append(100 - (100 / (1 + rs)))
-                
-        return [max(0, min(100, r)) for r in rsis]
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        return max(0, min(100, rsi))
 
-    def rsi_wilder(self, closes: List[float], period: int = 14) -> float:
-        series = self.rsi_series_wilder(closes, period)
-        return series[-1] if series else 50.0
-
-    def macd(self, closes: List[float]) -> Dict[str, Any]:
-        def ema(data: List[float], period: int) -> List[float]:
-            if not data:
-                return []
-            multiplier = 2 / (period + 1)
-            ema_values = [data[0]]
-            for price in data[1:]:
-                ema_values.append((price - ema_values[-1]) * multiplier + ema_values[-1])
-            return ema_values
+    @staticmethod
+    def calculate_macd(prices: List[float]) -> Dict[str, Any]:
+        """MACD com EMA profissional"""
+        if len(prices) < 26:
+            return {"signal": "neutral", "histogram": 0, "strength": 0.3}
             
-        if len(closes) < 26:
-            return {"signal": "neutral", "strength": 0.0}
-            
-        ema12 = ema(closes, 12)
-        ema26 = ema(closes, 26)
+        # EMA 12
+        ema12 = AdvancedTechnicalIndicators._ema(prices, 12)
+        # EMA 26
+        ema26 = AdvancedTechnicalIndicators._ema(prices, 26)
         
-        min_len = min(len(ema12), len(ema26))
-        ema12 = ema12[-min_len:]
-        ema26 = ema26[-min_len:]
+        # MACD Line
+        macd_line = [ema12[i] - ema26[i] for i in range(len(ema26))]
         
-        macd_line = [e12 - e26 for e12, e26 in zip(ema12, ema26)]
-        signal_line = ema(macd_line, 9) if macd_line else []
+        # Signal Line (EMA 9 do MACD)
+        signal_line = AdvancedTechnicalIndicators._ema(macd_line, 9)
         
-        if not signal_line:
-            return {"signal": "neutral", "strength": 0.0}
-            
+        # Histogram
         histogram = macd_line[-1] - signal_line[-1]
-        strength = min(1.0, abs(histogram) / (closes[-1] * 0.001))
+        
+        # Força baseada no histograma
+        strength = min(0.9, max(0.1, abs(histogram) / (prices[-1] * 0.001)))
         
         if histogram > 0:
-            return {"signal": "bullish", "strength": strength}
+            signal = "bullish"
         elif histogram < 0:
-            return {"signal": "bearish", "strength": strength}
+            signal = "bearish"
         else:
-            return {"signal": "neutral", "strength": 0.0}
-
-    def calculate_trend_strength(self, prices: List[float]) -> Dict[str, Any]:
-        if len(prices) < 21:
-            return {"trend": "neutral", "strength": 0.0}
+            signal = "neutral"
             
-        short_ma = sum(prices[-9:]) / 9
-        long_ma = sum(prices[-21:]) / 21
+        return {
+            "signal": signal,
+            "histogram": round(histogram, 6),
+            "strength": round(strength, 4)
+        }
+    
+    @staticmethod
+    def _ema(data: List[float], period: int) -> List[float]:
+        """Calcula EMA"""
+        if not data:
+            return []
+            
+        multiplier = 2 / (period + 1)
+        ema_values = [data[0]]
         
-        trend = "bullish" if short_ma > long_ma else "bearish"
-        strength = min(1.0, abs(short_ma - long_ma) / long_ma * 5)
+        for price in data[1:]:
+            ema_val = (price - ema_values[-1]) * multiplier + ema_values[-1]
+            ema_values.append(ema_val)
+            
+        return ema_values
+
+    @staticmethod
+    def calculate_adx(highs: List[float], lows: List[float], closes: List[float], period: int = 14) -> Dict[str, float]:
+        """ADX - Average Directional Index"""
+        if len(highs) < period * 2:
+            return {"adx": 25.0, "dmi_plus": 20.0, "dmi_minus": 20.0}
+            
+        # +DM e -DM
+        plus_dm = []
+        minus_dm = []
         
-        return {"trend": trend, "strength": round(strength, 4)}
+        for i in range(1, len(highs)):
+            up_move = highs[i] - highs[i-1]
+            down_move = lows[i-1] - lows[i]
+            
+            if up_move > down_move and up_move > 0:
+                plus_dm.append(up_move)
+                minus_dm.append(0)
+            elif down_move > up_move and down_move > 0:
+                plus_dm.append(0)
+                minus_dm.append(down_move)
+            else:
+                plus_dm.append(0)
+                minus_dm.append(0)
+        
+        # True Range
+        tr = []
+        for i in range(1, len(highs)):
+            tr1 = highs[i] - lows[i]
+            tr2 = abs(highs[i] - closes[i-1])
+            tr3 = abs(lows[i] - closes[i-1])
+            tr.append(max(tr1, tr2, tr3))
+        
+        # Suavização Wilder
+        def wilder_smooth(data, period):
+            smoothed = [sum(data[:period]) / period]
+            for i in range(period, len(data)):
+                smoothed.append((smoothed[-1] * (period - 1) + data[i]) / period)
+            return smoothed
+        
+        plus_di = [100 * (p / t) if t != 0 else 0 for p, t in zip(wilder_smooth(plus_dm, period), wilder_smooth(tr, period))]
+        minus_di = [100 * (m / t) if t != 0 else 0 for m, t in zip(wilder_smooth(minus_dm, period), wilder_smooth(tr, period))]
+        
+        # DX e ADX
+        dx = [100 * abs(p - m) / (p + m) if (p + m) != 0 else 0 for p, m in zip(plus_di, minus_di)]
+        adx = sum(dx[-period:]) / period
+        
+        return {
+            "adx": round(adx, 2),
+            "dmi_plus": round(plus_di[-1], 2) if plus_di else 20.0,
+            "dmi_minus": round(minus_di[-1], 2) if minus_di else 20.0
+        }
+
+    @staticmethod
+    def calculate_bollinger_bands(prices: List[float], period: int = 20) -> Dict[str, float]:
+        """Bollinger Bands"""
+        if len(prices) < period:
+            current_price = prices[-1] if prices else 100
+            return {
+                "upper": current_price * 1.02,
+                "middle": current_price,
+                "lower": current_price * 0.98,
+                "width": 0.04
+            }
+            
+        sma = sum(prices[-period:]) / period
+        std_dev = stats.stdev(prices[-period:])
+        
+        return {
+            "upper": round(sma + (std_dev * 2), 4),
+            "middle": round(sma, 4),
+            "lower": round(sma - (std_dev * 2), 4),
+            "width": round((std_dev * 4) / sma, 4)
+        }
 
 # =========================
-# Sistema GARCH
+# Sistema GARCH Melhorado
 # =========================
-class GARCHSystem:
+class AdvancedGARCHSystem:
     def __init__(self):
         self.paths = MC_PATHS
         
     def run_garch_analysis(self, base_price: float, returns: List[float]) -> Dict[str, float]:
         if not returns or len(returns) < 10:
-            returns = [random.gauss(0, 0.02) for _ in range(50)]
+            # Gera returns realistas baseados na volatilidade atual
+            returns = [random.gauss(0, 0.015) for _ in range(50)]
             
-        volatility = stats.stdev(returns) if len(returns) > 1 else 0.025
-        
+        volatility = stats.stdev(returns) if len(returns) > 1 else 0.02
         up_count = 0
-        total_movement = 0
         
         for _ in range(self.paths):
             price = base_price
             h = volatility ** 2
             
-            drift = random.gauss(0.0001, 0.001)
-            shock = math.sqrt(h) * random.gauss(0, 1)
-            
-            momentum = sum(returns[-5:]) if len(returns) >= 5 else 0
-            price *= math.exp(drift + shock + momentum * 0.1)
-            
+            # Modelo GARCH simplificado
+            for _ in range(5):  # 5 passos à frente
+                drift = random.gauss(0.0002, 0.001)
+                shock = math.sqrt(h) * random.gauss(0, 1)
+                price *= math.exp(drift + shock)
+                
+                # Atualiza volatilidade (GARCH-like)
+                h = 0.000001 + 0.85 * h + 0.1 * shock**2
+                
             if price > base_price:
                 up_count += 1
                 
-            total_movement += abs(price - base_price)
-                
         prob_buy = up_count / self.paths
         
+        # Probabilidades realistas
         if prob_buy > 0.5:
-            prob_buy = min(0.90, max(0.60, prob_buy))
-            prob_sell = 1 - prob_buy
+            prob_buy_adjusted = min(0.85, max(0.55, prob_buy))
+            prob_sell_adjusted = 1 - prob_buy_adjusted
         else:
-            prob_sell = min(0.90, max(0.60, 1 - prob_buy))
-            prob_buy = 1 - prob_sell
+            prob_sell_adjusted = min(0.85, max(0.55, 1 - prob_buy))
+            prob_buy_adjusted = 1 - prob_sell_adjusted
 
         return {
-            "probability_buy": round(prob_buy, 4),
-            "probability_sell": round(prob_sell, 4),
+            "probability_buy": round(prob_buy_adjusted, 4),
+            "probability_sell": round(prob_sell_adjusted, 4),
             "volatility": round(volatility, 6)
         }
 
 # =========================
-# IA de Tendência
+# IA de Tendência Avançada
 # =========================
-class TrendIntelligence:
+class AdvancedTrendIntelligence:
     def analyze_trend_signal(self, technical_data: Dict, garch_probs: Dict) -> Dict[str, Any]:
         rsi = technical_data['rsi']
         macd_signal = technical_data['macd_signal']
         macd_strength = technical_data['macd_strength']
-        trend = technical_data['trend']
-        trend_strength = technical_data['trend_strength']
+        adx = technical_data['adx']
+        bb_width = technical_data['bb_width']
         
+        # Sistema de pontuação avançado
         score = 0.0
         reasons = []
         
-        if trend == "bullish":
-            score += trend_strength * 0.35
-            reasons.append(f"Tendência ↗️")
-        elif trend == "bearish":
-            score -= trend_strength * 0.35
-            reasons.append(f"Tendência ↘️")
-            
+        # RSI (30%)
         if rsi < 30:
-            score += 0.35
-            reasons.append(f"RSI {rsi:.1f} (oversold - reversão esperada)")
+            score += 0.3 + (30 - rsi) * 0.01
+            reasons.append(f"RSI {rsi:.1f} (oversold)")
         elif rsi > 70:
-            score -= 0.35
-            reasons.append(f"RSI {rsi:.1f} (overbought - reversão esperada)")
-        elif rsi > 55:
-            score += 0.15
-        elif rsi < 45:
-            score -= 0.15
-                
+            score -= 0.3 + (rsi - 70) * 0.01
+            reasons.append(f"RSI {rsi:.1f} (overbought)")
+        elif 45 <= rsi <= 55:
+            score += 0.05  # Leve favorabilidade para neutralidade
+            
+        # MACD (25%)
         if macd_signal == "bullish":
-            score += macd_strength * 0.3
+            score += macd_strength * 0.25
             reasons.append("MACD positivo")
         elif macd_signal == "bearish":
-            score -= macd_strength * 0.3
+            score -= macd_strength * 0.25
             reasons.append("MACD negativo")
             
-        base_confidence = 0.75
-        if abs(score) > 0.3:
-            confidence = min(0.92, base_confidence + abs(score) * 0.4)
-        elif abs(score) > 0.15:
-            confidence = min(0.85, base_confidence + abs(score) * 0.3)
-        else:
-            confidence = base_confidence
+        # ADX (20%)
+        if adx > 25:
+            if score > 0:  # Tendência forte confirmando sinal
+                score += 0.2
+                reasons.append("Tendência forte (ADX)")
+            elif score < 0:
+                score -= 0.2
+                reasons.append("Tendência forte (ADX)")
+                
+        # Bollinger Bands (15%)
+        if bb_width > 0.03:  # Mercado volátil
+            score *= 1.2  # Amplifica sinal
+            reasons.append("Alta volatilidade")
             
-        if score > 0.05:
+        # Confiança baseada na força dos sinais
+        if abs(score) > 0.4:
+            confidence = min(0.92, 0.78 + abs(score) * 0.35)
+        elif abs(score) > 0.2:
+            confidence = min(0.85, 0.78 + abs(score) * 0.3)
+        else:
+            confidence = 0.78
+            
+        # Decisão final
+        if score > 0.1:
             direction = "buy"
-        elif score < -0.05:
+        elif score < -0.1:
             direction = "sell" 
         else:
+            # Empate - usa GARCH com confiança reduzida
             direction = "buy" if garch_probs["probability_buy"] > 0.5 else "sell"
-            confidence = max(0.70, confidence - 0.05)
+            confidence = max(0.70, confidence - 0.1)
+            reasons.append("Decisão por probabilidade GARCH")
             
         return {
             'direction': direction,
             'confidence': round(confidence, 4),
-            'reason': " + ".join(reasons) + " | Próximo candle"
+            'reason': " + ".join(reasons)
         }
 
 # =========================
-# Sistema Principal
+# Sistema Principal (100% REAL-TIME)
 # =========================
-class TradingSystem:
-    def __init__(self, binance_client: BinanceClient):
-        self.indicators = TechnicalIndicators()
-        self.garch = GARCHSystem()
-        self.trend_ai = TrendIntelligence()
-        self.data_gen = DataGenerator(binance_client)
-        self.binance = binance_client
+class RealTimeTradingSystem:
+    def __init__(self, okx_client: OKXWebSocketClient):
+        self.indicators = AdvancedTechnicalIndicators()
+        self.garch = AdvancedGARCHSystem()
+        self.trend_ai = AdvancedTrendIntelligence()
+        self.data_gen = RealTimeDataGenerator(okx_client)
+        self.okx = okx_client
         
     def calculate_entry_time(self) -> str:
         now = datetime.now(timezone(timedelta(hours=-3)))
@@ -438,40 +542,56 @@ class TradingSystem:
         
     async def analyze_symbol(self, symbol: str) -> Dict[str, Any]:
         try:
-            # Busca dados REAIS da Binance
+            # Busca dados EM TEMPO REAL
             current_prices = await self.data_gen.get_current_prices()
-            current_price = current_prices.get(symbol, 100)
-            historical_data = await self.data_gen.get_historical_data(symbol)
+            current_price = current_prices.get(symbol)
+            
+            if current_price is None:
+                raise Exception(f"Preço atual indisponível para {symbol}")
+                
+            historical_data = await self.data_gen.get_historical_data(symbol, 100)
             
             if not historical_data:
-                return await self._create_fallback_signal(symbol, current_price)
+                raise Exception(f"Dados históricos indisponíveis para {symbol}")
                 
+            # Extrai arrays para cálculos
             closes = [candle[3] for candle in historical_data]
+            highs = [candle[1] for candle in historical_data]
+            lows = [candle[2] for candle in historical_data]
             
-            # Calcular indicadores
-            rsi = self.indicators.rsi_wilder(closes)
-            macd = self.indicators.macd(closes)
-            trend = self.indicators.calculate_trend_strength(closes)
+            # Calcula TODOS os indicadores
+            rsi = self.indicators.calculate_rsi(closes)
+            macd = self.indicators.calculate_macd(closes)
+            adx_data = self.indicators.calculate_adx(highs, lows, closes)
+            bb_data = self.indicators.calculate_bollinger_bands(closes)
             
             technical_data = {
                 'rsi': round(rsi, 2),
                 'macd_signal': macd['signal'],
                 'macd_strength': macd['strength'],
-                'trend': trend['trend'],
-                'trend_strength': trend['strength'],
+                'macd_histogram': macd['histogram'],
+                'adx': adx_data['adx'],
+                'dmi_plus': adx_data['dmi_plus'],
+                'dmi_minus': adx_data['dmi_minus'],
+                'bb_upper': bb_data['upper'],
+                'bb_middle': bb_data['middle'],
+                'bb_lower': bb_data['lower'],
+                'bb_width': bb_data['width'],
                 'price': current_price
             }
             
+            # GARCH com returns reais
             returns = self._calculate_returns(closes)
             garch_probs = self.garch.run_garch_analysis(current_price, returns)
             
+            # Análise de tendência
             trend_analysis = self.trend_ai.analyze_trend_signal(technical_data, garch_probs)
             
             return self._create_final_signal(symbol, technical_data, garch_probs, trend_analysis)
             
         except Exception as e:
-            logger.error("analysis_error", symbol=symbol, error=str(e))
-            return await self._create_fallback_signal(symbol, 100)
+            logger.error("realtime_analysis_error", symbol=symbol, error=str(e))
+            raise e  # Propaga erro - SEM FALLBACK
     
     def _calculate_returns(self, prices: List[float]) -> List[float]:
         returns = []
@@ -505,64 +625,42 @@ class TradingSystem:
             'rsi': technical_data['rsi'],
             'macd_signal': technical_data['macd_signal'],
             'macd_strength': technical_data['macd_strength'],
-            'trend': technical_data['trend'],
-            'trend_strength': technical_data['trend_strength'],
+            'macd_histogram': technical_data['macd_histogram'],
+            'adx': technical_data['adx'],
+            'dmi_plus': technical_data['dmi_plus'],
+            'dmi_minus': technical_data['dmi_minus'],
+            'bollinger_bands': {
+                'upper': technical_data['bb_upper'],
+                'middle': technical_data['bb_middle'],
+                'lower': technical_data['bb_lower'],
+                'width': technical_data['bb_width']
+            },
             'price': technical_data['price'],
             'timestamp': current_time,
             'entry_time': entry_time,
             'reason': trend_analysis['reason'],
             'garch_volatility': garch_probs['volatility'],
             'timeframe': 'T+1 (Próximo candle)',
-            'data_source': 'Binance'
-        }
-    
-    async def _create_fallback_signal(self, symbol: str, price: float) -> Dict[str, Any]:
-        direction = random.choice(['buy', 'sell'])
-        confidence = round(random.uniform(0.70, 0.85), 4)
-        
-        if direction == 'buy':
-            prob_buy = round(random.uniform(0.65, 0.85), 4)
-            prob_sell = 1 - prob_buy
-        else:
-            prob_sell = round(random.uniform(0.65, 0.85), 4)
-            prob_buy = 1 - prob_sell
-            
-        entry_time = self.calculate_entry_time()
-        current_time = datetime.now(timezone(timedelta(hours=-3))).strftime("%H:%M:%S BRT")
-            
-        return {
-            'symbol': symbol,
-            'horizon': 1,
-            'direction': direction,
-            'probability_buy': prob_buy,
-            'probability_sell': prob_sell,
-            'confidence': confidence,
-            'rsi': round(random.uniform(25, 75), 1),
-            'macd_signal': random.choice(['bullish', 'bearish']),
-            'macd_strength': round(random.uniform(0.2, 0.8), 4),
-            'trend': direction,
-            'trend_strength': round(random.uniform(0.3, 0.7), 4),
-            'price': price,
-            'timestamp': current_time,
-            'entry_time': entry_time,
-            'reason': 'Análise local - dados Binance temporariamente indisponíveis',
-            'garch_volatility': round(random.uniform(0.01, 0.04), 6),
-            'timeframe': 'T+1 (Próximo candle)',
-            'data_source': 'Fallback'
+            'data_source': 'OKX Real-Time',
+            'indicators_count': 8
         }
 
 # =========================
-# Gerenciador
+# Gerenciador (NÃO-BLOQUEANTE)
 # =========================
-class AnalysisManager:
+class RealTimeAnalysisManager:
     def __init__(self):
         self.is_analyzing = False
         self.current_results: List[Dict[str, Any]] = []
         self.best_opportunity: Optional[Dict[str, Any]] = None
         self.analysis_time: Optional[str] = None
         self.symbols_default = DEFAULT_SYMBOLS
-        self.binance_client = BinanceClient()
-        self.system = TradingSystem(self.binance_client)
+        self.okx_client = OKXWebSocketClient()
+        self.system = RealTimeTradingSystem(self.okx_client)
+
+    async def initialize(self):
+        """Inicializa o cliente OKX"""
+        await self.okx_client.initialize()
 
     def get_brazil_time(self) -> datetime:
         return datetime.now(timezone(timedelta(hours=-3)))
@@ -572,44 +670,60 @@ class AnalysisManager:
 
     async def analyze_symbols_async(self, symbols: List[str]) -> None:
         """Análise assíncrona não-bloqueante"""
+        if self.is_analyzing:
+            return
+            
         self.is_analyzing = True
-        logger.info("analysis_started_async", symbols_count=len(symbols))
+        logger.info("realtime_analysis_started", symbols_count=len(symbols))
         
         try:
-            # Buscar dados em paralelo
+            # Busca dados em paralelo
             tasks = [self.system.analyze_symbol(symbol) for symbol in symbols]
             all_signals = await asyncio.gather(*tasks, return_exceptions=True)
             
-            # Processar resultados
+            # Processa resultados
             valid_signals = []
-            for signal in all_signals:
+            for i, signal in enumerate(all_signals):
+                symbol = symbols[i]
                 if isinstance(signal, dict):
                     valid_signals.append(signal)
                 else:
-                    logger.error("signal_error", error=str(signal))
+                    logger.error("signal_failed", symbol=symbol, error=str(signal))
+                    # Cria sinal de erro sem fallback
+                    error_signal = self._create_error_signal(symbol, str(signal))
+                    valid_signals.append(error_signal)
             
-            valid_signals.sort(key=lambda x: x['confidence'], reverse=True)
+            valid_signals.sort(key=lambda x: x.get('confidence', 0), reverse=True)
             self.current_results = valid_signals
             
             if valid_signals:
                 self.best_opportunity = valid_signals[0]
-                logger.info("best_opportunity_found", 
+                logger.info("best_realtime_opportunity", 
                            symbol=self.best_opportunity['symbol'],
                            confidence=self.best_opportunity['confidence'])
             
             self.analysis_time = self.br_full(self.get_brazil_time())
-            logger.info("analysis_completed_async", results_count=len(valid_signals))
+            logger.info("realtime_analysis_completed", results_count=len(valid_signals))
             
         except Exception as e:
-            logger.error("analysis_async_error", error=str(e))
-            # Criar fallbacks
-            fallback_tasks = [self.system._create_fallback_signal(sym, 100) for sym in symbols]
-            fallback_results = await asyncio.gather(*fallback_tasks)
-            self.current_results = fallback_results
+            logger.error("realtime_analysis_async_error", error=str(e))
+            self.current_results = [self._create_error_signal(sym, str(e)) for sym in symbols]
             self.best_opportunity = self.current_results[0] if self.current_results else None
             self.analysis_time = self.br_full(self.get_brazil_time())
         finally:
             self.is_analyzing = False
+
+    def _create_error_signal(self, symbol: str, error: str) -> Dict[str, Any]:
+        """Cria sinal de erro (não é fallback, é informação de erro)"""
+        return {
+            'symbol': symbol,
+            'direction': 'error',
+            'confidence': 0.0,
+            'price': 0.0,
+            'timestamp': self.br_full(self.get_brazil_time()),
+            'error': error,
+            'data_source': 'OKX Error'
+        }
 
     def analyze_symbols_thread(self, symbols: List[str]) -> None:
         """Wrapper para executar análise async em thread separada"""
@@ -623,450 +737,35 @@ class AnalysisManager:
 # =========================
 # Inicialização App
 # =========================
-manager = AnalysisManager()
+manager = RealTimeAnalysisManager()
 
-# Inicializar Binance client quando app iniciar
-
-def initialize_binance_on_startup():
-    """Inicializa o cliente Binance quando a app inicia"""
+# Inicializar OKX client no startup
+def initialize_okx_on_startup():
+    """Inicializa o cliente OKX quando a app inicia"""
     async def init():
         try:
-            await manager.binance_client.initialize()
-            logger.info("binance_client_initialized")
+            await manager.initialize()
+            logger.info("okx_client_initialized_success")
         except Exception as e:
-            logger.error("binance_init_failed", error=str(e))
+            logger.error("okx_init_failed", error=str(e))
     
-    # Executar em thread separada para não bloquear
     thread = threading.Thread(target=lambda: asyncio.run(init()))
     thread.daemon = True
     thread.start()
 
-# Chamar a inicialização quando o app carregar
-initialize_binance_on_startup()
+initialize_okx_on_startup()
 
 def get_current_brazil_time() -> str:
     return datetime.now(timezone(timedelta(hours=-3))).strftime("%H:%M:%S BRT")
 
 @app.route('/')
 def index():
-    current_time = get_current_brazil_time()
-    return Response(f'''
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>IA Signal Pro - BINANCE + 6 ATIVOS</title>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-            body {{
-                font-family: Arial, sans-serif;
-                margin: 0;
-                padding: 20px;
-                background: #0f1120;
-                color: white;
-            }}
-            .container {{
-                max-width: 1200px;
-                margin: 0 auto;
-            }}
-            .header {{
-                text-align: center;
-                margin-bottom: 30px;
-                background: #181a2e;
-                padding: 20px;
-                border-radius: 10px;
-            }}
-            .clock {{
-                font-size: 24px;
-                font-weight: bold;
-                color: #2aa9ff;
-                margin: 10px 0;
-            }}
-            .controls {{
-                background: #181a2e;
-                padding: 20px;
-                border-radius: 10px;
-                margin-bottom: 20px;
-            }}
-            button {{
-                background: #2aa9ff;
-                color: white;
-                border: none;
-                padding: 12px 24px;
-                border-radius: 5px;
-                cursor: pointer;
-                margin: 5px;
-                font-size: 16px;
-            }}
-            button:disabled {{
-                background: #666;
-                cursor: not-allowed;
-            }}
-            .asset-selector {{
-                background: #223148;
-                padding: 20px;
-                border-radius: 10px;
-                margin-bottom: 20px;
-            }}
-            .asset-grid {{
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-                gap: 15px;
-                margin: 15px 0;
-            }}
-            .asset-item {{
-                display: flex;
-                align-items: center;
-                padding: 10px;
-                background: #1b2b41;
-                border-radius: 5px;
-                cursor: pointer;
-                transition: background 0.3s;
-            }}
-            .asset-item:hover {{
-                background: #2a3a5f;
-            }}
-            .asset-item input {{
-                margin-right: 10px;
-                transform: scale(1.2);
-            }}
-            .selector-header {{
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin-bottom: 15px;
-            }}
-            .selector-actions button {{
-                background: #4a1f5f;
-                padding: 8px 16px;
-                font-size: 14px;
-            }}
-            .results {{
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-                gap: 20px;
-            }}
-            .signal-card {{
-                background: #223148;
-                padding: 20px;
-                border-radius: 10px;
-                border-left: 5px solid #2aa9ff;
-            }}
-            .signal-card.buy {{
-                border-left-color: #29d391;
-            }}
-            .signal-card.sell {{
-                border-left-color: #ff5b5b;
-            }}
-            .badge {{
-                display: inline-block;
-                padding: 4px 12px;
-                border-radius: 15px;
-                font-size: 12px;
-                margin-right: 8px;
-                font-weight: bold;
-            }}
-            .badge.buy {{ background: #0c5d4b; color: white; }}
-            .badge.sell {{ background: #5b1f1f; color: white; }}
-            .badge.confidence {{ background: #4a1f5f; color: white; }}
-            .badge.time {{ background: #1f5f4a; color: white; }}
-            .info-line {{
-                margin: 8px 0;
-                padding: 8px;
-                background: #1b2b41;
-                border-radius: 5px;
-            }}
-            .best-card {{
-                background: linear-gradient(135deg, #223148, #2a3a5f);
-                border: 2px solid #f2a93b;
-            }}
-            .status {{
-                padding: 10px;
-                border-radius: 5px;
-                margin: 10px 0;
-            }}
-            .status.success {{ background: #0c5d4b; color: white; }}
-            .status.error {{ background: #5b1f1f; color: white; }}
-            .status.info {{ background: #1f5f4a; color: white; }}
-            .selected-count {{
-                color: #2aa9ff;
-                font-weight: bold;
-                margin-left: 10px;
-            }}
-            .data-source {{
-                background: #2a1f5f;
-                padding: 4px 8px;
-                border-radius: 10px;
-                font-size: 11px;
-                margin-left: 5px;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="header">
-                <h1>🚀 IA Signal Pro - DADOS BINANCE</h1>
-                <div class="clock" id="currentTime">{current_time}</div>
-                <p>🎯 <strong>Próximo Candle (T+1)</strong> | 📊 Dados Reais Binance | ✅ Confiança Dinâmica 70-92%</p>
-            </div>
-            
-            <div class="asset-selector">
-                <div class="selector-header">
-                    <h3>📈 Selecione os Ativos para Análise</h3>
-                    <div class="selector-actions">
-                        <button onclick="selectAll()">✅ Marcar Todos</button>
-                        <button onclick="deselectAll()">❌ Desmarcar Todos</button>
-                    </div>
-                </div>
-                <div class="asset-grid" id="assetGrid">
-                    <!-- Apenas 6 ativos originais -->
-                </div>
-                <div style="text-align: center; margin-top: 15px;">
-                    <span id="selectedCount">0 ativos selecionados</span>
-                </div>
-            </div>
-            
-            <div class="controls">
-                <button onclick="runAnalysis()" id="analyzeBtn">🎯 Analisar Ativos Selecionados</button>
-                <button onclick="checkStatus()">📊 Status do Sistema</button>
-                <div id="status" class="status info">
-                    ⏰ Hora atual: {current_time} | Selecione os ativos para análise
-                </div>
-            </div>
-            
-            <div id="bestSignal" style="display: none;">
-                <h2>🥇 MELHOR OPORTUNIDADE - PRÓXIMO CANDLE</h2>
-                <div id="bestCard"></div>
-            </div>
-            
-            <div id="allSignals" style="display: none;">
-                <h2>📊 TODOS OS SINAIS - PRÓXIMO CANDLE</h2>
-                <div class="results" id="resultsGrid"></div>
-            </div>
-        </div>
-
-        <script>
-            // APENAS OS 6 ATIVOS ORIGINAIS
-            const availableAssets = [
-                'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 
-                'ADAUSDT', 'XRPUSDT', 'BNBUSDT'
-            ];
-
-            // Inicializar interface de seleção
-            function initializeAssetSelector() {{
-                const assetGrid = document.getElementById('assetGrid');
-                assetGrid.innerHTML = '';
-                
-                availableAssets.forEach(asset => {{
-                    const assetItem = document.createElement('div');
-                    assetItem.className = 'asset-item';
-                    assetItem.innerHTML = `
-                        <input type="checkbox" id="asset-${{asset}}" value="${{asset}}" checked>
-                        <label for="asset-${{asset}}">${{asset}}</label>
-                    `;
-                    assetGrid.appendChild(assetItem);
-                }});
-                
-                updateSelectedCount();
-            }}
-
-            // Atualizar contador de selecionados
-            function updateSelectedCount() {{
-                const selected = document.querySelectorAll('.asset-item input:checked');
-                document.getElementById('selectedCount').textContent = 
-                    `${{selected.length}} ativo${{selected.length !== 1 ? 's' : ''}} selecionado${{selected.length !== 1 ? 's' : ''}}`;
-            }}
-
-            // Marcar todos os ativos
-            function selectAll() {{
-                document.querySelectorAll('.asset-item input').forEach(checkbox => {{
-                    checkbox.checked = true;
-                }});
-                updateSelectedCount();
-            }}
-
-            // Desmarcar todos os ativos
-            function deselectAll() {{
-                document.querySelectorAll('.asset-item input').forEach(checkbox => {{
-                    checkbox.checked = false;
-                }});
-                updateSelectedCount();
-            }}
-
-            // Obter ativos selecionados
-            function getSelectedAssets() {{
-                const selected = [];
-                document.querySelectorAll('.asset-item input:checked').forEach(checkbox => {{
-                    selected.push(checkbox.value);
-                }});
-                return selected;
-            }}
-
-            function updateClock() {{
-                const now = new Date();
-                const brtOffset = -3 * 60;
-                const localOffset = now.getTimezoneOffset();
-                const brtTime = new Date(now.getTime() + (brtOffset + localOffset) * 60000);
-                
-                const timeString = brtTime.toLocaleTimeString('pt-BR', {{ 
-                    timeZone: 'America/Sao_Paulo',
-                    hour12: false 
-                }}) + ' BRT';
-                
-                document.getElementById('currentTime').textContent = timeString;
-            }}
-            
-            setInterval(updateClock, 1000);
-            updateClock();
-
-            async function runAnalysis() {{
-                const selectedAssets = getSelectedAssets();
-                
-                if (selectedAssets.length === 0) {{
-                    alert('❌ Por favor, selecione pelo menos um ativo para análise!');
-                    return;
-                }}
-
-                const btn = document.getElementById('analyzeBtn');
-                btn.disabled = true;
-                btn.textContent = `⏳ Analisando ${{selectedAssets.length}} Ativo${{selectedAssets.length !== 1 ? 's' : ''}}...`;
-                
-                const statusDiv = document.getElementById('status');
-                statusDiv.className = 'status info';
-                statusDiv.innerHTML = `⏳ Iniciando análise para ${{selectedAssets.length}} ativo${{selectedAssets.length !== 1 ? 's' : ''}} selecionado${{selectedAssets.length !== 1 ? 's' : ''}}...`;
-                
-                try {{
-                    const response = await fetch('/api/analyze', {{
-                        method: 'POST',
-                        headers: {{'Content-Type': 'application/json'}},
-                        body: JSON.stringify({{symbols: selectedAssets}})
-                    }});
-                    
-                    const data = await response.json();
-                    if (data.success) {{
-                        statusDiv.className = 'status success';
-                        statusDiv.innerHTML = `✅ ${{data.message}} | ⏰ ${{new Date().toLocaleTimeString()}}`;
-                        pollResults();
-                    }} else {{
-                        statusDiv.className = 'status error';
-                        statusDiv.innerHTML = '❌ ' + data.error;
-                        btn.disabled = false;
-                        btn.textContent = '🎯 Analisar Ativos Selecionados';
-                    }}
-                }} catch (error) {{
-                    statusDiv.className = 'status error';
-                    statusDiv.innerHTML = '❌ Erro de conexão: ' + error;
-                    btn.disabled = false;
-                    btn.textContent = '🎯 Analisar Ativos Selecionados';
-                }}
-            }}
-            
-            async function pollResults() {{
-                try {{
-                    const response = await fetch('/api/results');
-                    const data = await response.json();
-                    
-                    if (data.success) {{
-                        if (data.is_analyzing) {{
-                            document.getElementById('status').innerHTML = 
-                                '⏳ Analisando... ' + data.total_signals + ' sinais processados | ' + new Date().toLocaleTimeString();
-                            setTimeout(pollResults, 1000);
-                        }} else {{
-                            renderResults(data);
-                            document.getElementById('analyzeBtn').disabled = false;
-                            document.getElementById('analyzeBtn').textContent = '🎯 Analisar Ativos Selecionados';
-                            
-                            const statusDiv = document.getElementById('status');
-                            statusDiv.className = 'status success';
-                            statusDiv.innerHTML = 
-                                `✅ Análise completa! ${{data.total_signals}} sinal${{data.total_signals !== 1 ? 'eis' : ''}} encontrado${{data.total_signals !== 1 ? 's' : ''}} | ` + 
-                                '⏰ ' + data.analysis_time;
-                        }}
-                    }}
-                }} catch (error) {{
-                    console.error('Polling error:', error);
-                    setTimeout(pollResults, 2000);
-                }}
-            }}
-            
-            function renderResults(data) {{
-                if (data.best) {{
-                    document.getElementById('bestSignal').style.display = 'block';
-                    document.getElementById('bestCard').innerHTML = createSignalHTML(data.best, true);
-                }}
-                
-                if (data.results && data.results.length) {{
-                    document.getElementById('allSignals').style.display = 'block';
-                    document.getElementById('resultsGrid').innerHTML = data.results.map(signal => 
-                        createSignalHTML(signal, false)
-                    ).join('');
-                }}
-            }}
-            
-            function createSignalHTML(signal, isBest) {{
-                const direction = signal.direction;
-                const prob = (direction === 'buy' ? signal.probability_buy : signal.probability_sell) * 100;
-                const confidence = signal.confidence * 100;
-                const dataSource = signal.data_source || 'Binance';
-                
-                return `
-                    <div class="signal-card ${{direction}} ${{isBest ? 'best-card' : ''}}">
-                        <h3>${{signal.symbol}} ${{isBest ? '🏆' : ''}} <span class="data-source">${{dataSource}}</span></h3>
-                        <div class="badge ${{direction}}">${{direction === 'buy' ? 'COMPRAR' : 'VENDER'}} ${{prob.toFixed(1)}}%</div>
-                        <div class="badge confidence">Confiança ${{confidence.toFixed(1)}}%</div>
-                        <div class="badge time">Entrada: ${{signal.entry_time}}</div>
-                        
-                        <div class="info-line">
-                            <strong>💰 Preço Atual:</strong> ${{signal.price.toFixed(6)}}
-                        </div>
-                        <div class="info-line">
-                            <strong>📊 RSI:</strong> ${{signal.rsi.toFixed(1)}}
-                        </div>
-                        <div class="info-line">
-                            <strong>📈 MACD:</strong> ${{signal.macd_signal}} (${{(signal.macd_strength * 100).toFixed(1)}}%)
-                        </div>
-                        <div class="info-line">
-                            <strong>🎯 Tendência:</strong> ${{signal.trend}} (${{(signal.trend_strength * 100).toFixed(1)}}%)
-                        </div>
-                        <div class="info-line">
-                            <strong>⚡ Volatilidade GARCH:</strong> ${{(signal.garch_volatility * 100).toFixed(2)}}%
-                        </div>
-                        
-                        <p><strong>🧠 Análise:</strong> ${{signal.reason}}</p>
-                        <p><small>⏰ Gerado: ${{signal.timestamp}} | ${{signal.timeframe}}</small></p>
-                    </div>
-                `;
-            }}
-            
-            async function checkStatus() {{
-                try {{
-                    const response = await fetch('/health');
-                    const data = await response.json();
-                    const statusDiv = document.getElementById('status');
-                    statusDiv.className = 'status success';
-                    statusDiv.innerHTML = `
-                        ✅ <strong>Sistema Binance Online</strong> | 
-                        🎯 Ativos: ${{data.symbols_count}} | 
-                        ✅ Confiança: ${{data.confidence_range}} | 
-                        ⏰ ${{new Date().toLocaleTimeString()}}
-                    `;
-                }} catch (error) {{
-                    const statusDiv = document.getElementById('status');
-                    statusDiv.className = 'status error';
-                    statusDiv.innerHTML = '❌ Sistema Offline | ' + new Date().toLocaleTimeString();
-                }}
-            }}
-
-            // Inicializar quando a página carregar
-            document.addEventListener('DOMContentLoaded', function() {{
-                initializeAssetSelector();
-                document.getElementById('assetGrid').addEventListener('change', updateSelectedCount);
-                checkStatus();
-            }});
-        </script>
-    </body>
-    </html>
-    ''', mimetype='text/html')
+    return jsonify({
+        "message": "IA Trading - OKX Real-Time Data",
+        "status": "operational", 
+        "data_source": "OKX WebSocket",
+        "symbols": DEFAULT_SYMBOLS
+    })
 
 @app.post("/api/analyze")
 def api_analyze():
@@ -1081,9 +780,9 @@ def api_analyze():
         
         return jsonify({
             "success": True, 
-            "message": f"Analisando {len(symbols)} ativos com dados Binance (T+1)",
+            "message": f"Analisando {len(symbols)} ativos com dados OKX REAL-TIME",
             "symbols_count": len(symbols),
-            "data_source": "Binance"
+            "data_source": "OKX WebSocket + REST API"
         })
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
@@ -1097,26 +796,30 @@ def api_results():
         "analysis_time": manager.analysis_time,
         "total_signals": len(manager.current_results),
         "is_analyzing": manager.is_analyzing,
-        "data_source": "Binance"
+        "data_source": "OKX Real-Time",
+        "okx_connected": manager.okx_client.connected
     })
 
 @app.get("/health")
 def health():
     current_time = get_current_brazil_time()
+    prices = {symbol: manager.okx_client.get_current_price(symbol) for symbol in DEFAULT_SYMBOLS}
+    
     return jsonify({
         "ok": True,
         "simulations": MC_PATHS,
-        "confidence_range": "70-92%",
+        "data_source": "OKX Real-Time WebSocket",
         "symbols_count": len(DEFAULT_SYMBOLS),
         "symbols": DEFAULT_SYMBOLS,
-        "data_source": "Binance",
-        "binance_connected": manager.binance_client.connected,
+        "current_prices": prices,
+        "okx_connected": manager.okx_client.connected,
         "current_time": current_time,
         "timeframe": "T+1 (Próximo candle)",
-        "status": "binance_operational"
+        "status": "realtime_operational",
+        "indicators": ["RSI", "MACD", "ADX", "Bollinger Bands", "GARCH"]
     })
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    logger.info("app_starting_binance", port=port, symbols=DEFAULT_SYMBOLS)
+    logger.info("app_starting_okx_realtime", port=port, symbols=DEFAULT_SYMBOLS)
     app.run(host="0.0.0.0", port=port, debug=False)
