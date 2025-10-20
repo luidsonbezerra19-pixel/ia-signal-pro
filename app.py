@@ -626,12 +626,23 @@ class AnalysisManager:
 manager = AnalysisManager()
 
 # Inicializar Binance client quando app iniciar
-@app.before_first_request
-def initialize_binance():
+
+def initialize_binance_on_startup():
+    """Inicializa o cliente Binance quando a app inicia"""
     async def init():
-        await manager.binance_client.initialize()
+        try:
+            await manager.binance_client.initialize()
+            logger.info("binance_client_initialized")
+        except Exception as e:
+            logger.error("binance_init_failed", error=str(e))
     
-    asyncio.run(init())
+    # Executar em thread separada para não bloquear
+    thread = threading.Thread(target=lambda: asyncio.run(init()))
+    thread.daemon = True
+    thread.start()
+
+# Chamar a inicialização quando o app carregar
+initialize_binance_on_startup()
 
 def get_current_brazil_time() -> str:
     return datetime.now(timezone(timedelta(hours=-3))).strftime("%H:%M:%S BRT")
