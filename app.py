@@ -1,4 +1,4 @@
-# app.py — IA COM OKX WEBSOCKET TEMPO REAL + INDICADORES REAIS
+# app.py — IA COM OKX WEBSOCKET TEMPO REAL (SEM PANDAS)
 from __future__ import annotations
 import os, time, math, random, threading, json, statistics as stats
 from typing import Any, Dict, List, Optional, Callable
@@ -10,7 +10,6 @@ import aiohttp
 import asyncio
 import websockets
 from collections import deque
-import pandas as pd
 
 # =========================
 # Configuração de Logging
@@ -223,7 +222,6 @@ class RealTimeDataGenerator:
                 
         except Exception as e:
             logger.error("historical_data_error", symbol=symbol, error=str(e))
-            # SEM FALLBACK - melhor falhar do que dar dado falso
             raise Exception(f"Dados históricos indisponíveis para {symbol}: {str(e)}")
     
     async def _fetch_historical_via_rest(self, symbol: str, periods: int) -> List[List[float]]:
@@ -257,7 +255,7 @@ class RealTimeDataGenerator:
             raise Exception(f"Falha ao buscar dados históricos: {response.status}")
 
 # =========================
-# Indicadores Técnicos AVANÇADOS (REAIS)
+# Indicadores Técnicos AVANÇADOS (SEM PANDAS)
 # =========================
 class AdvancedTechnicalIndicators:
     @staticmethod
@@ -298,10 +296,10 @@ class AdvancedTechnicalIndicators:
         signal_line = AdvancedTechnicalIndicators._ema(macd_line, 9)
         
         # Histogram
-        histogram = macd_line[-1] - signal_line[-1]
+        histogram = macd_line[-1] - signal_line[-1] if macd_line and signal_line else 0
         
         # Força baseada no histograma
-        strength = min(0.9, max(0.1, abs(histogram) / (prices[-1] * 0.001)))
+        strength = min(0.9, max(0.1, abs(histogram) / (prices[-1] * 0.001))) if prices else 0.3
         
         if histogram > 0:
             signal = "bullish"
@@ -318,7 +316,7 @@ class AdvancedTechnicalIndicators:
     
     @staticmethod
     def _ema(data: List[float], period: int) -> List[float]:
-        """Calcula EMA"""
+        """Calcula EMA sem pandas"""
         if not data:
             return []
             
@@ -333,13 +331,13 @@ class AdvancedTechnicalIndicators:
 
     @staticmethod
     def calculate_adx(highs: List[float], lows: List[float], closes: List[float], period: int = 14) -> Dict[str, float]:
-        """ADX - Average Directional Index"""
+        """ADX - Average Directional Index sem pandas"""
         if len(highs) < period * 2:
             return {"adx": 25.0, "dmi_plus": 20.0, "dmi_minus": 20.0}
-            
+        
         # +DM e -DM
-        plus_dm = []
-        minus_dm = []
+        plus_dm = [0.0]
+        minus_dm = [0.0]
         
         for i in range(1, len(highs)):
             up_move = highs[i] - highs[i-1]
@@ -347,16 +345,16 @@ class AdvancedTechnicalIndicators:
             
             if up_move > down_move and up_move > 0:
                 plus_dm.append(up_move)
-                minus_dm.append(0)
+                minus_dm.append(0.0)
             elif down_move > up_move and down_move > 0:
-                plus_dm.append(0)
+                plus_dm.append(0.0)
                 minus_dm.append(down_move)
             else:
-                plus_dm.append(0)
-                minus_dm.append(0)
+                plus_dm.append(0.0)
+                minus_dm.append(0.0)
         
         # True Range
-        tr = []
+        tr = [0.0]
         for i in range(1, len(highs)):
             tr1 = highs[i] - lows[i]
             tr2 = abs(highs[i] - closes[i-1])
@@ -365,17 +363,39 @@ class AdvancedTechnicalIndicators:
         
         # Suavização Wilder
         def wilder_smooth(data, period):
+            if len(data) < period:
+                return data
             smoothed = [sum(data[:period]) / period]
             for i in range(period, len(data)):
                 smoothed.append((smoothed[-1] * (period - 1) + data[i]) / period)
             return smoothed
         
-        plus_di = [100 * (p / t) if t != 0 else 0 for p, t in zip(wilder_smooth(plus_dm, period), wilder_smooth(tr, period))]
-        minus_di = [100 * (m / t) if t != 0 else 0 for m, t in zip(wilder_smooth(minus_dm, period), wilder_smooth(tr, period))]
+        # Aplica suavização
+        plus_dm_smooth = wilder_smooth(plus_dm, period)
+        minus_dm_smooth = wilder_smooth(minus_dm, period) 
+        tr_smooth = wilder_smooth(tr, period)
+        
+        # Directional Indicators
+        plus_di = []
+        minus_di = []
+        
+        for i in range(len(tr_smooth)):
+            if tr_smooth[i] != 0 and i < len(plus_dm_smooth) and i < len(minus_dm_smooth):
+                plus_di.append(100 * plus_dm_smooth[i] / tr_smooth[i])
+                minus_di.append(100 * minus_dm_smooth[i] / tr_smooth[i])
+            else:
+                plus_di.append(0.0)
+                minus_di.append(0.0)
         
         # DX e ADX
-        dx = [100 * abs(p - m) / (p + m) if (p + m) != 0 else 0 for p, m in zip(plus_di, minus_di)]
-        adx = sum(dx[-period:]) / period
+        dx = []
+        for i in range(len(plus_di)):
+            if i < len(minus_di) and (plus_di[i] + minus_di[i]) != 0:
+                dx.append(100 * abs(plus_di[i] - minus_di[i]) / (plus_di[i] + minus_di[i]))
+            else:
+                dx.append(0.0)
+        
+        adx = sum(dx[-period:]) / period if dx else 25.0
         
         return {
             "adx": round(adx, 2),
@@ -385,7 +405,7 @@ class AdvancedTechnicalIndicators:
 
     @staticmethod
     def calculate_bollinger_bands(prices: List[float], period: int = 20) -> Dict[str, float]:
-        """Bollinger Bands"""
+        """Bollinger Bands sem pandas"""
         if len(prices) < period:
             current_price = prices[-1] if prices else 100
             return {
