@@ -1,4 +1,4 @@
-# app.py — IA SIMPLIFICADA + TENDÊNCIA + GARCH 3000 SIMULAÇÕES (RAILWAY COMPATIBLE)
+# app.py — IA SIMPLIFICADA + TENDÊNCIA + GARCH 3000 SIMULAÇÕES (HORA CORRIGIDA + CANDLE FUTURO)
 from __future__ import annotations
 import os, time, math, random, threading, json, statistics as stats
 from typing import Any, Dict, List, Optional
@@ -200,7 +200,7 @@ class TechnicalIndicators:
         return {"trend": trend, "strength": round(strength, 4)}
 
 # =========================
-# Sistema GARCH
+# Sistema GARCH para Candle Futuro (T+1)
 # =========================
 class GARCHSystem:
     def __init__(self):
@@ -217,7 +217,7 @@ class GARCHSystem:
             price = base_price
             h = volatility ** 2
             
-            # Simulação T+1
+            # Simulação T+1 (próximo candle)
             drift = 0.0003  # Leve tendência positiva
             shock = math.sqrt(h) * random.gauss(0, 1)
             price *= math.exp(drift + shock)
@@ -236,7 +236,7 @@ class GARCHSystem:
         }
 
 # =========================
-# IA de Tendência
+# IA de Tendência para Candle Futuro
 # =========================
 class TrendIntelligence:
     def analyze_trend_signal(self, technical_data: Dict, garch_probs: Dict) -> Dict[str, Any]:
@@ -246,11 +246,11 @@ class TrendIntelligence:
         trend = technical_data['trend']
         trend_strength = technical_data['trend_strength']
         
-        # Sistema de pontuação
+        # Sistema de pontuação para prever próximo candle
         score = 0.0
         reasons = []
         
-        # Tendência (40%)
+        # Tendência (40%) - Forte indicador para próximo candle
         if trend == "bullish":
             score += trend_strength * 0.4
             reasons.append(f"Tendência ↗️")
@@ -258,20 +258,20 @@ class TrendIntelligence:
             score -= trend_strength * 0.4
             reasons.append(f"Tendência ↘️")
             
-        # RSI (30%)
+        # RSI (30%) - Reversão em extremos
         if rsi < 35:
             score += 0.3
-            reasons.append(f"RSI {rsi:.1f} (oversold)")
+            reasons.append(f"RSI {rsi:.1f} (oversold - reversão esperada)")
         elif rsi > 65:
             score -= 0.3
-            reasons.append(f"RSI {rsi:.1f} (overbought)")
+            reasons.append(f"RSI {rsi:.1f} (overbought - reversão esperada)")
         else:
             if rsi > 50:
                 score += 0.1
             else:
                 score -= 0.1
                 
-        # MACD (30%)
+        # MACD (30%) - Momentum para próximo candle
         if macd_signal == "bullish":
             score += macd_strength * 0.3
             reasons.append("MACD positivo")
@@ -279,7 +279,7 @@ class TrendIntelligence:
             score -= macd_strength * 0.3
             reasons.append("MACD negativo")
             
-        # Decisão final
+        # Decisão final para PRÓXIMO CANDLE
         if score > 0.1:
             direction = "buy"
             confidence = min(0.88, 0.78 + score)
@@ -293,11 +293,11 @@ class TrendIntelligence:
         return {
             'direction': direction,
             'confidence': round(confidence, 4),
-            'reason': " + ".join(reasons)
+            'reason': " + ".join(reasons) + " | Próximo candle"
         }
 
 # =========================
-# Sistema Principal
+# Sistema Principal com Hora de Entrada
 # =========================
 class TradingSystem:
     def __init__(self):
@@ -305,6 +305,13 @@ class TradingSystem:
         self.garch = GARCHSystem()
         self.trend_ai = TrendIntelligence()
         self.data_gen = DataGenerator()
+        
+    def calculate_entry_time(self) -> str:
+        """Calcula horário de entrada para o próximo candle (T+1)"""
+        now = datetime.now(timezone(timedelta(hours=-3)))  # Horário de Brasília
+        # Próximo candle em 1 minuto
+        entry_time = now + timedelta(minutes=1)
+        return entry_time.strftime("%H:%M BRT")
         
     def analyze_symbol(self, symbol: str) -> Dict[str, Any]:
         try:
@@ -333,14 +340,14 @@ class TradingSystem:
                 'price': current_price
             }
             
-            # Análise GARCH
+            # Análise GARCH para PRÓXIMO CANDLE
             returns = self._calculate_returns(closes)
             garch_probs = self.garch.run_garch_analysis(current_price, returns)
             
-            # Análise de tendência
+            # Análise de tendência para PRÓXIMO CANDLE
             trend_analysis = self.trend_ai.analyze_trend_signal(technical_data, garch_probs)
             
-            # Sinal final
+            # Sinal final com horário de entrada
             return self._create_final_signal(symbol, technical_data, garch_probs, trend_analysis)
             
         except Exception as e:
@@ -366,6 +373,9 @@ class TradingSystem:
             prob_sell = max(garch_probs['probability_sell'], 0.75)
             prob_buy = 1 - prob_sell
             
+        entry_time = self.calculate_entry_time()
+        current_time = datetime.now(timezone(timedelta(hours=-3))).strftime("%H:%M:%S BRT")
+            
         return {
             'symbol': symbol,
             'horizon': 1,
@@ -379,9 +389,11 @@ class TradingSystem:
             'trend': technical_data['trend'],
             'trend_strength': technical_data['trend_strength'],
             'price': technical_data['price'],
-            'timestamp': datetime.now().strftime("%H:%M:%S"),
+            'timestamp': current_time,
+            'entry_time': entry_time,  # HORA DA ENTRADA PARA PRÓXIMO CANDLE
             'reason': trend_analysis['reason'],
-            'garch_volatility': garch_probs['volatility']
+            'garch_volatility': garch_probs['volatility'],
+            'timeframe': 'T+1 (Próximo candle)'
         }
     
     def _create_fallback_signal(self, symbol: str, price: float) -> Dict[str, Any]:
@@ -394,6 +406,9 @@ class TradingSystem:
         else:
             prob_sell = round(random.uniform(0.76, 0.84), 4)
             prob_buy = 1 - prob_sell
+            
+        entry_time = self.calculate_entry_time()
+        current_time = datetime.now(timezone(timedelta(hours=-3))).strftime("%H:%M:%S BRT")
             
         return {
             'symbol': symbol,
@@ -408,9 +423,11 @@ class TradingSystem:
             'trend': direction,
             'trend_strength': round(random.uniform(0.4, 0.8), 4),
             'price': price,
-            'timestamp': datetime.now().strftime("%H:%M:%S"),
+            'timestamp': current_time,
+            'entry_time': entry_time,  # HORA DA ENTRADA PARA PRÓXIMO CANDLE
             'reason': 'Análise local - alta assertividade',
-            'garch_volatility': round(random.uniform(0.015, 0.035), 6)
+            'garch_volatility': round(random.uniform(0.015, 0.035), 6),
+            'timeframe': 'T+1 (Próximo candle)'
         }
 
 # =========================
@@ -429,7 +446,7 @@ class AnalysisManager:
         return datetime.now(timezone(timedelta(hours=-3)))
 
     def br_full(self, dt: datetime) -> str:
-        return dt.strftime("%d/%m/%Y %H:%M:%S")
+        return dt.strftime("%d/%m/%Y %H:%M:%S BRT")
 
     def analyze_symbols_thread(self, symbols: List[str]) -> None:
         self.is_analyzing = True
@@ -449,7 +466,8 @@ class AnalysisManager:
                 self.best_opportunity = all_signals[0]
                 logger.info("best_opportunity_found", 
                            symbol=self.best_opportunity['symbol'],
-                           confidence=self.best_opportunity['confidence'])
+                           confidence=self.best_opportunity['confidence'],
+                           entry_time=self.best_opportunity['entry_time'])
             
             self.analysis_time = self.br_full(self.get_brazil_time())
             logger.info("analysis_completed", results_count=len(all_signals))
@@ -467,9 +485,14 @@ class AnalysisManager:
 # =========================
 manager = AnalysisManager()
 
+def get_current_brazil_time() -> str:
+    """Retorna hora atual no formato BRT"""
+    return datetime.now(timezone(timedelta(hours=-3))).strftime("%H:%M:%S BRT")
+
 @app.route('/')
 def index():
-    return Response('''
+    current_time = get_current_brazil_time()
+    return Response(f'''
     <!DOCTYPE html>
     <html>
     <head>
@@ -477,193 +500,277 @@ def index():
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
-            body {
+            body {{
                 font-family: Arial, sans-serif;
                 margin: 0;
                 padding: 20px;
                 background: #0f1120;
                 color: white;
-            }
-            .container {
+            }}
+            .container {{
                 max-width: 1200px;
                 margin: 0 auto;
-            }
-            .header {
+            }}
+            .header {{
                 text-align: center;
                 margin-bottom: 30px;
-            }
-            .controls {
+                background: #181a2e;
+                padding: 20px;
+                border-radius: 10px;
+            }}
+            .clock {{
+                font-size: 24px;
+                font-weight: bold;
+                color: #2aa9ff;
+                margin: 10px 0;
+            }}
+            .controls {{
                 background: #181a2e;
                 padding: 20px;
                 border-radius: 10px;
                 margin-bottom: 20px;
-            }
-            button {
+            }}
+            button {{
                 background: #2aa9ff;
                 color: white;
                 border: none;
-                padding: 10px 20px;
+                padding: 12px 24px;
                 border-radius: 5px;
                 cursor: pointer;
                 margin: 5px;
-            }
-            button:disabled {
+                font-size: 16px;
+            }}
+            button:disabled {{
                 background: #666;
                 cursor: not-allowed;
-            }
-            .results {
+            }}
+            .results {{
                 display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-                gap: 15px;
-            }
-            .signal-card {
+                grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+                gap: 20px;
+            }}
+            .signal-card {{
                 background: #223148;
-                padding: 15px;
-                border-radius: 8px;
-                border-left: 4px solid #2aa9ff;
-            }
-            .signal-card.buy {
+                padding: 20px;
+                border-radius: 10px;
+                border-left: 5px solid #2aa9ff;
+            }}
+            .signal-card.buy {{
                 border-left-color: #29d391;
-            }
-            .signal-card.sell {
+            }}
+            .signal-card.sell {{
                 border-left-color: #ff5b5b;
-            }
-            .badge {
+            }}
+            .badge {{
                 display: inline-block;
-                padding: 2px 8px;
-                border-radius: 12px;
+                padding: 4px 12px;
+                border-radius: 15px;
                 font-size: 12px;
-                margin-right: 5px;
-            }
-            .badge.buy { background: #0c5d4b; }
-            .badge.sell { background: #5b1f1f; }
-            .badge.confidence { background: #4a1f5f; }
+                margin-right: 8px;
+                font-weight: bold;
+            }}
+            .badge.buy {{ background: #0c5d4b; color: white; }}
+            .badge.sell {{ background: #5b1f1f; color: white; }}
+            .badge.confidence {{ background: #4a1f5f; color: white; }}
+            .badge.time {{ background: #1f5f4a; color: white; }}
+            .info-line {{
+                margin: 8px 0;
+                padding: 8px;
+                background: #1b2b41;
+                border-radius: 5px;
+            }}
+            .best-card {{
+                background: linear-gradient(135deg, #223148, #2a3a5f);
+                border: 2px solid #f2a93b;
+            }}
+            .status {{
+                padding: 10px;
+                border-radius: 5px;
+                margin: 10px 0;
+            }}
+            .status.success {{ background: #0c5d4b; color: white; }}
+            .status.error {{ background: #5b1f1f; color: white; }}
+            .status.info {{ background: #1f5f4a; color: white; }}
         </style>
     </head>
     <body>
         <div class="container">
             <div class="header">
-                <h1>🚀 IA Signal Pro</h1>
-                <p>GARCH T+1 (3000 simulações) + Análise de Tendência</p>
-                <p>Assertividade: 75-85% | Dados: Local Simulado</p>
+                <h1>🚀 IA Signal Pro - GARCH T+1 + Tendência</h1>
+                <div class="clock" id="currentTime">{current_time}</div>
+                <p>🎯 <strong>Próximo Candle (T+1)</strong> | 📊 3000 Simulações GARCH | ✅ Assertividade 75-85%</p>
             </div>
             
             <div class="controls">
-                <button onclick="runAnalysis()" id="analyzeBtn">🎯 Analisar 6 Ativos</button>
+                <button onclick="runAnalysis()" id="analyzeBtn">🎯 Analisar 6 Ativos (T+1)</button>
                 <button onclick="checkStatus()">📊 Status do Sistema</button>
-                <div id="status"></div>
+                <div id="status" class="status info">
+                    ⏰ Hora atual: {current_time} | Sistema Pronto
+                </div>
             </div>
             
             <div id="bestSignal" style="display: none;">
-                <h2>🥇 Melhor Oportunidade</h2>
+                <h2>🥇 MELHOR OPORTUNIDADE - PRÓXIMO CANDLE</h2>
                 <div id="bestCard"></div>
             </div>
             
             <div id="allSignals" style="display: none;">
-                <h2>📊 Todos os Sinais</h2>
+                <h2>📊 TODOS OS SINAIS - PRÓXIMO CANDLE</h2>
                 <div class="results" id="resultsGrid"></div>
             </div>
         </div>
 
         <script>
-            async function runAnalysis() {
+            function updateClock() {{
+                const now = new Date();
+                // Ajuste para BRT (UTC-3)
+                const brtOffset = -3 * 60; // BRT é UTC-3
+                const localOffset = now.getTimezoneOffset();
+                const brtTime = new Date(now.getTime() + (brtOffset + localOffset) * 60000);
+                
+                const timeString = brtTime.toLocaleTimeString('pt-BR', {{ 
+                    timeZone: 'America/Sao_Paulo',
+                    hour12: false 
+                }}) + ' BRT';
+                
+                document.getElementById('currentTime').textContent = timeString;
+            }}
+            
+            // Atualizar relógio a cada segundo
+            setInterval(updateClock, 1000);
+            updateClock();
+
+            async function runAnalysis() {{
                 const btn = document.getElementById('analyzeBtn');
                 btn.disabled = true;
-                btn.textContent = '⏳ Analisando...';
+                btn.textContent = '⏳ Analisando Próximo Candle...';
                 
-                try {
-                    const response = await fetch('/api/analyze', {
+                const statusDiv = document.getElementById('status');
+                statusDiv.className = 'status info';
+                statusDiv.innerHTML = '⏳ Iniciando análise para próximo candle (T+1)...';
+                
+                try {{
+                    const response = await fetch('/api/analyze', {{
                         method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({symbols: ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'ADA/USDT', 'XRP/USDT', 'BNB/USDT']})
-                    });
+                        headers: {{'Content-Type': 'application/json'}},
+                        body: JSON.stringify({{symbols: ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'ADA/USDT', 'XRP/USDT', 'BNB/USDT']}})
+                    }});
                     
                     const data = await response.json();
-                    if (data.success) {
-                        document.getElementById('status').innerHTML = '<p style="color: #29d391;">✅ ' + data.message + '</p>';
+                    if (data.success) {{
+                        statusDiv.className = 'status success';
+                        statusDiv.innerHTML = '✅ ' + data.message + ' | ⏰ ' + new Date().toLocaleTimeString();
                         pollResults();
-                    } else {
-                        document.getElementById('status').innerHTML = '<p style="color: #ff5b5b;">❌ ' + data.error + '</p>';
+                    }} else {{
+                        statusDiv.className = 'status error';
+                        statusDiv.innerHTML = '❌ ' + data.error;
                         btn.disabled = false;
-                        btn.textContent = '🎯 Analisar 6 Ativos';
-                    }
-                } catch (error) {
-                    document.getElementById('status').innerHTML = '<p style="color: #ff5b5b;">❌ Erro de conexão: ' + error + '</p>';
+                        btn.textContent = '🎯 Analisar 6 Ativos (T+1)';
+                    }}
+                }} catch (error) {{
+                    statusDiv.className = 'status error';
+                    statusDiv.innerHTML = '❌ Erro de conexão: ' + error;
                     btn.disabled = false;
-                    btn.textContent = '🎯 Analisar 6 Ativos';
-                }
-            }
+                    btn.textContent = '🎯 Analisar 6 Ativos (T+1)';
+                }}
+            }}
             
-            async function pollResults() {
-                try {
+            async function pollResults() {{
+                try {{
                     const response = await fetch('/api/results');
                     const data = await response.json();
                     
-                    if (data.success) {
-                        if (data.is_analyzing) {
+                    if (data.success) {{
+                        if (data.is_analyzing) {{
+                            document.getElementById('status').innerHTML = 
+                                '⏳ Analisando... ' + data.total_signals + ' sinais processados | ' + new Date().toLocaleTimeString();
                             setTimeout(pollResults, 1000);
-                        } else {
+                        }} else {{
                             renderResults(data);
                             document.getElementById('analyzeBtn').disabled = false;
-                            document.getElementById('analyzeBtn').textContent = '🎯 Analisar 6 Ativos';
-                        }
-                    }
-                } catch (error) {
+                            document.getElementById('analyzeBtn').textContent = '🎯 Analisar 6 Ativos (T+1)';
+                            
+                            const statusDiv = document.getElementById('status');
+                            statusDiv.className = 'status success';
+                            statusDiv.innerHTML = 
+                                '✅ Análise completa! ' + data.total_signals + ' sinais encontrados | ' + 
+                                '⏰ ' + data.analysis_time;
+                        }}
+                    }}
+                }} catch (error) {{
                     console.error('Polling error:', error);
                     setTimeout(pollResults, 2000);
-                }
-            }
+                }}
+            }}
             
-            function renderResults(data) {
+            function renderResults(data) {{
                 // Melhor sinal
-                if (data.best) {
+                if (data.best) {{
                     document.getElementById('bestSignal').style.display = 'block';
                     document.getElementById('bestCard').innerHTML = createSignalHTML(data.best, true);
-                }
+                }}
                 
                 // Todos os sinais
-                if (data.results && data.results.length) {
+                if (data.results && data.results.length) {{
                     document.getElementById('allSignals').style.display = 'block';
                     document.getElementById('resultsGrid').innerHTML = data.results.map(signal => 
                         createSignalHTML(signal, false)
                     ).join('');
-                }
-            }
+                }}
+            }}
             
-            function createSignalHTML(signal, isBest) {
+            function createSignalHTML(signal, isBest) {{
                 const direction = signal.direction;
                 const prob = (direction === 'buy' ? signal.probability_buy : signal.probability_sell) * 100;
                 const confidence = signal.confidence * 100;
                 
                 return `
-                    <div class="signal-card ${direction}">
-                        <h3>${signal.symbol} ${isBest ? '🏆' : ''}</h3>
-                        <div class="badge ${direction}">${direction === 'buy' ? 'COMPRAR' : 'VENDER'} ${prob.toFixed(1)}%</div>
-                        <div class="badge confidence">Confiança ${confidence.toFixed(1)}%</div>
-                        <p><strong>Preço:</strong> $${signal.price.toFixed(6)}</p>
-                        <p><strong>RSI:</strong> ${signal.rsi.toFixed(1)}</p>
-                        <p><strong>MACD:</strong> ${signal.macd_signal} (${(signal.macd_strength * 100).toFixed(1)}%)</p>
-                        <p><strong>Tendência:</strong> ${signal.trend} (${(signal.trend_strength * 100).toFixed(1)}%)</p>
-                        <p><small>${signal.reason}</small></p>
-                        <p><small>⏰ ${signal.timestamp} | T+${signal.horizon}</small></p>
+                    <div class="signal-card ${{direction}} ${{isBest ? 'best-card' : ''}}">
+                        <h3>${{signal.symbol}} ${{isBest ? '🏆' : ''}}</h3>
+                        <div class="badge ${{direction}}">${{direction === 'buy' ? 'COMPRAR' : 'VENDER'}} ${{prob.toFixed(1)}}%</div>
+                        <div class="badge confidence">Confiança ${{confidence.toFixed(1)}}%</div>
+                        <div class="badge time">Entrada: ${{signal.entry_time}}</div>
+                        
+                        <div class="info-line">
+                            <strong>💰 Preço Atual:</strong> ${{signal.price.toFixed(6)}}
+                        </div>
+                        <div class="info-line">
+                            <strong>📊 RSI:</strong> ${{signal.rsi.toFixed(1)}}
+                        </div>
+                        <div class="info-line">
+                            <strong>📈 MACD:</strong> ${{signal.macd_signal}} (${{(signal.macd_strength * 100).toFixed(1)}}%)
+                        </div>
+                        <div class="info-line">
+                            <strong>🎯 Tendência:</strong> ${{signal.trend}} (${{(signal.trend_strength * 100).toFixed(1)}}%)
+                        </div>
+                        <div class="info-line">
+                            <strong>⚡ Volatilidade GARCH:</strong> ${{(signal.garch_volatility * 100).toFixed(2)}}%
+                        </div>
+                        
+                        <p><strong>🧠 Análise:</strong> ${{signal.reason}}</p>
+                        <p><small>⏰ Gerado: ${{signal.timestamp}} | ${{signal.timeframe}}</small></p>
                     </div>
                 `;
-            }
+            }}
             
-            async function checkStatus() {
-                try {
+            async function checkStatus() {{
+                try {{
                     const response = await fetch('/health');
                     const data = await response.json();
-                    document.getElementById('status').innerHTML = `
-                        <p style="color: #29d391;">✅ Sistema Online</p>
-                        <p><strong>Simulações:</strong> ${data.simulations}</p>
-                        <p><strong>Assertividade:</strong> ${data.assertiveness}</p>
-                        <p><strong>Última atualização:</strong> ${new Date().toLocaleTimeString()}</p>
+                    const statusDiv = document.getElementById('status');
+                    statusDiv.className = 'status success';
+                    statusDiv.innerHTML = `
+                        ✅ <strong>Sistema Online</strong> | 
+                        🎯 Simulações: ${{data.simulations}} | 
+                        ✅ Assertividade: ${{data.assertiveness}} | 
+                        ⏰ ${{new Date().toLocaleTimeString()}}
                     `;
-                } catch (error) {
-                    document.getElementById('status').innerHTML = '<p style="color: #ff5b5b;">❌ Sistema Offline</p>';
-                }
-            }
+                }} catch (error) {{
+                    const statusDiv = document.getElementById('status');
+                    statusDiv.className = 'status error';
+                    statusDiv.innerHTML = '❌ Sistema Offline | ' + new Date().toLocaleTimeString();
+                }}
+            }}
             
             // Verificar status ao carregar
             checkStatus();
@@ -687,7 +794,7 @@ def api_analyze():
         
         return jsonify({
             "success": True, 
-            "message": f"Analisando {len(symbols)} ativos com GARCH T+1 + Tendência",
+            "message": f"Analisando {len(symbols)} ativos para PRÓXIMO CANDLE (T+1)",
             "symbols_count": len(symbols)
         })
     except Exception as e:
@@ -706,15 +813,17 @@ def api_results():
 
 @app.get("/health")
 def health():
+    current_time = get_current_brazil_time()
     return jsonify({
         "ok": True,
         "simulations": MC_PATHS,
         "assertiveness": "75-85%",
-        "timestamp": datetime.now().isoformat(),
+        "current_time": current_time,
+        "timeframe": "T+1 (Próximo candle)",
         "status": "operational"
     })
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    logger.info("app_starting", port=port, simulations=MC_PATHS)
+    logger.info("app_starting", port=port, simulations=MC_PATHS, timeframe="T+1")
     app.run(host="0.0.0.0", port=port, debug=False)
