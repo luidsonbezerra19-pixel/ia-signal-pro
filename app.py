@@ -1,4 +1,4 @@
-# app.py — IA CORRIGIDA + IMPARCIALIDADE + VALORES DINÂMICOS
+# app.py — IA IMPARCIAL + SELECTOR DE ATIVOS
 from __future__ import annotations
 import os, time, math, random, threading, json, statistics as stats
 from typing import Any, Dict, List, Optional
@@ -517,7 +517,7 @@ def index():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>IA Signal Pro - IMPARCIAL + DINÂMICO</title>
+        <title>IA Signal Pro - SELECTOR DE ATIVOS</title>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
@@ -564,6 +564,45 @@ def index():
             button:disabled {{
                 background: #666;
                 cursor: not-allowed;
+            }}
+            .asset-selector {{
+                background: #223148;
+                padding: 20px;
+                border-radius: 10px;
+                margin-bottom: 20px;
+            }}
+            .asset-grid {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 15px;
+                margin: 15px 0;
+            }}
+            .asset-item {{
+                display: flex;
+                align-items: center;
+                padding: 10px;
+                background: #1b2b41;
+                border-radius: 5px;
+                cursor: pointer;
+                transition: background 0.3s;
+            }}
+            .asset-item:hover {{
+                background: #2a3a5f;
+            }}
+            .asset-item input {{
+                margin-right: 10px;
+                transform: scale(1.2);
+            }}
+            .selector-header {{
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 15px;
+            }}
+            .selector-actions button {{
+                background: #4a1f5f;
+                padding: 8px 16px;
+                font-size: 14px;
             }}
             .results {{
                 display: grid;
@@ -612,21 +651,42 @@ def index():
             .status.success {{ background: #0c5d4b; color: white; }}
             .status.error {{ background: #5b1f1f; color: white; }}
             .status.info {{ background: #1f5f4a; color: white; }}
+            .selected-count {{
+                color: #2aa9ff;
+                font-weight: bold;
+                margin-left: 10px;
+            }}
         </style>
     </head>
     <body>
         <div class="container">
             <div class="header">
-                <h1>🚀 IA Signal Pro - IMPARCIAL + DINÂMICO</h1>
+                <h1>🚀 IA Signal Pro - SELECTOR DE ATIVOS</h1>
                 <div class="clock" id="currentTime">{current_time}</div>
                 <p>🎯 <strong>Próximo Candle (T+1)</strong> | 📊 3000 Simulações GARCH | ✅ Confiança Dinâmica 70-92%</p>
             </div>
             
+            <div class="asset-selector">
+                <div class="selector-header">
+                    <h3>📈 Selecione os Ativos para Análise</h3>
+                    <div class="selector-actions">
+                        <button onclick="selectAll()">✅ Marcar Todos</button>
+                        <button onclick="deselectAll()">❌ Desmarcar Todos</button>
+                    </div>
+                </div>
+                <div class="asset-grid" id="assetGrid">
+                    <!-- Ativos serão inseridos aqui via JavaScript -->
+                </div>
+                <div style="text-align: center; margin-top: 15px;">
+                    <span id="selectedCount">0 ativos selecionados</span>
+                </div>
+            </div>
+            
             <div class="controls">
-                <button onclick="runAnalysis()" id="analyzeBtn">🎯 Analisar 6 Ativos (T+1)</button>
+                <button onclick="runAnalysis()" id="analyzeBtn">🎯 Analisar Ativos Selecionados</button>
                 <button onclick="checkStatus()">📊 Status do Sistema</button>
                 <div id="status" class="status info">
-                    ⏰ Hora atual: {current_time} | Sistema IMPARCIAL Online
+                    ⏰ Hora atual: {current_time} | Selecione os ativos para análise
                 </div>
             </div>
             
@@ -642,6 +702,64 @@ def index():
         </div>
 
         <script>
+            // Lista de ativos disponíveis
+            const availableAssets = [
+                'BTC/USDT', 'ETH/USDT', 'SOL/USDT', 
+                'ADA/USDT', 'XRP/USDT', 'BNB/USDT',
+                'DOT/USDT', 'LINK/USDT', 'LTC/USDT',
+                'MATIC/USDT', 'AVAX/USDT', 'UNI/USDT'
+            ];
+
+            // Inicializar interface de seleção
+            function initializeAssetSelector() {{
+                const assetGrid = document.getElementById('assetGrid');
+                assetGrid.innerHTML = '';
+                
+                availableAssets.forEach(asset => {{
+                    const assetItem = document.createElement('div');
+                    assetItem.className = 'asset-item';
+                    assetItem.innerHTML = `
+                        <input type="checkbox" id="asset-${{asset}}" value="${{asset}}" checked>
+                        <label for="asset-${{asset}}">${{asset}}</label>
+                    `;
+                    assetGrid.appendChild(assetItem);
+                }});
+                
+                updateSelectedCount();
+            }}
+
+            // Atualizar contador de selecionados
+            function updateSelectedCount() {{
+                const selected = document.querySelectorAll('.asset-item input:checked');
+                document.getElementById('selectedCount').textContent = 
+                    `${{selected.length}} ativo${{selected.length !== 1 ? 's' : ''}} selecionado${{selected.length !== 1 ? 's' : ''}}`;
+            }}
+
+            // Marcar todos os ativos
+            function selectAll() {{
+                document.querySelectorAll('.asset-item input').forEach(checkbox => {{
+                    checkbox.checked = true;
+                }});
+                updateSelectedCount();
+            }}
+
+            // Desmarcar todos os ativos
+            function deselectAll() {{
+                document.querySelectorAll('.asset-item input').forEach(checkbox => {{
+                    checkbox.checked = false;
+                }});
+                updateSelectedCount();
+            }}
+
+            // Obter ativos selecionados
+            function getSelectedAssets() {{
+                const selected = [];
+                document.querySelectorAll('.asset-item input:checked').forEach(checkbox => {{
+                    selected.push(checkbox.value);
+                }});
+                return selected;
+            }}
+
             function updateClock() {{
                 const now = new Date();
                 const brtOffset = -3 * 60;
@@ -660,37 +778,44 @@ def index():
             updateClock();
 
             async function runAnalysis() {{
+                const selectedAssets = getSelectedAssets();
+                
+                if (selectedAssets.length === 0) {{
+                    alert('❌ Por favor, selecione pelo menos um ativo para análise!');
+                    return;
+                }}
+
                 const btn = document.getElementById('analyzeBtn');
                 btn.disabled = true;
-                btn.textContent = '⏳ Analisando Próximo Candle...';
+                btn.textContent = `⏳ Analisando ${{selectedAssets.length}} Ativo${{selectedAssets.length !== 1 ? 's' : ''}}...`;
                 
                 const statusDiv = document.getElementById('status');
                 statusDiv.className = 'status info';
-                statusDiv.innerHTML = '⏳ Iniciando análise IMPARCIAL para próximo candle...';
+                statusDiv.innerHTML = `⏳ Iniciando análise para ${{selectedAssets.length}} ativo${{selectedAssets.length !== 1 ? 's' : ''}} selecionado${{selectedAssets.length !== 1 ? 's' : ''}}...`;
                 
                 try {{
                     const response = await fetch('/api/analyze', {{
                         method: 'POST',
                         headers: {{'Content-Type': 'application/json'}},
-                        body: JSON.stringify({{symbols: ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'ADA/USDT', 'XRP/USDT', 'BNB/USDT']}})
+                        body: JSON.stringify({{symbols: selectedAssets}})
                     }});
                     
                     const data = await response.json();
                     if (data.success) {{
                         statusDiv.className = 'status success';
-                        statusDiv.innerHTML = '✅ ' + data.message + ' | ⏰ ' + new Date().toLocaleTimeString();
+                        statusDiv.innerHTML = `✅ ${{data.message}} | ⏰ ${{new Date().toLocaleTimeString()}}`;
                         pollResults();
                     }} else {{
                         statusDiv.className = 'status error';
                         statusDiv.innerHTML = '❌ ' + data.error;
                         btn.disabled = false;
-                        btn.textContent = '🎯 Analisar 6 Ativos (T+1)';
+                        btn.textContent = '🎯 Analisar Ativos Selecionados';
                     }}
                 }} catch (error) {{
                     statusDiv.className = 'status error';
                     statusDiv.innerHTML = '❌ Erro de conexão: ' + error;
                     btn.disabled = false;
-                    btn.textContent = '🎯 Analisar 6 Ativos (T+1)';
+                    btn.textContent = '🎯 Analisar Ativos Selecionados';
                 }}
             }}
             
@@ -707,12 +832,12 @@ def index():
                         }} else {{
                             renderResults(data);
                             document.getElementById('analyzeBtn').disabled = false;
-                            document.getElementById('analyzeBtn').textContent = '🎯 Analisar 6 Ativos (T+1)';
+                            document.getElementById('analyzeBtn').textContent = '🎯 Analisar Ativos Selecionados';
                             
                             const statusDiv = document.getElementById('status');
                             statusDiv.className = 'status success';
                             statusDiv.innerHTML = 
-                                '✅ Análise IMPARCIAL completa! ' + data.total_signals + ' sinais encontrados | ' + 
+                                `✅ Análise completa! ${{data.total_signals}} sinal${{data.total_signals !== 1 ? 'eis' : ''}} encontrado${{data.total_signals !== 1 ? 's' : ''}} | ` + 
                                 '⏰ ' + data.analysis_time;
                         }}
                     }}
@@ -788,8 +913,16 @@ def index():
                     statusDiv.innerHTML = '❌ Sistema Offline | ' + new Date().toLocaleTimeString();
                 }}
             }}
-            
-            checkStatus();
+
+            // Inicializar quando a página carregar
+            document.addEventListener('DOMContentLoaded', function() {{
+                initializeAssetSelector();
+                
+                // Atualizar contador quando checkboxes mudarem
+                document.getElementById('assetGrid').addEventListener('change', updateSelectedCount);
+                
+                checkStatus();
+            }});
         </script>
     </body>
     </html>
@@ -810,7 +943,7 @@ def api_analyze():
         
         return jsonify({
             "success": True, 
-            "message": f"Analisando {len(symbols)} ativos IMPARCIALMENTE (T+1)",
+            "message": f"Analisando {len(symbols)} ativos selecionados (T+1)",
             "symbols_count": len(symbols)
         })
     except Exception as e:
