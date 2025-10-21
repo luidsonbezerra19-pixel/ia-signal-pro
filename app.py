@@ -6,6 +6,10 @@ from datetime import datetime, timezone, timedelta
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
 import structlog
+import requests  # ← ADICIONAR
+import websocket # ← ADICIONAR
+import threading
+import json
 
 # =========================
 # Configuração de Logging
@@ -33,78 +37,157 @@ logger = structlog.get_logger()
 # Config (Simplificado)
 # =========================
 MC_PATHS = 3000
-DEFAULT_SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "ADA/USDT", "XRP/USDT", "BNB/USDT"]
+DEFAULT_SYMBOLS = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "ADA-USDT", "XRP-USDT", "BNB-USDT"]  # ← Formato OKX
 
 app = Flask(__name__)
 CORS(app)
 
 # =========================
-# Data Generator (Sem Viés) - MANTIDO ORIGINAL
+# Data Generator COM DADOS REAIS OKX
 # =========================
 class DataGenerator:
     def __init__(self):
         self.price_cache = {}
-        self._initialize_prices()
+        self.historical_cache = {}
+        self._initialize_real_prices()
         
-    def _initialize_prices(self):
-        # Preços iniciais realistas SEM VIÉS
-        initial_prices = {
-            'BTC/USDT': 27407.86,
-            'ETH/USDT': 1650.30,
-            'SOL/USDT': 42.76,
-            'ADA/USDT': 0.412,
-            'XRP/USDT': 0.52,
-            'BNB/USDT': 220.45
-        }
-        self.price_cache = initial_prices.copy()
+    def _initialize_real_prices(self):
+        """Busca preços iniciais REAIS da OKX"""
+        for symbol in DEFAULT_SYMBOLS:
+            try:
+                price = self._fetch_current_price(symbol)
+                if price:
+                    self.price_cache[symbol] = price
+                    logger.info("real_price_initialized", symbol=symbol, price=price)
+                else:
+                    # Fallback realista se API falhar
+                    fallback_prices = {
+                        'BTC-USDT': 27407.86,
+                        'ETH-USDT': 1650.30, 
+                        'SOL-USDT': 42.76,
+                        'ADA-USDT': 0.412,
+                        'XRP-USDT': 0.52,
+                        'BNB-USDT': 220.45
+                    }
+                    self.price_cache[symbol] = fallback_prices.get(symbol, 100)
+            except Exception as e:
+                logger.error("price_init_error", symbol=symbol, error=str(e))
+                self.price_cache[symbol] = 100
+                
+    def _fetch_current_price(self, symbol: str) -> Optional[float]:
+        """Busca preço atual REAL da OKX"""
+        try:
+            url = f"https://www.okx.com/api/v5/market/ticker?instId={symbol}"
+            response = requests.get(url, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                if data['code'] == '0' and data['data']:
+                    return float(data['data'][0]['last'])
+            return None
+        except Exception as e:
+            logger.error("price_fetch_error", symbol=symbol, error=str(e))
+            return None
+            
+    def _fetch_historical_data(self, symbol: str, periods: int = 100) -> Optional[List[List[float]]]:
+        """Busca dados históricos REAIS da OKX"""
+        try:
+            url = f"https://www.okx.com/api/v5/market/candles?instId={symbol}&bar=1m&limit={periods}"
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if data['code'] == '0' and data['data']:
+                    candles = []
+                    for candle in reversed(data['data']):  # OKX retorna do mais recente para o mais antigo
+                        candles.append([
+                            float(candle[1]),  # open
+                            float(candle[2]),  # high  
+                            float(candle[3]),  # low
+                            float(candle[4]),  # close
+                            float(candle[5])   # volume
+                        ])
+                    return candles
+            return None
+        except Exception as e:
+            logger.error("historical_fetch_error", symbol=symbol, error=str(e))
+            return None
         
     def get_current_prices(self) -> Dict[str, float]:
-        """Gera preços realistas com variação SEM VIÉS"""
-        updated_prices = {}
-        for symbol, last_price in self.price_cache.items():
-            # Variação balanceada (-3% a +3%)
-            change_pct = random.uniform(-0.03, 0.03)
-            new_price = last_price * (1 + change_pct)
-            
-            # Ranges realistas SEM favorecer BTC/ETH
-            price_ranges = {
-                'BTC/USDT': (25000, 40000),
-                'ETH/USDT': (1500, 2500),
-                'SOL/USDT': (20, 80),
-                'ADA/USDT': (0.3, 0.8),
-                'XRP/USDT': (0.4, 1.0),
-                'BNB/USDT': (200, 300)
-            }
-            
-            min_price, max_price = price_ranges.get(symbol, (last_price * 0.7, last_price * 1.3))
-            new_price = max(min_price, min(max_price, new_price))
+        """Retorna preços REAIS com fallback inteligente"""
+        real_prices = {}
+        
+        for symbol in DEFAULT_SYMBOLS:
+            try:
+                # Tenta buscar preço real
+                current_price = self._fetch_current_price(symbol)
+                if current_price:
+                    real_prices[symbol] = current_price
+                    self.price_cache[symbol] = current_price  # Atualiza cache
+                else:
+                    # Fallback: pequena variação do último preço real
+                    last_price = self.price_cache.get(symbol, 100)
+                    variation = random.uniform(-0.005, 0.005)  # ±0.5%
+                    real_prices[symbol] = round(last_price * (1 + variation), 6)
+                    
+            except Exception as e:
+                logger.error("current_price_error", symbol=symbol, error=str(e))
+                real_prices[symbol] = self.price_cache.get(symbol, 100)
                 
-            updated_prices[symbol] = round(new_price, 6)
-            self.price_cache[symbol] = new_price
-            
-        return updated_prices
+        return real_prices
     
     def get_historical_data(self, symbol: str, periods: int = 100) -> List[List[float]]:
-        """Gera dados históricos realistas SEM VIÉS"""
-        current_price = self.price_cache.get(symbol, 100)
+        """Retorna dados históricos REAIS com fallback"""
+        try:
+            # Tenta buscar dados reais
+            real_data = self._fetch_historical_data(symbol, periods)
+            if real_data and len(real_data) >= 20:  # Tem dados suficientes
+                self.historical_cache[symbol] = real_data
+                return real_data
+                
+            # Se não conseguiu dados reais, usa cache ou fallback
+            cached = self.historical_cache.get(symbol)
+            if cached and len(cached) >= 20:
+                return cached
+                
+            # Fallback: gera dados realistas baseados no preço atual
+            current_price = self.price_cache.get(symbol, 100)
+            return self._generate_realistic_fallback(current_price, periods)
+            
+        except Exception as e:
+            logger.error("historical_data_error", symbol=symbol, error=str(e))
+            current_price = self.price_cache.get(symbol, 100)
+            return self._generate_realistic_fallback(current_price, periods)
+    
+    def _generate_realistic_fallback(self, base_price: float, periods: int) -> List[List[float]]:
+        """Gera dados realistas quando API falha"""
         candles = []
-        
-        # Gerar candles históricos com tendência aleatória
-        price = current_price * random.uniform(0.8, 1.2)
+        price = base_price
         
         for i in range(periods):
             open_price = price
-            # Variação balanceada
-            change_pct = random.gauss(0, 0.02)  # Mais volatilidade
+            # Variação mais realista (±2%)
+            change_pct = random.gauss(0, 0.01)  
             close_price = open_price * (1 + change_pct)
-            high_price = max(open_price, close_price) * (1 + abs(random.gauss(0, 0.01)))
-            low_price = min(open_price, close_price) * (1 - abs(random.gauss(0, 0.01)))
+            high_price = max(open_price, close_price) * (1 + abs(random.gauss(0, 0.005)))
+            low_price = min(open_price, close_price) * (1 - abs(random.gauss(0, 0.005)))
             volume = random.uniform(1000, 50000)
             
             candles.append([open_price, high_price, low_price, close_price, volume])
             price = close_price
             
         return candles
+
+# =========================
+# O RESTO DO CÓDIGO PERMANECE EXATAMENTE IGUAL!
+# =========================
+# TechnicalIndicators (ORIGINAL)
+# GARCHSystem (ORIGINAL) 
+# TrendIntelligence (ORIGINAL)
+# TradingSystem (ORIGINAL)
+# AnalysisManager (ORIGINAL)
+# Rotas Flask (ORIGINAL)
+# Frontend (ORIGINAL)
+# =========================
+
 
 # =========================
 # Indicadores Técnicos (Melhorados) - MANTIDO ORIGINAL
