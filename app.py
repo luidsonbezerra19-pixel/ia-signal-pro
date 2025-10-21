@@ -45,6 +45,9 @@ CORS(app)
 # =========================
 # Data Generator COM DADOS REAIS OKX
 # =========================
+# =========================
+# Data Generator COM DADOS REAIS OKX - VERSÃO CORRIGIDA
+# =========================
 class DataGenerator:
     def __init__(self):
         self.price_cache = {}
@@ -53,51 +56,75 @@ class DataGenerator:
         
     def _initialize_real_prices(self):
         """Busca preços iniciais REAIS da OKX"""
+        # Preços realistas de fallback
+        realistic_prices = {
+            'BTC/USDT': 45000.00,
+            'ETH/USDT': 2500.00,
+            'SOL/USDT': 100.00, 
+            'ADA/USDT': 0.50,
+            'XRP/USDT': 0.60,
+            'BNB/USDT': 300.00
+        }
+        
         for symbol in DEFAULT_SYMBOLS:
             try:
                 price = self._fetch_current_price(symbol)
                 if price:
                     self.price_cache[symbol] = price
                     logger.info("real_price_initialized", symbol=symbol, price=price)
+                    print(f"✅ Preço REAL obtido: {symbol} = {price}")
                 else:
-                    # Fallback realista se API falhar
-                    fallback_prices = {
-                        'BTC-USDT': 27407.86,
-                        'ETH-USDT': 1650.30, 
-                        'SOL-USDT': 42.76,
-                        'ADA-USDT': 0.412,
-                        'XRP-USDT': 0.52,
-                        'BNB-USDT': 220.45
-                    }
-                    self.price_cache[symbol] = fallback_prices.get(symbol, 100)
+                    # Fallback REALISTA
+                    self.price_cache[symbol] = realistic_prices.get(symbol, 100)
+                    print(f"⚠️  Usando fallback: {symbol} = {realistic_prices.get(symbol, 100)}")
             except Exception as e:
                 logger.error("price_init_error", symbol=symbol, error=str(e))
-                self.price_cache[symbol] = 100
+                self.price_cache[symbol] = realistic_prices.get(symbol, 100)
+                print(f"❌ Erro, usando fallback: {symbol} = {realistic_prices.get(symbol, 100)}")
                 
     def _fetch_current_price(self, symbol: str) -> Optional[float]:
-        """Busca preço atual REAL da OKX"""
+        """Busca preço atual REAL da OKX - COM DEBUG"""
         try:
-            url = f"https://www.okx.com/api/v5/market/ticker?instId={symbol}"
+            # CORREÇÃO: Converter formato BTC/USDT → BTC-USDT
+            okx_symbol = symbol.replace("/", "-")
+            url = f"https://www.okx.com/api/v5/market/ticker?instId={okx_symbol}"
+            
+            print(f"🔍 Tentando buscar: {url}")
+            
             response = requests.get(url, timeout=5)
+            print(f"📡 Status: {response.status_code}")
+            
             if response.status_code == 200:
                 data = response.json()
-                if data['code'] == '0' and data['data']:
-                    return float(data['data'][0]['last'])
+                print(f"📊 Data: {data}")
+                
+                if data.get('code') == '0' and data.get('data'):
+                    price = float(data['data'][0]['last'])
+                    print(f"✅ Preço real encontrado: {price}")
+                    return price
+                else:
+                    print(f"❌ Erro na API: {data}")
+            else:
+                print(f"❌ HTTP Error: {response.status_code}")
             return None
         except Exception as e:
-            logger.error("price_fetch_error", symbol=symbol, error=str(e))
+            print(f"💥 Erro na requisição: {e}")
             return None
             
     def _fetch_historical_data(self, symbol: str, periods: int = 100) -> Optional[List[List[float]]]:
         """Busca dados históricos REAIS da OKX"""
         try:
-            url = f"https://www.okx.com/api/v5/market/candles?instId={symbol}&bar=1m&limit={periods}"
+            okx_symbol = symbol.replace("/", "-")
+            url = f"https://www.okx.com/api/v5/market/candles?instId={okx_symbol}&bar=1m&limit={periods}"
+            
+            print(f"🔍 Buscando históricos: {url}")
+            
             response = requests.get(url, timeout=10)
             if response.status_code == 200:
                 data = response.json()
-                if data['code'] == '0' and data['data']:
+                if data.get('code') == '0' and data.get('data'):
                     candles = []
-                    for candle in reversed(data['data']):  # OKX retorna do mais recente para o mais antigo
+                    for candle in reversed(data['data']):
                         candles.append([
                             float(candle[1]),  # open
                             float(candle[2]),  # high  
@@ -105,46 +132,44 @@ class DataGenerator:
                             float(candle[4]),  # close
                             float(candle[5])   # volume
                         ])
+                    print(f"✅ Históricos obtidos: {symbol} - {len(candles)} candles")
                     return candles
+            print(f"❌ Erro ao buscar históricos: {symbol}")
             return None
         except Exception as e:
-            logger.error("historical_fetch_error", symbol=symbol, error=str(e))
+            print(f"💥 Erro históricos: {e}")
             return None
         
-    def _fetch_current_price(self, symbol: str) -> Optional[float]:
-    """Busca preço atual REAL da OKX - COM DEBUG"""
-    try:
-        # CORREÇÃO: Converter formato BTC/USDT → BTC-USDT
-        okx_symbol = symbol.replace("/", "-")
-        url = f"https://www.okx.com/api/v5/market/ticker?instId={okx_symbol}"
+    def get_current_prices(self) -> Dict[str, float]:
+        """Retorna preços REAIS com fallback inteligente"""
+        real_prices = {}
         
-        print(f"🔍 Tentando buscar: {url}")  # DEBUG
-        
-        response = requests.get(url, timeout=5)
-        print(f"📡 Status: {response.status_code}")  # DEBUG
-        print(f"📦 Resposta: {response.text}")  # DEBUG
-        
-        if response.status_code == 200:
-            data = response.json()
-            print(f"📊 Data: {data}")  # DEBUG
-            
-            if data['code'] == '0' and data['data']:
-                price = float(data['data'][0]['last'])
-                print(f"✅ Preço real encontrado: {price}")  # DEBUG
-                return price
-            else:
-                print(f"❌ Erro na API: {data}")  # DEBUG
-        return None
-    except Exception as e:
-        print(f"💥 Erro na requisição: {e}")  # DEBUG
-        return None
+        for symbol in DEFAULT_SYMBOLS:
+            try:
+                # Tenta buscar preço real
+                current_price = self._fetch_current_price(symbol)
+                if current_price:
+                    real_prices[symbol] = current_price
+                    self.price_cache[symbol] = current_price
+                    print(f"🔄 Preço atualizado: {symbol} = {current_price}")
+                else:
+                    # Fallback: pequena variação do último preço real
+                    last_price = self.price_cache.get(symbol, 100)
+                    variation = random.uniform(-0.005, 0.005)
+                    real_prices[symbol] = round(last_price * (1 + variation), 6)
+                    
+            except Exception as e:
+                print(f"❌ Erro preço atual: {e}")
+                real_prices[symbol] = self.price_cache.get(symbol, 100)
+                
+        return real_prices
     
     def get_historical_data(self, symbol: str, periods: int = 100) -> List[List[float]]:
         """Retorna dados históricos REAIS com fallback"""
         try:
             # Tenta buscar dados reais
             real_data = self._fetch_historical_data(symbol, periods)
-            if real_data and len(real_data) >= 20:  # Tem dados suficientes
+            if real_data and len(real_data) >= 20:
                 self.historical_cache[symbol] = real_data
                 return real_data
                 
@@ -158,7 +183,7 @@ class DataGenerator:
             return self._generate_realistic_fallback(current_price, periods)
             
         except Exception as e:
-            logger.error("historical_data_error", symbol=symbol, error=str(e))
+            print(f"❌ Erro dados históricos: {e}")
             current_price = self.price_cache.get(symbol, 100)
             return self._generate_realistic_fallback(current_price, periods)
     
@@ -169,7 +194,6 @@ class DataGenerator:
         
         for i in range(periods):
             open_price = price
-            # Variação mais realista (±2%)
             change_pct = random.gauss(0, 0.01)  
             close_price = open_price * (1 + change_pct)
             high_price = max(open_price, close_price) * (1 + abs(random.gauss(0, 0.005)))
