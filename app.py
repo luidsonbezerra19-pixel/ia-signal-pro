@@ -846,16 +846,16 @@ def index():
                     
                     if (result.success) {{
                         document.getElementById('status').innerHTML = 
-                            `<div class="status success">✅ ${result.message}</div>`;
+                            '<div class="status success">✅ ' + result.message + '</div>';
                         
                         setTimeout(getResults, 1000);
                     }} else {{
                         document.getElementById('status').innerHTML = 
-                            `<div class="status error">❌ ${result.message}</div>`;
+                            '<div class="status error">❌ ' + result.message + '</div>';
                     }}
                 }} catch (error) {{
                     document.getElementById('status').innerHTML = 
-                        `<div class="status error">💥 Erro de conexão: ${error.message}</div>`;
+                        '<div class="status error">💥 Erro de conexão: ' + error.message + '</div>';
                 }} finally {{
                     analyzeBtn.disabled = false;
                     analyzeBtn.textContent = '🎯 Analisar Ativos Selecionados (T+1)';
@@ -871,7 +871,7 @@ def index():
                         displayResults(data.results, data.best_opportunity);
                     }} else {{
                         document.getElementById('status').innerHTML = 
-                            `<div class="status info">📊 Nenhum resultado disponível ainda. Execute uma análise primeiro.</div>`;
+                            '<div class="status info">📊 Nenhum resultado disponível ainda. Execute uma análise primeiro.</div>';
                     }}
                 }} catch (error) {{
                     console.error('Error fetching results:', error);
@@ -889,26 +889,26 @@ def index():
                 resultsGrid.innerHTML = '';
                 
                 results.forEach(signal => {{
-                    if (signal.symbol !== best?.symbol) {{
+                    if (!best || signal.symbol !== best.symbol) {{
                         resultsGrid.innerHTML += createSignalCard(signal, false);
                     }}
                 }});
             }}
 
-            function createSignalCard(signal, isBest) {
+            function createSignalCard(signal, isBest) {{
                 const directionClass = signal.direction === 'buy' ? 'buy' : 'sell';
                 const directionEmoji = signal.direction === 'buy' ? '🟢' : '🔴';
                 const confidencePercent = (signal.confidence * 100).toFixed(1);
                 const priceFormatted = typeof signal.price === 'number' ? 
-                    signal.price.toLocaleString('pt-BR', { style: 'currency', currency: 'USD' }) : 
+                    signal.price.toLocaleString('pt-BR', {{ style: 'currency', currency: 'USD' }}) : 
                     '$' + signal.price;
-    
+                
                 return '<div class="signal-card ' + directionClass + ' ' + (isBest ? 'best-card' : '') + '">' +
-                        '<h3>' + directionEmoji + ' ' + signal.symbol + ' ' + (isBest ? '🏆' : '') + '</h3>' +
-                        '<div class="info-line">' +
-                            '<span class="badge ' + directionClass + '">' + signal.direction.toUpperCase() + '</span>' +
-                            '<span class="badge confidence">' + confidencePercent + '% Confiança</span>' +
-                            '<span class="badge time">' + signal.timeframe + '</span>' +
+                    '<h3>' + directionEmoji + ' ' + signal.symbol + ' ' + (isBest ? '🏆' : '') + '</h3>' +
+                    '<div class="info-line">' +
+                        '<span class="badge ' + directionClass + '">' + signal.direction.toUpperCase() + '</span>' +
+                        '<span class="badge confidence">' + confidencePercent + '% Confiança</span>' +
+                        '<span class="badge time">' + signal.timeframe + '</span>' +
                     '</div>' +
                     '<div class="info-line"><strong>🎯 Entrada:</strong> ' + signal.entry_time + '</div>' +
                     '<div class="info-line"><strong>💰 Preço Atual:</strong> ' + priceFormatted + '</div>' +
@@ -920,26 +920,26 @@ def index():
                     '<div class="info-line"><strong>🧠 IA:</strong> ' + signal.reason + '</div>' +
                     '<div class="info-line"><strong>⏰ Análise:</strong> ' + signal.timestamp + '</div>' +
                 '</div>';
-            }
-           
+            }}
+
             async function checkStatus() {{
                 try {{
                     const response = await fetch('/status');
                     const status = await response.json();
                     
-                    let statusHtml = `<div class="status info">
-                        <strong>📊 Status do Sistema:</strong><br>
-                        ⏰ Hora: ${status.current_time}<br>
-                        🔄 Analisando: ${status.is_analyzing ? 'Sim' : 'Não'}<br>
-                        📈 Resultados: ${status.results_count} sinais<br>
-                        🎯 Melhor: ${status.best_symbol || 'Nenhum'}<br>
-                        🕒 Última: ${status.last_analysis || 'Nenhuma'}
-                    </div>`;
+                    let statusHtml = '<div class="status info">' +
+                        '<strong>📊 Status do Sistema:</strong><br>' +
+                        '⏰ Hora: ' + status.current_time + '<br>' +
+                        '🔄 Analisando: ' + (status.is_analyzing ? 'Sim' : 'Não') + '<br>' +
+                        '📈 Resultados: ' + status.results_count + ' sinais<br>' +
+                        '🎯 Melhor: ' + (status.best_symbol || 'Nenhum') + '<br>' +
+                        '🕒 Última: ' + (status.last_analysis || 'Nenhuma') +
+                    '</div>';
                     
                     document.getElementById('status').innerHTML = statusHtml;
                 }} catch (error) {{
                     document.getElementById('status').innerHTML = 
-                        `<div class="status error">💥 Erro ao verificar status: ${error.message}</div>`;
+                        '<div class="status error">💥 Erro ao verificar status: ' + error.message + '</div>';
                 }}
             }}
         </script>
