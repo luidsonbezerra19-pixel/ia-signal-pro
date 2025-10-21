@@ -1,4 +1,4 @@
-# app.py — IA CORRIGIDA + IMPARCIALIDADE + VALORES DINÂMICOS + OKX WEBSOCKET
+# app.py — IA CORRIGIDA + IMPARCIALIDADE + VALORES DINÂMICOS
 from __future__ import annotations
 import os, time, math, random, threading, json, statistics as stats
 from typing import Any, Dict, List, Optional
@@ -6,9 +6,6 @@ from datetime import datetime, timezone, timedelta
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
 import structlog
-import websocket
-import json as json_lib
-import requests
 
 # =========================
 # Configuração de Logging
@@ -36,154 +33,69 @@ logger = structlog.get_logger()
 # Config (Simplificado)
 # =========================
 MC_PATHS = 3000
-DEFAULT_SYMBOLS = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "ADA-USDT", "XRP-USDT", "BNB-USDT"]
-OKX_WS_URL = "wss://ws.okx.com:8443/ws/v5/public"
-OKX_REST_URL = "https://www.okx.com/api/v5"
+DEFAULT_SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "ADA/USDT", "XRP/USDT", "BNB/USDT"]
 
 app = Flask(__name__)
 CORS(app)
 
 # =========================
-# OKX WebSocket Manager (NOVO)
+# Data Generator (Sem Viés)
 # =========================
-class OKXWebSocketManager:
+class DataGenerator:
     def __init__(self):
-        self.ws = None
         self.price_cache = {}
-        self.connected = False
-        self.should_reconnect = True
         self._initialize_prices()
         
     def _initialize_prices(self):
-        # Preços iniciais via REST API como fallback
+        # Preços iniciais realistas SEM VIÉS
         initial_prices = {
-            'BTC-USDT': 27407.86,
-            'ETH-USDT': 1650.30,
-            'SOL-USDT': 42.76,
-            'ADA-USDT': 0.412,
-            'XRP-USDT': 0.52,
-            'BNB-USDT': 220.45
+            'BTC/USDT': 27407.86,
+            'ETH/USDT': 1650.30,
+            'SOL/USDT': 42.76,
+            'ADA/USDT': 0.412,
+            'XRP/USDT': 0.52,
+            'BNB/USDT': 220.45
         }
-        
-        try:
-            response = requests.get(f"{OKX_REST_URL}/market/tickers?instType=SPOT")
-            if response.status_code == 200:
-                data = response.json()
-                if data['code'] == '0':
-                    for ticker in data['data']:
-                        inst_id = ticker['instId']
-                        if inst_id in DEFAULT_SYMBOLS:
-                            initial_prices[inst_id] = float(ticker['last'])
-        except Exception as e:
-            logger.warning("rest_fallback_prices", error=str(e))
-            
         self.price_cache = initial_prices.copy()
-        logger.info("prices_initialized", prices=initial_prices)
-        
-    def on_message(self, ws, message):
-        try:
-            data = json_lib.loads(message)
-            
-            if 'arg' in data and 'data' in data:
-                channel = data['arg']['channel']
-                inst_id = data['arg']['instId']
-                
-                if channel == 'tickers':
-                    ticker_data = data['data'][0]
-                    last_price = float(ticker_data['last'])
-                    self.price_cache[inst_id] = last_price
-                    
-        except Exception as e:
-            logger.error("websocket_message_error", error=str(e))
-            
-    def on_error(self, ws, error):
-        logger.error("websocket_error", error=str(error))
-        
-    def on_close(self, ws, close_status_code, close_msg):
-        logger.warning("websocket_closed", code=close_status_code, msg=close_msg)
-        self.connected = False
-        if self.should_reconnect:
-            time.sleep(2)
-            self.connect()
-            
-    def on_open(self, ws):
-        logger.info("websocket_connected")
-        self.connected = True
-        # Subscribe to tickers for all symbols
-        for symbol in DEFAULT_SYMBOLS:
-            subscribe_msg = {
-                "op": "subscribe",
-                "args": [{
-                    "channel": "tickers",
-                    "instId": symbol
-                }]
-            }
-            ws.send(json_lib.dumps(subscribe_msg))
-            
-    def connect(self):
-        def run_ws():
-            self.ws = websocket.WebSocketApp(
-                OKX_WS_URL,
-                on_message=self.on_message,
-                on_error=self.on_error,
-                on_close=self.on_close,
-                on_open=self.on_open
-            )
-            self.ws.run_forever()
-            
-        ws_thread = threading.Thread(target=run_ws)
-        ws_thread.daemon = True
-        ws_thread.start()
         
     def get_current_prices(self) -> Dict[str, float]:
-        """Retorna preços atuais do cache WebSocket"""
-        return self.price_cache.copy()
+        """Gera preços realistas com variação SEM VIÉS"""
+        updated_prices = {}
+        for symbol, last_price in self.price_cache.items():
+            # Variação balanceada (-3% a +3%)
+            change_pct = random.uniform(-0.03, 0.03)
+            new_price = last_price * (1 + change_pct)
+            
+            # Ranges realistas SEM favorecer BTC/ETH
+            price_ranges = {
+                'BTC/USDT': (25000, 40000),
+                'ETH/USDT': (1500, 2500),
+                'SOL/USDT': (20, 80),
+                'ADA/USDT': (0.3, 0.8),
+                'XRP/USDT': (0.4, 1.0),
+                'BNB/USDT': (200, 300)
+            }
+            
+            min_price, max_price = price_ranges.get(symbol, (last_price * 0.7, last_price * 1.3))
+            new_price = max(min_price, min(max_price, new_price))
+                
+            updated_prices[symbol] = round(new_price, 6)
+            self.price_cache[symbol] = new_price
+            
+        return updated_prices
     
     def get_historical_data(self, symbol: str, periods: int = 100) -> List[List[float]]:
-        """Obtém dados históricos reais da OKX via REST API"""
-        try:
-            # Usar candles de 1 minuto para análise de próximo candle
-            response = requests.get(
-                f"{OKX_REST_URL}/market/candles",
-                params={
-                    'instId': symbol,
-                    'bar': '1m',
-                    'limit': periods
-                }
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                if data['code'] == '0':
-                    candles = []
-                    # A OKX retorna candles em ordem reversa [mais recente primeiro]
-                    for candle_data in reversed(data['data']):
-                        # [timestamp, open, high, low, close, volume, volume_currency]
-                        candles.append([
-                            float(candle_data[1]),  # open
-                            float(candle_data[2]),  # high
-                            float(candle_data[3]),  # low
-                            float(candle_data[4]),  # close
-                            float(candle_data[5])   # volume
-                        ])
-                    return candles
-                    
-        except Exception as e:
-            logger.error("historical_data_error", symbol=symbol, error=str(e))
-            
-        # Fallback para dados gerados se a API falhar
-        return self._generate_fallback_data(symbol, periods)
-    
-    def _generate_fallback_data(self, symbol: str, periods: int) -> List[List[float]]:
-        """Gera dados fallback realistas baseados no preço atual"""
+        """Gera dados históricos realistas SEM VIÉS"""
         current_price = self.price_cache.get(symbol, 100)
         candles = []
         
-        price = current_price * random.uniform(0.9, 1.1)
+        # Gerar candles históricos com tendência aleatória
+        price = current_price * random.uniform(0.8, 1.2)
         
         for i in range(periods):
             open_price = price
-            change_pct = random.gauss(0, 0.015)
+            # Variação balanceada
+            change_pct = random.gauss(0, 0.02)  # Mais volatilidade
             close_price = open_price * (1 + change_pct)
             high_price = max(open_price, close_price) * (1 + abs(random.gauss(0, 0.01)))
             low_price = min(open_price, close_price) * (1 - abs(random.gauss(0, 0.01)))
@@ -195,22 +107,7 @@ class OKXWebSocketManager:
         return candles
 
 # =========================
-# Data Generator (AGORA COM DADOS REAIS)
-# =========================
-class DataGenerator:
-    def __init__(self, ws_manager: OKXWebSocketManager):
-        self.ws_manager = ws_manager
-        
-    def get_current_prices(self) -> Dict[str, float]:
-        """Preços em tempo real via WebSocket"""
-        return self.ws_manager.get_current_prices()
-    
-    def get_historical_data(self, symbol: str, periods: int = 100) -> List[List[float]]:
-        """Dados históricos reais da OKX"""
-        return self.ws_manager.get_historical_data(symbol, periods)
-
-# =========================
-# Indicadores Técnicos (Melhorados) - MANTIDO IGUAL
+# Indicadores Técnicos (Melhorados)
 # =========================
 class TechnicalIndicators:
     @staticmethod
@@ -303,7 +200,7 @@ class TechnicalIndicators:
         return {"trend": trend, "strength": round(strength, 4)}
 
 # =========================
-# Sistema GARCH Melhorado (Probabilidades Dinâmicas) - MANTIDO IGUAL
+# Sistema GARCH Melhorado (Probabilidades Dinâmicas)
 # =========================
 class GARCHSystem:
     def __init__(self):
@@ -353,7 +250,7 @@ class GARCHSystem:
         }
 
 # =========================
-# IA de Tendência IMPARCIAL - MANTIDO IGUAL
+# IA de Tendência IMPARCIAL
 # =========================
 class TrendIntelligence:
     def analyze_trend_signal(self, technical_data: Dict, garch_probs: Dict) -> Dict[str, Any]:
@@ -421,14 +318,14 @@ class TrendIntelligence:
         }
 
 # =========================
-# Sistema Principal CORRIGIDO (AGORA COM DADOS REAIS)
+# Sistema Principal CORRIGIDO
 # =========================
 class TradingSystem:
-    def __init__(self, ws_manager: OKXWebSocketManager):
+    def __init__(self):
         self.indicators = TechnicalIndicators()
         self.garch = GARCHSystem()
         self.trend_ai = TrendIntelligence()
-        self.data_gen = DataGenerator(ws_manager)
+        self.data_gen = DataGenerator()
         
     def calculate_entry_time(self) -> str:
         """Calcula horário de entrada para o próximo candle (T+1)"""
@@ -438,7 +335,7 @@ class TradingSystem:
         
     def analyze_symbol(self, symbol: str) -> Dict[str, Any]:
         try:
-            # Obter dados REAIS da OKX
+            # Obter dados SEM VIÉS
             current_prices = self.data_gen.get_current_prices()
             current_price = current_prices.get(symbol, 100)
             historical_data = self.data_gen.get_historical_data(symbol)
@@ -448,7 +345,7 @@ class TradingSystem:
                 
             closes = [candle[3] for candle in historical_data]
             
-            # Calcular indicadores (MESMA LÓGICA)
+            # Calcular indicadores
             rsi = self.indicators.rsi_wilder(closes)
             macd = self.indicators.macd(closes)
             trend = self.indicators.calculate_trend_strength(closes)
@@ -557,16 +454,16 @@ class TradingSystem:
         }
 
 # =========================
-# Gerenciador e API (ATUALIZADO)
+# Gerenciador e API
 # =========================
 class AnalysisManager:
-    def __init__(self, ws_manager: OKXWebSocketManager):
+    def __init__(self):
         self.is_analyzing = False
         self.current_results: List[Dict[str, Any]] = []
         self.best_opportunity: Optional[Dict[str, Any]] = None
         self.analysis_time: Optional[str] = None
         self.symbols_default = DEFAULT_SYMBOLS
-        self.system = TradingSystem(ws_manager)
+        self.system = TradingSystem()
 
     def get_brazil_time(self) -> datetime:
         return datetime.now(timezone(timedelta(hours=-3)))
@@ -606,17 +503,9 @@ class AnalysisManager:
             self.is_analyzing = False
 
 # =========================
-# Inicialização (ATUALIZADA)
+# Inicialização
 # =========================
-# Inicializar WebSocket primeiro
-ws_manager = OKXWebSocketManager()
-ws_manager.connect()
-
-# Aguardar conexão inicial
-time.sleep(3)
-
-# Inicializar manager com WebSocket
-manager = AnalysisManager(ws_manager)
+manager = AnalysisManager()
 
 def get_current_brazil_time() -> str:
     return datetime.now(timezone(timedelta(hours=-3))).strftime("%H:%M:%S BRT")
@@ -624,14 +513,11 @@ def get_current_brazil_time() -> str:
 @app.route('/')
 def index():
     current_time = get_current_brazil_time()
-    ws_status = 'ws-connected' if ws_manager.connected else 'ws-disconnected'
-    ws_text = 'CONECTADO' if ws_manager.connected else 'RECONECTANDO...'
-    
-    html_content = f'''
+    return Response(f'''
     <!DOCTYPE html>
     <html>
     <head>
-        <title>IA Signal Pro - DADOS REAIS OKX + IMPARCIAL</title>
+        <title>IA Signal Pro - IMPARCIAL + DINÂMICO</title>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
@@ -726,39 +612,21 @@ def index():
             .status.success {{ background: #0c5d4b; color: white; }}
             .status.error {{ background: #5b1f1f; color: white; }}
             .status.info {{ background: #1f5f4a; color: white; }}
-            .ws-status {{
-                display: inline-block;
-                width: 10px;
-                height: 10px;
-                border-radius: 50%;
-                margin-right: 8px;
-            }}
-            .ws-connected {{ background: #29d391; }}
-            .ws-disconnected {{ background: #ff5b5b; }}
         </style>
     </head>
     <body>
         <div class="container">
             <div class="header">
-                <h1>🚀 IA Signal Pro - DADOS REAIS OKX + IMPARCIAL</h1>
+                <h1>🚀 IA Signal Pro - IMPARCIAL + DINÂMICO</h1>
                 <div class="clock" id="currentTime">{current_time}</div>
-                <p>
-                    <span class="ws-status {ws_status}" id="wsStatus"></span>
-                    🔥 <strong>Preços em tempo real OKX</strong> | 
-                    🎯 <strong>Próximo Candle (T+1)</strong> | 
-                    📊 3000 Simulações GARCH | 
-                    ✅ Confiança Dinâmica 70-92%
-                </p>
+                <p>🎯 <strong>Próximo Candle (T+1)</strong> | 📊 3000 Simulações GARCH | ✅ Confiança Dinâmica 70-92%</p>
             </div>
             
             <div class="controls">
                 <button onclick="runAnalysis()" id="analyzeBtn">🎯 Analisar 6 Ativos (T+1)</button>
                 <button onclick="checkStatus()">📊 Status do Sistema</button>
                 <div id="status" class="status info">
-                    <span class="ws-status {ws_status}" id="wsStatusIcon"></span>
-                    ⏰ Hora atual: {current_time} | 
-                    WebSocket: {ws_text} | 
-                    Sistema IMPARCIAL Online
+                    ⏰ Hora atual: {current_time} | Sistema IMPARCIAL Online
                 </div>
             </div>
             
@@ -798,13 +666,13 @@ def index():
                 
                 const statusDiv = document.getElementById('status');
                 statusDiv.className = 'status info';
-                statusDiv.innerHTML = '⏳ Iniciando análise com dados OKX para próximo candle...';
+                statusDiv.innerHTML = '⏳ Iniciando análise IMPARCIAL para próximo candle...';
                 
                 try {{
                     const response = await fetch('/api/analyze', {{
                         method: 'POST',
                         headers: {{'Content-Type': 'application/json'}},
-                        body: JSON.stringify({{symbols: ['BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'ADA-USDT', 'XRP-USDT', 'BNB-USDT']}})
+                        body: JSON.stringify({{symbols: ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'ADA/USDT', 'XRP/USDT', 'BNB/USDT']}})
                     }});
                     
                     const data = await response.json();
@@ -844,7 +712,7 @@ def index():
                             const statusDiv = document.getElementById('status');
                             statusDiv.className = 'status success';
                             statusDiv.innerHTML = 
-                                '✅ Análise com dados OKX completa! ' + data.total_signals + ' sinais encontrados | ' + 
+                                '✅ Análise IMPARCIAL completa! ' + data.total_signals + ' sinais encontrados | ' + 
                                 '⏰ ' + data.analysis_time;
                         }}
                     }}
@@ -857,114 +725,109 @@ def index():
             function renderResults(data) {{
                 if (data.best) {{
                     document.getElementById('bestSignal').style.display = 'block';
-                    document.getElementById('bestCard').innerHTML = createSignalCard(data.best, true);
+                    document.getElementById('bestCard').innerHTML = createSignalHTML(data.best, true);
                 }}
                 
-                if (data.signals && data.signals.length > 0) {{
+                if (data.results && data.results.length) {{
                     document.getElementById('allSignals').style.display = 'block';
-                    document.getElementById('resultsGrid').innerHTML = 
-                        data.signals.map(signal => createSignalCard(signal, false)).join('');
+                    document.getElementById('resultsGrid').innerHTML = data.results.map(signal => 
+                        createSignalHTML(signal, false)
+                    ).join('');
                 }}
             }}
             
-            function createSignalCard(signal, isBest) {{
-                const directionClass = signal.direction === 'buy' ? 'buy' : 'sell';
-                const directionIcon = signal.direction === 'buy' ? '🟢' : '🔴';
-                const confidencePercent = Math.round(signal.confidence * 100);
-                const bestClass = isBest ? 'best-card' : '';
-                const trophy = isBest ? '🏆' : '';
+            function createSignalHTML(signal, isBest) {{
+                const direction = signal.direction;
+                const prob = (direction === 'buy' ? signal.probability_buy : signal.probability_sell) * 100;
+                const confidence = signal.confidence * 100;
                 
                 return `
-                    <div class="signal-card ${directionClass} ${bestClass}">
-                        <h3>${directionIcon} ${signal.symbol} ${trophy}</h3>
+                    <div class="signal-card ${{direction}} ${{isBest ? 'best-card' : ''}}">
+                        <h3>${{signal.symbol}} ${{isBest ? '🏆' : ''}}</h3>
+                        <div class="badge ${{direction}}">${{direction === 'buy' ? 'COMPRAR' : 'VENDER'}} ${{prob.toFixed(1)}}%</div>
+                        <div class="badge confidence">Confiança ${{confidence.toFixed(1)}}%</div>
+                        <div class="badge time">Entrada: ${{signal.entry_time}}</div>
+                        
                         <div class="info-line">
-                            <span class="badge ${directionClass}">${signal.direction.toUpperCase()}</span>
-                            <span class="badge confidence">${confidencePercent}% Confiança</span>
-                            <span class="badge time">${signal.entry_time}</span>
+                            <strong>💰 Preço Atual:</strong> ${{signal.price.toFixed(6)}}
                         </div>
-                        <div class="info-line"><strong>🎯 Preço Atual:</strong> $${signal.price.toFixed(2)}</div>
-                        <div class="info-line"><strong>📊 Probabilidade:</strong> Compra ${(signal.probability_buy * 100).toFixed(1)}% | Venda ${(signal.probability_sell * 100).toFixed(1)}%</div>
-                        <div class="info-line"><strong>📈 RSI:</strong> ${signal.rsi}</div>
-                        <div class="info-line"><strong>🔍 MACD:</strong> ${signal.macd_signal} (${(signal.macd_strength * 100).toFixed(1)}%)</div>
-                        <div class="info-line"><strong>📊 Tendência:</strong> ${signal.trend} (${(signal.trend_strength * 100).toFixed(1)}%)</div>
-                        <div class="info-line"><strong>🎲 Volatilidade GARCH:</strong> ${(signal.garch_volatility * 100).toFixed(3)}%</div>
-                        <div class="info-line"><strong>⏰ Entrada:</strong> ${signal.entry_time}</div>
-                        <div class="info-line"><strong>📝 Motivo:</strong> ${signal.reason}</div>
-                        <div class="info-line"><strong>🕒 Timestamp:</strong> ${signal.timestamp}</div>
+                        <div class="info-line">
+                            <strong>📊 RSI:</strong> ${{signal.rsi.toFixed(1)}}
+                        </div>
+                        <div class="info-line">
+                            <strong>📈 MACD:</strong> ${{signal.macd_signal}} (${{(signal.macd_strength * 100).toFixed(1)}}%)
+                        </div>
+                        <div class="info-line">
+                            <strong>🎯 Tendência:</strong> ${{signal.trend}} (${{(signal.trend_strength * 100).toFixed(1)}}%)
+                        </div>
+                        <div class="info-line">
+                            <strong>⚡ Volatilidade GARCH:</strong> ${{(signal.garch_volatility * 100).toFixed(2)}}%
+                        </div>
+                        
+                        <p><strong>🧠 Análise:</strong> ${{signal.reason}}</p>
+                        <p><small>⏰ Gerado: ${{signal.timestamp}} | ${{signal.timeframe}}</small></p>
                     </div>
                 `;
             }}
             
-            function checkStatus() {{
-                const statusDiv = document.getElementById('status');
-                statusDiv.className = 'status info';
-                statusDiv.innerHTML = 
-                    '📊 Sistema IA Signal Pro Online | ' +
-                    'WebSocket: CONECTADO | ' +
-                    '⏰ ' + new Date().toLocaleTimeString();
+            async function checkStatus() {{
+                try {{
+                    const response = await fetch('/health');
+                    const data = await response.json();
+                    const statusDiv = document.getElementById('status');
+                    statusDiv.className = 'status success';
+                    statusDiv.innerHTML = `
+                        ✅ <strong>Sistema IMPARCIAL Online</strong> | 
+                        🎯 Simulações: ${{data.simulations}} | 
+                        ✅ Confiança: ${{data.confidence_range}} | 
+                        ⏰ ${{new Date().toLocaleTimeString()}}
+                    `;
+                }} catch (error) {{
+                    const statusDiv = document.getElementById('status');
+                    statusDiv.className = 'status error';
+                    statusDiv.innerHTML = '❌ Sistema Offline | ' + new Date().toLocaleTimeString();
+                }}
             }}
+            
+            checkStatus();
         </script>
     </body>
     </html>
-    '''
-    
-    return Response(html_content, mimetype='text/html')
+    ''', mimetype='text/html')
 
-@app.route('/api/analyze', methods=['POST'])
+@app.post("/api/analyze")
 def api_analyze():
+    if manager.is_analyzing:
+        return jsonify({"success": False, "error": "Análise em andamento"}), 429
+        
     try:
-        data = request.get_json()
-        symbols = data.get('symbols', DEFAULT_SYMBOLS)
+        data = request.get_json(silent=True) or {}
+        symbols = data.get("symbols", manager.symbols_default)
         
-        if manager.is_analyzing:
-            return jsonify({
-                'success': False,
-                'error': 'Análise já em andamento'
-            }), 429
-            
-        threading.Thread(target=manager.analyze_symbols_thread, args=(symbols,)).start()
+        th = threading.Thread(target=manager.analyze_symbols_thread, args=(symbols,))
+        th.daemon = True
+        th.start()
         
         return jsonify({
-            'success': True,
-            'message': f'Análise iniciada para {len(symbols)} símbolos'
+            "success": True, 
+            "message": f"Analisando {len(symbols)} ativos IMPARCIALMENTE (T+1)",
+            "symbols_count": len(symbols)
         })
-        
     except Exception as e:
-        logger.error("api_analyze_error", error=str(e))
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+        return jsonify({"success": False, "error": str(e)}), 500
 
-@app.route('/api/results')
+@app.get("/api/results")
 def api_results():
-    try:
-        return jsonify({
-            'success': True,
-            'is_analyzing': manager.is_analyzing,
-            'total_signals': len(manager.current_results),
-            'signals': manager.current_results,
-            'best': manager.best_opportunity,
-            'analysis_time': manager.analysis_time
-        })
-    except Exception as e:
-        logger.error("api_results_error", error=str(e))
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/status')
-def api_status():
     return jsonify({
-        'success': True,
-        'is_analyzing': manager.is_analyzing,
-        'websocket_connected': ws_manager.connected,
-        'current_prices': ws_manager.get_current_prices(),
-        'timestamp': get_current_brazil_time()
+        "success": True,
+        "results": manager.current_results,
+        "best": manager.best_opportunity,
+        "analysis_time": manager.analysis_time,
+        "total_signals": len(manager.current_results),
+        "is_analyzing": manager.is_analyzing
     })
 
-@app.route('/health')
+@app.get("/health")
 def health():
     current_time = get_current_brazil_time()
     return jsonify({
@@ -974,11 +837,10 @@ def health():
         "probabilities_range": "60-90%", 
         "current_time": current_time,
         "timeframe": "T+1 (Próximo candle)",
-        "websocket_connected": ws_manager.connected,
         "status": "imparcial_operational"
     })
 
-if __name__ == '__main__':
-    logger.info("app_starting", message="IA Signal Pro iniciando com dados reais OKX")
+if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    logger.info("app_starting_impartial", port=port, confidence_range="70-92%")
+    app.run(host="0.0.0.0", port=port, debug=False)
