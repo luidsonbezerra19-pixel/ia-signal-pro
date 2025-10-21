@@ -63,142 +63,136 @@ CORS(app)
 # =========================
 # Data Generator KRAKEN - COM SÍMBOLOS CORRETOS
 # =========================
+# =========================
+# Data Generator KRAKEN - À PROVA DE ERROS
+# =========================
 class DataGenerator:
     def __init__(self):
         self.price_cache = {}
         self.historical_cache = {}
-        # Mapeamento CORRETO de símbolos Kraken
-        self.kraken_symbols = {
-            'BTC/USDT': 'XBTUSDT',
-            'ETH/USDT': 'ETHUSDT', 
-            'SOL/USDT': 'SOLUSD',    # Kraken usa SOLUSD
-            'ADA/USDT': 'ADAUSD',    # Kraken usa ADAUSD  
-            'XRP/USDT': 'XRPUSD',    # Kraken usa XRPUSD
-            'BNB/USDT': 'BNBUSD'     # Kraken usa BNBUSD
-        }
         self._initialize_real_prices()
         
     def _initialize_real_prices(self):
-        """Busca preços iniciais REAIS da Kraken"""
-        print("🚀 INICIANDO BUSCA DE PREÇOS REAIS KRAKEN...")
+        """Busca preços iniciais REAIS"""
+        print("🚀 INICIANDO BUSCA DE PREÇOS REAIS...")
         
-        # Preços realistas como fallback
-        realistic_prices = {
-            'BTC/USDT': 67432.10,
-            'ETH/USDT': 3756.78,
-            'SOL/USDT': 143.45,
-            'ADA/USDT': 0.5567,
-            'XRP/USDT': 0.6678,
-            'BNB/USDT': 587.89
-        }
-        
+        # Tenta Kraken primeiro, depois Binance como fallback
         for symbol in DEFAULT_SYMBOLS:
             try:
+                # Tenta Kraken
                 price = self._fetch_current_price_kraken(symbol)
+                if not price:
+                    # Fallback para Binance
+                    price = self._fetch_current_price_binance(symbol)
+                
                 if price and price > 0:
                     self.price_cache[symbol] = price
-                    print(f"✅ KRAKEN PREÇO REAL: {symbol} = ${price:,.2f}")
+                    print(f"✅ PREÇO REAL: {symbol} = ${price:,.2f}")
                 else:
-                    # Usa preço realista como fallback
-                    self.price_cache[symbol] = realistic_prices.get(symbol, 100)
-                    print(f"⚠️  FALLBACK REALISTA: {symbol} = ${realistic_prices.get(symbol, 100):,.2f}")
+                    self._set_realistic_fallback(symbol)
                     
             except Exception as e:
-                print(f"❌ ERRO INICIAL: {symbol} - {e}")
-                self.price_cache[symbol] = realistic_prices.get(symbol, 100)
+                self._set_realistic_fallback(symbol)
+
+    def _get_kraken_symbol(self, symbol: str) -> str:
+        """Converte qualquer formato de símbolo para Kraken"""
+        # Normaliza o símbolo (remove / ou -)
+        clean_symbol = symbol.replace("/", "").replace("-", "").upper()
+        
+        kraken_map = {
+            'BTCUSDT': 'XBTUSDT',
+            'ETHUSDT': 'ETHUSDT', 
+            'SOLUSDT': 'SOLUSD',    
+            'ADAUSDT': 'ADAUSD',     
+            'XRPUSDT': 'XRPUSD',    
+            'BNBUSDT': 'BNBUSD',
+            # Adiciona mapeamentos alternativos
+            'BTCUSD': 'XBTUSD',
+            'ETHUSD': 'ETHUSD',
+            'SOLUSD': 'SOLUSD',
+            'ADAUSD': 'ADAUSD', 
+            'XRPUSD': 'XRPUSD',
+            'BNBUSD': 'BNBUSD'
+        }
+        
+        return kraken_map.get(clean_symbol, clean_symbol)
 
     def _fetch_current_price_kraken(self, symbol: str) -> Optional[float]:
-        """Busca preço REAL da Kraken - COM SÍMBOLOS CORRETOS"""
+        """Busca preço da Kraken - formato flexível"""
         try:
-            kraken_symbol = self.kraken_symbols.get(symbol)
-            if not kraken_symbol:
-                print(f"❌ Símbolo não mapeado: {symbol}")
-                return None
-                
+            kraken_symbol = self._get_kraken_symbol(symbol)
             url = f"https://api.kraken.com/0/public/Ticker?pair={kraken_symbol}"
             
-            print(f"🔍 KRAKEN: Buscando {symbol} → {kraken_symbol}")
+            print(f"🔍 KRAKEN: {symbol} → {kraken_symbol}")
             
-            response = requests.get(url, timeout=10)
-            print(f"📡 KRAKEN Status: {response.status_code}")
-            
-            if response.status_code == 200:
-                data = response.json()
-                
-                if not data.get('error'):
-                    # Kraken retorna dados aninhados com chave dinâmica
-                    for key, value in data['result'].items():
-                        price = float(value['c'][0])  # Preço de fechamento mais recente
-                        print(f"✅ KRAKEN PREÇO REAL: {symbol} = ${price:,.2f}")
-                        return price
-                else:
-                    print(f"❌ KRAKEN API Error: {data.get('error')}")
-            else:
-                print(f"❌ KRAKEN HTTP Error: {response.status_code}")
-                
-        except Exception as e:
-            print(f"💥 KRAKEN Error: {e}")
-            
-        return None
-
-    def _fetch_historical_data_kraken(self, symbol: str, periods: int = 100) -> Optional[List[List[float]]]:
-        """Busca candles históricos REAIS da Kraken"""
-        try:
-            kraken_symbol = self.kraken_symbols.get(symbol)
-            if not kraken_symbol:
-                return None
-                
-            url = f"https://api.kraken.com/0/public/OHLC?pair={kraken_symbol}&interval=1"
-            
-            print(f"📊 KRAKEN: Buscando históricos {symbol} → {kraken_symbol}")
-            
-            response = requests.get(url, timeout=15)
+            response = requests.get(url, timeout=8)
             
             if response.status_code == 200:
                 data = response.json()
                 
                 if not data.get('error') and data.get('result'):
-                    candles = []
-                    for key, ohlc_data in data['result'].items():
-                        for candle in ohlc_data[-periods:]:
-                            candles.append([
-                                float(candle[1]),  # open
-                                float(candle[2]),  # high  
-                                float(candle[3]),  # low
-                                float(candle[4]),  # close
-                                float(candle[6])   # volume
-                            ])
-                        break
-                    
-                    print(f"✅ KRAKEN HISTÓRICOS REAIS: {symbol} - {len(candles)} candles")
-                    return candles
+                    for key, value in data['result'].items():
+                        price = float(value['c'][0])
+                        print(f"✅ KRAKEN: {symbol} = ${price:,.2f}")
+                        return price
+                else:
+                    print(f"❌ KRAKEN não reconhece: {kraken_symbol}")
                     
         except Exception as e:
-            print(f"💥 KRAKEN Históricos Error: {e}")
+            print(f"💥 KRAKEN Error: {e}")
             
         return None
 
+    def _fetch_current_price_binance(self, symbol: str) -> Optional[float]:
+        """Busca preço da Binance - formato flexível"""
+        try:
+            # Binace usa formato BTCUSDT (sem / nem -)
+            binance_symbol = symbol.replace("/", "").replace("-", "")
+            url = f"https://api.binance.com/api/v3/ticker/price?symbol={binance_symbol}"
+            
+            response = requests.get(url, timeout=8)
+            if response.status_code == 200:
+                data = response.json()
+                price = float(data['price'])
+                print(f"✅ BINANCE: {symbol} = ${price:,.2f}")
+                return price
+                
+        except Exception as e:
+            print(f"💥 BINANCE Error: {e}")
+            
+        return None
+
+    def _set_realistic_fallback(self, symbol: str):
+        """Define fallback realista para símbolo"""
+        realistic_prices = {
+            'BTC-USDT': 67432.10, 'BTC/USDT': 67432.10, 'BTCUSDT': 67432.10,
+            'ETH-USDT': 3756.78, 'ETH/USDT': 3756.78, 'ETHUSDT': 3756.78,
+            'SOL-USDT': 143.45, 'SOL/USDT': 143.45, 'SOLUSDT': 143.45,
+            'ADA-USDT': 0.5567, 'ADA/USDT': 0.5567, 'ADAUSDT': 0.5567,
+            'XRP-USDT': 0.6678, 'XRP/USDT': 0.6678, 'XRPUSDT': 0.6678,
+            'BNB-USDT': 587.89, 'BNB/USDT': 587.89, 'BNBUSDT': 587.89
+        }
+        
+        price = realistic_prices.get(symbol, 100)
+        self.price_cache[symbol] = price
+        print(f"⚠️  FALLBACK: {symbol} = ${price:,.2f}")
+
     def get_current_prices(self) -> Dict[str, float]:
-        """Retorna preços REAIS - Kraken como principal"""
+        """Retorna preços atualizados"""
         real_prices = {}
         
         for symbol in DEFAULT_SYMBOLS:
             try:
-                # 1ª tentativa: KRAKEN
+                # Tenta Kraken primeiro
                 current_price = self._fetch_current_price_kraken(symbol)
+                if not current_price:
+                    current_price = self._fetch_current_price_binance(symbol)
                 
                 if current_price and current_price > 0:
                     real_prices[symbol] = current_price
                     self.price_cache[symbol] = current_price
-                    print(f"🔄 PREÇO ATUALIZADO: {symbol} = ${current_price:,.2f}")
                 else:
-                    # Fallback inteligente
-                    last_price = self.price_cache.get(symbol)
-                    if last_price and last_price > 10:
-                        variation = random.uniform(-0.001, 0.001)
-                        real_prices[symbol] = round(last_price * (1 + variation), 6)
-                    else:
-                        real_prices[symbol] = self.price_cache.get(symbol, 100)
+                    real_prices[symbol] = self.price_cache.get(symbol, 100)
                         
             except Exception as e:
                 real_prices[symbol] = self.price_cache.get(symbol, 100)
