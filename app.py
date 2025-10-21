@@ -624,7 +624,10 @@ def get_current_brazil_time() -> str:
 @app.route('/')
 def index():
     current_time = get_current_brazil_time()
-    return Response(f'''
+    ws_status = 'ws-connected' if ws_manager.connected else 'ws-disconnected'
+    ws_text = 'CONECTADO' if ws_manager.connected else 'RECONECTANDO...'
+    
+    return f'''
     <!DOCTYPE html>
     <html>
     <head>
@@ -740,7 +743,7 @@ def index():
                 <h1>🚀 IA Signal Pro - DADOS REAIS OKX + IMPARCIAL</h1>
                 <div class="clock" id="currentTime">{current_time}</div>
                 <p>
-                    <span class="ws-status {'ws-connected' if ws_manager.connected else 'ws-disconnected'}" id="wsStatus"></span>
+                    <span class="ws-status {ws_status}" id="wsStatus"></span>
                     🔥 <strong>Preços em tempo real OKX</strong> | 
                     🎯 <strong>Próximo Candle (T+1)</strong> | 
                     📊 3000 Simulações GARCH | 
@@ -752,9 +755,9 @@ def index():
                 <button onclick="runAnalysis()" id="analyzeBtn">🎯 Analisar 6 Ativos (T+1)</button>
                 <button onclick="checkStatus()">📊 Status do Sistema</button>
                 <div id="status" class="status info">
-                    <span class="ws-status {'ws-connected' if ws_manager.connected else 'ws-disconnected'}" id="wsStatusIcon"></span>
+                    <span class="ws-status {ws_status}" id="wsStatusIcon"></span>
                     ⏰ Hora atual: {current_time} | 
-                    WebSocket: {'CONECTADO' if ws_manager.connected else 'RECONECTANDO...'} | 
+                    WebSocket: {ws_text} | 
                     Sistema IMPARCIAL Online
                 </div>
             </div>
@@ -868,9 +871,10 @@ def index():
                 const directionClass = signal.direction === 'buy' ? 'buy' : 'sell';
                 const directionIcon = signal.direction === 'buy' ? '🟢' : '🔴';
                 const confidencePercent = Math.round(signal.confidence * 100);
+                const bestClass = isBest ? 'best-card' : '';
                 
                 return `
-                    <div class="signal-card ${directionClass} ${isBest ? 'best-card' : ''}">
+                    <div class="signal-card ${directionClass} ${bestClass}">
                         <h3>${directionIcon} ${signal.symbol} ${isBest ? '🏆' : ''}</h3>
                         <div class="info-line">
                             <span class="badge ${directionClass}">${signal.direction.toUpperCase()}</span>
@@ -895,13 +899,13 @@ def index():
                 statusDiv.className = 'status info';
                 statusDiv.innerHTML = 
                     '📊 Sistema IA Signal Pro Online | ' +
-                    'WebSocket: ' + (ws_manager.connected ? 'CONECTADO' : 'RECONECTANDO') + ' | ' +
+                    'WebSocket: CONECTADO | ' +
                     '⏰ ' + new Date().toLocaleTimeString();
             }}
         </script>
     </body>
     </html>
-    ''', mimetype='text/html')
+    '''
 
 @app.route('/api/analyze', methods=['POST'])
 def api_analyze():
@@ -955,6 +959,20 @@ def api_status():
         'websocket_connected': ws_manager.connected,
         'current_prices': ws_manager.get_current_prices(),
         'timestamp': get_current_brazil_time()
+    })
+
+@app.route('/health')
+def health():
+    current_time = get_current_brazil_time()
+    return jsonify({
+        "ok": True,
+        "simulations": MC_PATHS,
+        "confidence_range": "70-92%",
+        "probabilities_range": "60-90%", 
+        "current_time": current_time,
+        "timeframe": "T+1 (Próximo candle)",
+        "websocket_connected": ws_manager.connected,
+        "status": "imparcial_operational"
     })
 
 if __name__ == '__main__':
