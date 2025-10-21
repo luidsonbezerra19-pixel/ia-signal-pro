@@ -1,4 +1,4 @@
-# app.py — IA CORRIGIDA + DADOS REAIS OKX
+# app.py — IA CORRIGIDA + DADOS REAIS OKX (CORREÇÃO DO SYNTAX ERROR)
 from __future__ import annotations
 import os, time, math, random, threading, json, statistics as stats
 from typing import Any, Dict, List, Optional
@@ -9,8 +9,6 @@ import structlog
 import websocket
 import json as json_lib
 import requests
-import pandas as pd
-import numpy as np
 from collections import deque
 
 # =========================
@@ -707,261 +705,265 @@ manager = AnalysisManager()
 def get_current_brazil_time() -> str:
     return datetime.now(timezone(timedelta(hours=-3))).strftime("%H:%M:%S BRT")
 
+# Template HTML corrigido - usando f-strings corretamente
+html_template = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>IA Signal Pro - DADOS REAIS OKX</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {{
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #0f1120;
+            color: white;
+        }}
+        .container {{
+            max-width: 1200px;
+            margin: 0 auto;
+        }}
+        .header {{
+            text-align: center;
+            margin-bottom: 30px;
+            background: #181a2e;
+            padding: 20px;
+            border-radius: 10px;
+        }}
+        .clock {{
+            font-size: 24px;
+            font-weight: bold;
+            color: #2aa9ff;
+            margin: 10px 0;
+        }}
+        .controls {{
+            background: #181a2e;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }}
+        button {{
+            background: #2aa9ff;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 16px;
+        }}
+        button:disabled {{
+            background: #666;
+            cursor: not-allowed;
+        }}
+        .results {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+        }}
+        .signal-card {{
+            background: #223148;
+            padding: 20px;
+            border-radius: 10px;
+            border-left: 5px solid #2aa9ff;
+        }}
+        .signal-card.buy {{
+            border-left-color: #29d391;
+        }}
+        .signal-card.sell {{
+            border-left-color: #ff5b5b;
+        }}
+        .signal-card.neutral {{
+            border-left-color: #ffa500;
+        }}
+        .badge {{
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 15px;
+            font-size: 12px;
+            margin-right: 8px;
+            font-weight: bold;
+        }}
+        .badge.buy {{ background: #0c5d4b; color: white; }}
+        .badge.sell {{ background: #5b1f1f; color: white; }}
+        .badge.neutral {{ background: #5b4a1f; color: white; }}
+        .badge.confidence {{ background: #4a1f5f; color: white; }}
+        .badge.time {{ background: #1f5f4a; color: white; }}
+        .info-line {{
+            margin: 8px 0;
+            padding: 8px;
+            background: #1b2b41;
+            border-radius: 5px;
+        }}
+        .best-card {{
+            background: linear-gradient(135deg, #223148, #2a3a5f);
+            border: 2px solid #f2a93b;
+        }}
+        .status {{
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }}
+        .status.success {{ background: #0c5d4b; color: white; }}
+        .status.error {{ background: #5b1f1f; color: white; }}
+        .status.info {{ background: #1f5f4a; color: white; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 IA Signal Pro - DADOS REAIS OKX</h1>
+            <div class="clock" id="currentTime">{current_time}</div>
+            <p>🎯 <strong>Próximo Candle (T+1)</strong> | 📊 3000 Simulações GARCH | ✅ Confiança Realista 60-85%</p>
+            <p>⚡ <strong>Dados em tempo real via WebSocket OKX</strong> | 📈 ADX + MACD + RSI</p>
+        </div>
+        
+        <div class="controls">
+            <button onclick="runAnalysis()" id="analyzeBtn">🎯 Analisar 6 Ativos (T+1)</button>
+            <button onclick="checkStatus()">📊 Status do Sistema</button>
+            <div id="status" class="status info">
+                ⏰ Hora atual: {current_time} | Sistema OKX Online
+            </div>
+        </div>
+        
+        <div id="bestSignal" style="display: none;">
+            <h2>🥇 MELHOR OPORTUNIDADE - PRÓXIMO CANDLE</h2>
+            <div id="bestCard"></div>
+        </div>
+        
+        <div id="allSignals" style="display: none;">
+            <h2>📊 TODOS OS SINAIS - PRÓXIMO CANDLE</h2>
+            <div class="results" id="resultsGrid"></div>
+        </div>
+    </div>
+
+    <script>
+        function updateClock() {{
+            const now = new Date();
+            const brtOffset = -3 * 60; // BRT é UTC-3
+            const localOffset = now.getTimezoneOffset();
+            const brtTime = new Date(now.getTime() + (brtOffset + localOffset) * 60000);
+            
+            const timeStr = brtTime.toLocaleTimeString('pt-BR') + ' BRT';
+            document.getElementById('currentTime').textContent = timeStr;
+        }}
+        setInterval(updateClock, 1000);
+
+        function runAnalysis() {{
+            const btn = document.getElementById('analyzeBtn');
+            btn.disabled = true;
+            btn.textContent = '🔄 Analisando...';
+            
+            fetch('/analyze')
+                .then(r => r.json())
+                .then(data => {{
+                    displayResults(data);
+                    btn.disabled = false;
+                    btn.textContent = '🎯 Analisar 6 Ativos (T+1)';
+                }})
+                .catch(err => {{
+                    console.error(err);
+                    document.getElementById('status').innerHTML = 
+                        '<div class="status error">❌ Erro na análise</div>';
+                    btn.disabled = false;
+                    btn.textContent = '🎯 Analisar 6 Ativos (T+1)';
+                }});
+        }}
+
+        function displayResults(data) {{
+            const best = data.best_opportunity;
+            const all = data.results;
+            
+            // Melhor oportunidade
+            if (best) {{
+                document.getElementById('bestSignal').style.display = 'block';
+                document.getElementById('bestCard').innerHTML = createSignalCard(best, true);
+            }}
+            
+            // Todos os sinais
+            if (all && all.length > 0) {{
+                document.getElementById('allSignals').style.display = 'block';
+                const grid = document.getElementById('resultsGrid');
+                grid.innerHTML = all.map(signal => createSignalCard(signal, false)).join('');
+            }}
+            
+            // Status
+            document.getElementById('status').innerHTML = 
+                `<div class="status success">✅ Análise concluída às ${{data.analysis_time}}</div>`;
+        }}
+
+        function createSignalCard(signal, isBest) {{
+            const direction = signal.direction;
+            const directionText = direction === 'buy' ? '🟢 COMPRA' : 
+                                direction === 'sell' ? '🔴 VENDA' : '🟡 NEUTRO';
+            const directionClass = direction;
+            const bestClass = isBest ? 'best-card' : '';
+            
+            return `
+                <div class="signal-card ${{directionClass}} ${{bestClass}}">
+                    <h3>${{signal.symbol}} - ${{directionText}}</h3>
+                    <div class="info-line">
+                        <span class="badge confidence">Confiança: ${{(signal.confidence * 100).toFixed(1)}}%</span>
+                        <span class="badge time">Horizon: ${{signal.horizon}}h</span>
+                    </div>
+                    <div class="info-line">
+                        <strong>🎯 Entrada:</strong> ${{signal.entry_time}} (T+1)
+                    </div>
+                    <div class="info-line">
+                        <strong>💰 Preço:</strong> ${{signal.price.toFixed(4)}}
+                    </div>
+                    <div class="info-line">
+                        <strong>📊 Probabilidades:</strong> 
+                        <span style="color: #29d391">C ${{(signal.probability_buy * 100).toFixed(1)}}%</span> | 
+                        <span style="color: #ff5b5b">V ${{(signal.probability_sell * 100).toFixed(1)}}%</span>
+                    </div>
+                    <div class="info-line">
+                        <strong>📈 Indicadores:</strong><br>
+                        RSI: ${{signal.rsi}} | MACD: ${{signal.macd_signal}} (${{signal.macd_strength}})<br>
+                        ADX: ${{signal.adx}} (${{signal.adx_strength}})<br>
+                        Trend: ${{signal.trend}} (${{signal.trend_strength}})
+                    </div>
+                    <div class="info-line">
+                        <strong>🎲 Volatilidade GARCH:</strong> ${{(signal.garch_volatility * 100).toFixed(4)}}%
+                    </div>
+                    <div class="info-line">
+                        <strong>📝 Razão:</strong> ${{signal.reason}}
+                    </div>
+                    <div class="info-line">
+                        <strong>⏰ Gerado:</strong> ${{signal.timestamp}}
+                    </div>
+                </div>
+            `;
+        }}
+
+        function checkStatus() {{
+            fetch('/status')
+                .then(r => r.json())
+                .then(data => {{
+                    const statusDiv = document.getElementById('status');
+                    if (data.status === 'online') {{
+                        statusDiv.innerHTML = 
+                            `<div class="status success">
+                                ✅ Sistema Online | OKX WebSocket: ${{data.okx_connected ? 'CONECTADO' : 'RECONECTANDO'}} | 
+                                Última análise: ${{data.last_analysis || 'N/A'}}
+                            </div>`;
+                    }} else {{
+                        statusDiv.innerHTML = 
+                            `<div class="status error">❌ Sistema Offline</div>`;
+                    }}
+                }});
+        }}
+    </script>
+</body>
+</html>
+'''
+
 @app.route('/')
 def index():
     current_time = get_current_brazil_time()
-    return Response(f'''
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>IA Signal Pro - DADOS REAIS OKX</title>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-            body {{
-                font-family: Arial, sans-serif;
-                margin: 0;
-                padding: 20px;
-                background: #0f1120;
-                color: white;
-            }}
-            .container {{
-                max-width: 1200px;
-                margin: 0 auto;
-            }}
-            .header {{
-                text-align: center;
-                margin-bottom: 30px;
-                background: #181a2e;
-                padding: 20px;
-                border-radius: 10px;
-            }}
-            .clock {{
-                font-size: 24px;
-                font-weight: bold;
-                color: #2aa9ff;
-                margin: 10px 0;
-            }}
-            .controls {{
-                background: #181a2e;
-                padding: 20px;
-                border-radius: 10px;
-                margin-bottom: 20px;
-            }}
-            button {{
-                background: #2aa9ff;
-                color: white;
-                border: none;
-                padding: 12px 24px;
-                border-radius: 5px;
-                cursor: pointer;
-                margin: 5px;
-                font-size: 16px;
-            }}
-            button:disabled {{
-                background: #666;
-                cursor: not-allowed;
-            }}
-            .results {{
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-                gap: 20px;
-            }}
-            .signal-card {{
-                background: #223148;
-                padding: 20px;
-                border-radius: 10px;
-                border-left: 5px solid #2aa9ff;
-            }}
-            .signal-card.buy {{
-                border-left-color: #29d391;
-            }}
-            .signal-card.sell {{
-                border-left-color: #ff5b5b;
-            }}
-            .signal-card.neutral {{
-                border-left-color: #ffa500;
-            }}
-            .badge {{
-                display: inline-block;
-                padding: 4px 12px;
-                border-radius: 15px;
-                font-size: 12px;
-                margin-right: 8px;
-                font-weight: bold;
-            }}
-            .badge.buy {{ background: #0c5d4b; color: white; }}
-            .badge.sell {{ background: #5b1f1f; color: white; }}
-            .badge.neutral {{ background: #5b4a1f; color: white; }}
-            .badge.confidence {{ background: #4a1f5f; color: white; }}
-            .badge.time {{ background: #1f5f4a; color: white; }}
-            .info-line {{
-                margin: 8px 0;
-                padding: 8px;
-                background: #1b2b41;
-                border-radius: 5px;
-            }}
-            .best-card {{
-                background: linear-gradient(135deg, #223148, #2a3a5f);
-                border: 2px solid #f2a93b;
-            }}
-            .status {{
-                padding: 10px;
-                border-radius: 5px;
-                margin: 10px 0;
-            }}
-            .status.success {{ background: #0c5d4b; color: white; }}
-            .status.error {{ background: #5b1f1f; color: white; }}
-            .status.info {{ background: #1f5f4a; color: white; }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="header">
-                <h1>🚀 IA Signal Pro - DADOS REAIS OKX</h1>
-                <div class="clock" id="currentTime">{current_time}</div>
-                <p>🎯 <strong>Próximo Candle (T+1)</strong> | 📊 3000 Simulações GARCH | ✅ Confiança Realista 60-85%</p>
-                <p>⚡ <strong>Dados em tempo real via WebSocket OKX</strong> | 📈 ADX + MACD + RSI</p>
-            </div>
-            
-            <div class="controls">
-                <button onclick="runAnalysis()" id="analyzeBtn">🎯 Analisar 6 Ativos (T+1)</button>
-                <button onclick="checkStatus()">📊 Status do Sistema</button>
-                <div id="status" class="status info">
-                    ⏰ Hora atual: {current_time} | Sistema OKX Online
-                </div>
-            </div>
-            
-            <div id="bestSignal" style="display: none;">
-                <h2>🥇 MELHOR OPORTUNIDADE - PRÓXIMO CANDLE</h2>
-                <div id="bestCard"></div>
-            </div>
-            
-            <div id="allSignals" style="display: none;">
-                <h2>📊 TODOS OS SINAIS - PRÓXIMO CANDLE</h2>
-                <div class="results" id="resultsGrid"></div>
-            </div>
-        </div>
-
-        <script>
-            function updateClock() {{
-                const now = new Date();
-                const brtOffset = -3 * 60; // BRT é UTC-3
-                const localOffset = now.getTimezoneOffset();
-                const brtTime = new Date(now.getTime() + (brtOffset + localOffset) * 60000);
-                
-                const timeStr = brtTime.toLocaleTimeString('pt-BR') + ' BRT';
-                document.getElementById('currentTime').textContent = timeStr;
-            }}
-            setInterval(updateClock, 1000);
-
-            function runAnalysis() {{
-                const btn = document.getElementById('analyzeBtn');
-                btn.disabled = true;
-                btn.textContent = '🔄 Analisando...';
-                
-                fetch('/analyze')
-                    .then(r => r.json())
-                    .then(data => {{
-                        displayResults(data);
-                        btn.disabled = false;
-                        btn.textContent = '🎯 Analisar 6 Ativos (T+1)';
-                    }})
-                    .catch(err => {{
-                        console.error(err);
-                        document.getElementById('status').innerHTML = 
-                            '<div class="status error">❌ Erro na análise</div>';
-                        btn.disabled = false;
-                        btn.textContent = '🎯 Analisar 6 Ativos (T+1)';
-                    }});
-            }}
-
-            function displayResults(data) {{
-                const best = data.best_opportunity;
-                const all = data.results;
-                
-                // Melhor oportunidade
-                if (best) {{
-                    document.getElementById('bestSignal').style.display = 'block';
-                    document.getElementById('bestCard').innerHTML = createSignalCard(best, true);
-                }}
-                
-                // Todos os sinais
-                if (all && all.length > 0) {{
-                    document.getElementById('allSignals').style.display = 'block';
-                    const grid = document.getElementById('resultsGrid');
-                    grid.innerHTML = all.map(signal => createSignalCard(signal, false)).join('');
-                }}
-                
-                // Status
-                document.getElementById('status').innerHTML = 
-                    `<div class="status success">✅ Análise concluída às ${data.analysis_time}</div>`;
-            }}
-
-            function createSignalCard(signal, isBest) {{
-                const direction = signal.direction;
-                const directionText = direction === 'buy' ? '🟢 COMPRA' : 
-                                    direction === 'sell' ? '🔴 VENDA' : '🟡 NEUTRO';
-                const directionClass = direction;
-                
-                return `
-                    <div class="signal-card ${directionClass} ${isBest ? 'best-card' : ''}">
-                        <h3>${signal.symbol} - ${directionText}</h3>
-                        <div class="info-line">
-                            <span class="badge confidence">Confiança: ${(signal.confidence * 100).toFixed(1)}%</span>
-                            <span class="badge time">Horizon: ${signal.horizon}h</span>
-                        </div>
-                        <div class="info-line">
-                            <strong>🎯 Entrada:</strong> ${signal.entry_time} (T+1)
-                        </div>
-                        <div class="info-line">
-                            <strong>💰 Preço:</strong> ${signal.price.toFixed(4)}
-                        </div>
-                        <div class="info-line">
-                            <strong>📊 Probabilidades:</strong> 
-                            <span style="color: #29d391">C ${(signal.probability_buy * 100).toFixed(1)}%</span> | 
-                            <span style="color: #ff5b5b">V ${(signal.probability_sell * 100).toFixed(1)}%</span>
-                        </div>
-                        <div class="info-line">
-                            <strong>📈 Indicadores:</strong><br>
-                            RSI: ${signal.rsi} | MACD: ${signal.macd_signal} (${signal.macd_strength})<br>
-                            ADX: ${signal.adx} (${signal.adx_strength})<br>
-                            Trend: ${signal.trend} (${signal.trend_strength})
-                        </div>
-                        <div class="info-line">
-                            <strong>🎲 Volatilidade GARCH:</strong> ${(signal.garch_volatility * 100).toFixed(4)}%
-                        </div>
-                        <div class="info-line">
-                            <strong>📝 Razão:</strong> ${signal.reason}
-                        </div>
-                        <div class="info-line">
-                            <strong>⏰ Gerado:</strong> ${signal.timestamp}
-                        </div>
-                    </div>
-                `;
-            }}
-
-            function checkStatus() {{
-                fetch('/status')
-                    .then(r => r.json())
-                    .then(data => {{
-                        const statusDiv = document.getElementById('status');
-                        if (data.status === 'online') {{
-                            statusDiv.innerHTML = 
-                                `<div class="status success">
-                                    ✅ Sistema Online | OKX WebSocket: ${data.okx_connected ? 'CONECTADO' : 'RECONECTANDO'} | 
-                                    Última análise: ${data.last_analysis || 'N/A'}
-                                </div>`;
-                        }} else {{
-                            statusDiv.innerHTML = 
-                                `<div class="status error">❌ Sistema Offline</div>`;
-                        }}
-                    }});
-            }}
-        </script>
-    </body>
-    </html>
-    ''', content_type='text/html; charset=utf-8')
+    return Response(html_template.format(current_time=current_time), content_type='text/html; charset=utf-8')
 
 @app.route('/analyze', methods=['GET'])
 def analyze_symbols():
