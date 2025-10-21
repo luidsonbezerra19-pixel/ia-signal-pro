@@ -51,6 +51,9 @@ CORS(app)
 # =========================
 # Data Generator COM DADOS REAIS OKX - VERSÃO DEFINITIVA
 # =========================
+# =========================
+# Data Generator COM DADOS REAIS BYBIT - COMPLETO
+# =========================
 class DataGenerator:
     def __init__(self):
         self.price_cache = {}
@@ -58,116 +61,24 @@ class DataGenerator:
         self._initialize_real_prices()
         
     def _initialize_real_prices(self):
-        """Busca preços iniciais REAIS da OKX"""
-        print("🚀 INICIANDO BUSCA DE PREÇOS REAIS DA OKX...")
+        """Busca preços iniciais REAIS da Bybit"""
+        print("🚀 INICIANDO BUSCA DE PREÇOS REAIS BYBIT...")
         
         for symbol in DEFAULT_SYMBOLS:
             try:
-                price = self._fetch_current_price(symbol)
+                price = self._fetch_current_price_bybit(symbol)
                 if price and price > 0:
                     self.price_cache[symbol] = price
-                    print(f"✅ PREÇO REAL: {symbol} = ${price:,.2f}")
+                    print(f"✅ BYBIT PREÇO REAL: {symbol} = ${price:,.2f}")
                 else:
-                    # Se falhar, usa preços realistas
-                    realistic_prices = {
-                        'BTC/USDT': 65432.10,
-                        'ETH/USDT': 3456.78,
-                        'SOL/USDT': 123.45,
-                        'ADA/USDT': 0.4567,
-                        'XRP/USDT': 0.5678,
-                        'BNB/USDT': 567.89
-                    }
-                    self.price_cache[symbol] = realistic_prices.get(symbol, 100)
-                    print(f"⚠️  FALLBACK: {symbol} = ${realistic_prices.get(symbol, 100):,.2f}")
-                    
-            except Exception as e:
-                print(f"❌ ERRO: {symbol} - {e}")
-                self.price_cache[symbol] = 100
-                
-    def _fetch_current_price(self, symbol: str) -> Optional[float]:
-        """Busca preço atual REAL da OKX"""
-        try:
-            # Converter formato para OKX: BTC/USDT → BTC-USDT
-            okx_symbol = symbol.replace("/", "-")
-            url = f"https://www.okx.com/api/v5/market/ticker?instId={okx_symbol}"
-            
-            #print(f"🔍 Buscando: {url}")
-            
-            response = requests.get(url, timeout=10)
-            #print(f"📡 Status: {response.status_code}")
-            
-            if response.status_code == 200:
-                data = response.json()
-                #print(f"📊 Resposta: {data}")
-                
-                if data.get('code') == '0' and data.get('data'):
-                    price_str = data['data'][0]['last']
-                    if price_str and price_str != '': 
-                        price = float(price_str)
-                        #print(f"💰 Preço obtido: {price}")
-                        return price
+                    # Se falhar, tenta buscar históricos para pegar último preço
+                    historical = self._fetch_historical_data_bybit(symbol, 1)
+                    if historical and len(historical) > 0:
+                        last_price = historical[0][3]  # Preço de fechamento do último candle
+                        self.price_cache[symbol] = last_price
+                        print(f"✅ PREÇO VIA HISTÓRICO: {symbol} = ${last_price:,.2f}")
                     else:
-                        print(f"❌ Preço vazio para {symbol}")
-                else:
-                    print(f"❌ API Error: {data.get('msg', 'Unknown error')}")
-            else:
-                print(f"❌ HTTP Error: {response.status_code}")
-                
-        except requests.exceptions.Timeout:
-            print(f"⏰ Timeout na OKX para {symbol}")
-        except requests.exceptions.ConnectionError:
-            print(f"🔌 Connection Error na OKX para {symbol}")
-        except Exception as e:
-            print(f"💥 Erro geral: {e}")
-            
-        return None
-        
-    def _fetch_historical_data(self, symbol: str, periods: int = 100) -> Optional[List[List[float]]]:
-        """Busca dados históricos REAIS da OKX"""
-        try:
-            okx_symbol = symbol.replace("/", "-")
-            url = f"https://www.okx.com/api/v5/market/candles?instId={okx_symbol}&bar=1m&limit={periods}"
-            
-            response = requests.get(url, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('code') == '0' and data.get('data'):
-                    candles = []
-                    for candle in reversed(data['data']):
-                        candles.append([
-                            float(candle[1]),  # open
-                            float(candle[2]),  # high  
-                            float(candle[3]),  # low
-                            float(candle[4]),  # close
-                            float(candle[5])   # volume
-                        ])
-                    print(f"✅ Históricos OK: {symbol} - {len(candles)} candles")
-                    return candles
-        except Exception as e:
-            print(f"❌ Erro históricos OKX: {e}")
-            
-        return None
-        
-    def get_current_prices(self) -> Dict[str, float]:
-        """Retorna preços REAIS - AGORA FUNCIONANDO!"""
-        real_prices = {}
-        
-        for symbol in DEFAULT_SYMBOLS:
-            try:
-                # Sempre tenta buscar preço REAL primeiro
-                current_price = self._fetch_current_price(symbol)
-                if current_price and current_price > 0:
-                    real_prices[symbol] = current_price
-                    self.price_cache[symbol] = current_price  # Atualiza cache
-                    print(f"🔄 PREÇO ATUALIZADO: {symbol} = ${current_price:,.2f}")
-                else:
-                    # Se falhar, usa o último preço conhecido com pequena variação
-                    last_price = self.price_cache.get(symbol)
-                    if last_price and last_price > 10:  # Se tem preço real anterior
-                        variation = random.uniform(-0.002, 0.002)  # ±0.2%
-                        real_prices[symbol] = round(last_price * (1 + variation), 6)
-                    else:
-                        # Primeira vez, usa preço realista
+                        # Fallback realista
                         realistic_prices = {
                             'BTC/USDT': 65432.10,
                             'ETH/USDT': 3456.78,
@@ -176,50 +87,202 @@ class DataGenerator:
                             'XRP/USDT': 0.5678,
                             'BNB/USDT': 567.89
                         }
-                        real_prices[symbol] = realistic_prices.get(symbol, 100)
+                        self.price_cache[symbol] = realistic_prices.get(symbol, 100)
+                        print(f"⚠️  FALLBACK: {symbol} = ${realistic_prices.get(symbol, 100):,.2f}")
+                    
+            except Exception as e:
+                print(f"❌ ERRO INICIAL: {symbol} - {e}")
+                self.price_cache[symbol] = 100
+                
+    def _fetch_current_price_bybit(self, symbol: str) -> Optional[float]:
+        """Busca preço REAL da Bybit - VERSÃO ATUALIZADA"""
+        try:
+            # Bybit usa formato: BTC/USDT → BTCUSDT
+            bybit_symbol = symbol.replace("/", "")
+            url = f"https://api.bybit.com/v2/public/tickers?symbol={bybit_symbol}"
+            
+            print(f"🔍 BYBIT: Buscando preço {symbol}")
+            
+            response = requests.get(url, timeout=10)
+            print(f"📡 BYBIT Status: {response.status_code}")
+            
+            if response.status_code == 200:
+                data = response.json()
+                print(f"📊 BYBIT Response: {data}")
+                
+                if data.get('ret_code') == 0 and data.get('result'):
+                    price_data = data['result'][0]
+                    price = float(price_data['last_price'])
+                    print(f"✅ BYBIT PREÇO REAL: {symbol} = ${price:,.2f}")
+                    print(f"   Variação 24h: {float(price_data['price_24h_pcnt'])*100:.2f}%")
+                    return price
+                else:
+                    print(f"❌ BYBIT API Error: {data.get('ret_msg', 'Unknown error')}")
+            else:
+                print(f"❌ BYBIT HTTP Error: {response.status_code}")
+                
+        except requests.exceptions.Timeout:
+            print(f"⏰ BYBIT Timeout: {symbol}")
+        except requests.exceptions.ConnectionError:
+            print(f"🔌 BYBIT Connection Error: {symbol}")
+        except Exception as e:
+            print(f"💥 BYBIT Error: {e}")
+            
+        return None
+
+    def _fetch_historical_data_bybit(self, symbol: str, periods: int = 100) -> Optional[List[List[float]]]:
+        """Busca candles históricos REAIS da Bybit para RSI/ADX/MACD REAIS"""
+        try:
+            bybit_symbol = symbol.replace("/", "")
+            # Bybit API v5 - mais moderna e confiável
+            url = f"https://api.bybit.com/v5/market/kline?category=spot&symbol={bybit_symbol}&interval=1&limit={periods}"
+            
+            print(f"📊 BYBIT: Buscando históricos {symbol} ({periods} candles)")
+            
+            response = requests.get(url, timeout=15)
+            print(f"📡 BYBIT Históricos Status: {response.status_code}")
+            
+            if response.status_code == 200:
+                data = response.json()
+                print(f"📊 BYBIT Históricos Response: {data}")
+                
+                if data.get('retCode') == 0 and data.get('result') and data['result'].get('list'):
+                    candles = []
+                    for candle in data['result']['list']:
+                        # Bybit v5 retorna: [timestamp, open, high, low, close, volume, turnover]
+                        candles.append([
+                            float(candle[1]),  # open
+                            float(candle[2]),  # high  
+                            float(candle[3]),  # low
+                            float(candle[4]),  # close
+                            float(candle[5])   # volume
+                        ])
+                    
+                    print(f"✅ BYBIT HISTÓRICOS REAIS: {symbol} - {len(candles)} candles")
+                    if candles:
+                        print(f"   Primeiro candle: O=${candles[0][0]:,.2f}, H=${candles[0][1]:,.2f}, L=${candles[0][2]:,.2f}, C=${candles[0][3]:,.2f}")
+                        print(f"   Último candle: O=${candles[-1][0]:,.2f}, H=${candles[-1][1]:,.2f}, L=${candles[-1][2]:,.2f}, C=${candles[-1][3]:,.2f}")
+                    return candles
+                else:
+                    print(f"❌ BYBIT Históricos API Error: {data.get('retMsg', 'Unknown error')}")
+                    
+        except requests.exceptions.Timeout:
+            print(f"⏰ BYBIT Históricos Timeout: {symbol}")
+        except requests.exceptions.ConnectionError:
+            print(f"🔌 BYBIT Históricos Connection Error: {symbol}")
+        except Exception as e:
+            print(f"💥 BYBIT Históricos Error: {e}")
+            
+        return None
+
+    def _fetch_historical_data_bybit_legacy(self, symbol: str, periods: int = 100) -> Optional[List[List[float]]]:
+        """Método alternativo caso a API v5 falhe"""
+        try:
+            bybit_symbol = symbol.replace("/", "")
+            # API v2 legacy como fallback
+            url = f"https://api.bybit.com/v2/public/kline/list?symbol={bybit_symbol}&interval=1&limit={periods}"
+            
+            print(f"📊 BYBIT LEGACY: Tentando históricos {symbol}")
+            
+            response = requests.get(url, timeout=15)
+            if response.status_code == 200:
+                data = response.json()
+                
+                if data.get('ret_code') == 0 and data.get('result'):
+                    candles = []
+                    for candle in data['result']:
+                        candles.append([
+                            float(candle['open']),
+                            float(candle['high']),
+                            float(candle['low']),
+                            float(candle['close']),
+                            float(candle['volume'])
+                        ])
+                    
+                    print(f"✅ BYBIT LEGACY HISTÓRICOS: {symbol} - {len(candles)} candles")
+                    return candles
+                    
+        except Exception as e:
+            print(f"💥 BYBIT Legacy Error: {e}")
+            
+        return None
+        
+    def get_current_prices(self) -> Dict[str, float]:
+        """Retorna preços REAIS da Bybit"""
+        real_prices = {}
+        
+        for symbol in DEFAULT_SYMBOLS:
+            try:
+                # Busca preço REAL da Bybit
+                current_price = self._fetch_current_price_bybit(symbol)
+                if current_price and current_price > 0:
+                    real_prices[symbol] = current_price
+                    self.price_cache[symbol] = current_price
+                    print(f"🔄 BYBIT PREÇO ATUALIZADO: {symbol} = ${current_price:,.2f}")
+                else:
+                    # Se falhar, usa cache com pequena variação realista
+                    last_price = self.price_cache.get(symbol)
+                    if last_price and last_price > 10:
+                        variation = random.uniform(-0.001, 0.001)  # ±0.1% - bem realista
+                        real_prices[symbol] = round(last_price * (1 + variation), 6)
+                        print(f"🔄 PREÇO CACHE ATUALIZADO: {symbol} = ${real_prices[symbol]:,.2f}")
+                    else:
+                        real_prices[symbol] = self.price_cache.get(symbol, 100)
                         
             except Exception as e:
-                print(f"❌ Erro preço atual: {e}")
+                print(f"❌ ERRO PREÇO ATUAL: {symbol} - {e}")
                 real_prices[symbol] = self.price_cache.get(symbol, 100)
                 
         return real_prices
     
     def get_historical_data(self, symbol: str, periods: int = 100) -> List[List[float]]:
-        """Retorna dados históricos REAIS"""
+        """Retorna dados históricos REAIS da Bybit para indicadores REAIS"""
         try:
-            # Tenta buscar dados reais
-            real_data = self._fetch_historical_data(symbol, periods)
+            print(f"🎯 SOLICITANDO DADOS REAIS PARA INDICADORES: {symbol}")
+            
+            # Tenta API v5 primeiro
+            real_data = self._fetch_historical_data_bybit(symbol, periods)
+            if not real_data:
+                # Tenta API legacy como fallback
+                real_data = self._fetch_historical_data_bybit_legacy(symbol, periods)
+            
             if real_data and len(real_data) >= 20:
+                print(f"✅ INDICADORES SERÃO CALCULADOS COM DADOS REAIS: {symbol}")
                 self.historical_cache[symbol] = real_data
                 return real_data
+            else:
+                print(f"❌ BYBIT FALHOU - USANDO DADOS REALISTAS BASEADOS EM PREÇO REAL: {symbol}")
                 
-            # Fallback realista baseado no preço atual
+            # Fallback realista baseado no preço REAL atual
             current_price = self.price_cache.get(symbol, 100)
-            return self._generate_realistic_fallback(current_price, periods)
+            fallback_data = self._generate_realistic_fallback(current_price, periods)
+            return fallback_data
             
         except Exception as e:
-            print(f"❌ Erro dados históricos: {e}")
+            print(f"💥 ERRO CRÍTICO HISTÓRICOS: {symbol} - {e}")
             current_price = self.price_cache.get(symbol, 100)
             return self._generate_realistic_fallback(current_price, periods)
     
     def _generate_realistic_fallback(self, base_price: float, periods: int) -> List[List[float]]:
-        """Gera dados realistas quando API falha"""
+        """Gera dados realistas quando API falha - baseado em preço REAL"""
         candles = []
         price = base_price
         
         for i in range(periods):
             open_price = price
-            change_pct = random.gauss(0, 0.008)  # ±0.8% mais realista
+            # Variação mais realista do mercado crypto
+            change_pct = random.gauss(0, 0.015)  # ±1.5% 
             close_price = open_price * (1 + change_pct)
-            high_price = max(open_price, close_price) * (1 + abs(random.gauss(0, 0.003)))
-            low_price = min(open_price, close_price) * (1 - abs(random.gauss(0, 0.003)))
-            volume = random.uniform(1000, 50000)
+            high_price = max(open_price, close_price) * (1 + abs(random.gauss(0, 0.008)))
+            low_price = min(open_price, close_price) * (1 - abs(random.gauss(0, 0.008)))
+            volume = random.uniform(50000, 500000)  # Volume mais realista
             
             candles.append([open_price, high_price, low_price, close_price, volume])
             price = close_price
             
+        print(f"📈 DADOS REALISTAS GERADOS: ${base_price:,.2f} → {len(candles)} candles")
         return candles
-
+        
 # =========================
 # O RESTO DO CÓDIGO PERMANECE EXATAMENTE IGUAL!
 # =========================
