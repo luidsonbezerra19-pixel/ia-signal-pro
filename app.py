@@ -1,4 +1,4 @@
-# app.py — CORREÇÕES: PREÇOS REAIS + IA PRECISA + IMPARCIALIDADE
+    # app.py — CORREÇÕES: PREÇOS REAIS + IA PRECISA + IMPARCIALIDADE
 from __future__ import annotations
 import os, time, math, random, threading, json, statistics as stats
 from typing import Any, Dict, List, Optional
@@ -895,35 +895,33 @@ def index():
                 }});
             }}
 
-            function createSignalCard(signal, isBest) {{
+            function createSignalCard(signal, isBest) {
                 const directionClass = signal.direction === 'buy' ? 'buy' : 'sell';
                 const directionEmoji = signal.direction === 'buy' ? '🟢' : '🔴';
                 const confidencePercent = (signal.confidence * 100).toFixed(1);
                 const priceFormatted = typeof signal.price === 'number' ? 
-                    signal.price.toLocaleString('pt-BR', {{ style: 'currency', currency: 'USD' }}) : 
+                    signal.price.toLocaleString('pt-BR', { style: 'currency', currency: 'USD' }) : 
                     '$' + signal.price;
-                
-                return `
-                    <div class="signal-card ${directionClass} ${isBest ? 'best-card' : ''}">
-                        <h3>${directionEmoji} ${signal.symbol} ${isBest ? '🏆' : ''}</h3>
-                        <div class="info-line">
-                            <span class="badge ${directionClass}">${signal.direction.toUpperCase()}</span>
-                            <span class="badge confidence">${confidencePercent}% Confiança</span>
-                            <span class="badge time">${signal.timeframe}</span>
-                        </div>
-                        <div class="info-line"><strong>🎯 Entrada:</strong> ${signal.entry_time}</div>
-                        <div class="info-line"><strong>💰 Preço Atual:</strong> ${priceFormatted}</div>
-                        <div class="info-line"><strong>📊 Probabilidade:</strong> COMPRA ${(signal.probability_buy * 100).toFixed(1)}% | VENDA ${(signal.probability_sell * 100).toFixed(1)}%</div>
-                        <div class="info-line"><strong>📈 RSI:</strong> ${signal.rsi}</div>
-                        <div class="info-line"><strong>🔍 MACD:</strong> ${signal.macd_signal} (${(signal.macd_strength * 100).toFixed(1)}%)</div>
-                        <div class="info-line"><strong>📊 Tendência:</strong> ${signal.trend} (${(signal.trend_strength * 100).toFixed(1)}%)</div>
-                        <div class="info-line"><strong>🎲 Volatilidade GARCH:</strong> ${(signal.garch_volatility * 100).toFixed(3)}%</div>
-                        <div class="info-line"><strong>🧠 IA:</strong> ${signal.reason}</div>
-                        <div class="info-line"><strong>⏰ Análise:</strong> ${signal.timestamp}</div>
-                    </div>
-                `;
-            }}
-
+    
+                return '<div class="signal-card ' + directionClass + ' ' + (isBest ? 'best-card' : '') + '">' +
+                        '<h3>' + directionEmoji + ' ' + signal.symbol + ' ' + (isBest ? '🏆' : '') + '</h3>' +
+                        '<div class="info-line">' +
+                            '<span class="badge ' + directionClass + '">' + signal.direction.toUpperCase() + '</span>' +
+                            '<span class="badge confidence">' + confidencePercent + '% Confiança</span>' +
+                            '<span class="badge time">' + signal.timeframe + '</span>' +
+                    '</div>' +
+                    '<div class="info-line"><strong>🎯 Entrada:</strong> ' + signal.entry_time + '</div>' +
+                    '<div class="info-line"><strong>💰 Preço Atual:</strong> ' + priceFormatted + '</div>' +
+                    '<div class="info-line"><strong>📊 Probabilidade:</strong> COMPRA ' + (signal.probability_buy * 100).toFixed(1) + '% | VENDA ' + (signal.probability_sell * 100).toFixed(1) + '%</div>' +
+                    '<div class="info-line"><strong>📈 RSI:</strong> ' + signal.rsi + '</div>' +
+                    '<div class="info-line"><strong>🔍 MACD:</strong> ' + signal.macd_signal + ' (' + (signal.macd_strength * 100).toFixed(1) + '%)</div>' +
+                    '<div class="info-line"><strong>📊 Tendência:</strong> ' + signal.trend + ' (' + (signal.trend_strength * 100).toFixed(1) + '%)</div>' +
+                    '<div class="info-line"><strong>🎲 Volatilidade GARCH:</strong> ' + (signal.garch_volatility * 100).toFixed(3) + '%</div>' +
+                    '<div class="info-line"><strong>🧠 IA:</strong> ' + signal.reason + '</div>' +
+                    '<div class="info-line"><strong>⏰ Análise:</strong> ' + signal.timestamp + '</div>' +
+                '</div>';
+            }
+           
             async function checkStatus() {{
                 try {{
                     const response = await fetch('/status');
