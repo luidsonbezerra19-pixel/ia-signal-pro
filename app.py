@@ -1,4 +1,4 @@
-# app.py — IA CORRIGIDA + IMPARCIALIDADE + VALORES DINÂMICOS
+# app.py — CORREÇÕES: PROBABILIDADES + SELEÇÃO DE ATIVOS
 from __future__ import annotations
 import os, time, math, random, threading, json, statistics as stats
 from typing import Any, Dict, List, Optional
@@ -39,7 +39,7 @@ app = Flask(__name__)
 CORS(app)
 
 # =========================
-# Data Generator (Sem Viés)
+# Data Generator (Sem Viés) - MANTIDO ORIGINAL
 # =========================
 class DataGenerator:
     def __init__(self):
@@ -107,7 +107,7 @@ class DataGenerator:
         return candles
 
 # =========================
-# Indicadores Técnicos (Melhorados)
+# Indicadores Técnicos (Melhorados) - MANTIDO ORIGINAL
 # =========================
 class TechnicalIndicators:
     @staticmethod
@@ -200,7 +200,7 @@ class TechnicalIndicators:
         return {"trend": trend, "strength": round(strength, 4)}
 
 # =========================
-# Sistema GARCH Melhorado (Probabilidades Dinâmicas)
+# Sistema GARCH Melhorado (Probabilidades Dinâmicas) - CORRIGIDO
 # =========================
 class GARCHSystem:
     def __init__(self):
@@ -214,7 +214,7 @@ class GARCHSystem:
         
         # Simulação mais realista com fatores de mercado
         up_count = 0
-        total_movement = 0
+        down_count = 0
         
         for _ in range(self.paths):
             price = base_price
@@ -230,18 +230,21 @@ class GARCHSystem:
             
             if price > base_price:
                 up_count += 1
+            else:
+                down_count += 1
                 
-            total_movement += abs(price - base_price)
-                
-        prob_buy = up_count / self.paths
-        
-        # Probabilidades DINÂMICAS (60-90%)
-        if prob_buy > 0.5:
-            prob_buy = min(0.90, max(0.60, prob_buy))
-            prob_sell = 1 - prob_buy
+        total_paths = up_count + down_count
+        if total_paths > 0:
+            prob_buy = up_count / total_paths
+            prob_sell = down_count / total_paths
         else:
-            prob_sell = min(0.90, max(0.60, 1 - prob_buy))
-            prob_buy = 1 - prob_sell
+            prob_buy = prob_sell = 0.5
+
+        # CORREÇÃO: Garantir que as probabilidades somem 1
+        total = prob_buy + prob_sell
+        if total > 0:
+            prob_buy = prob_buy / total
+            prob_sell = prob_sell / total
 
         return {
             "probability_buy": round(prob_buy, 4),
@@ -250,7 +253,7 @@ class GARCHSystem:
         }
 
 # =========================
-# IA de Tendência IMPARCIAL
+# IA de Tendência IMPARCIAL - CORRIGIDO
 # =========================
 class TrendIntelligence:
     def analyze_trend_signal(self, technical_data: Dict, garch_probs: Dict) -> Dict[str, Any]:
@@ -260,56 +263,62 @@ class TrendIntelligence:
         trend = technical_data['trend']
         trend_strength = technical_data['trend_strength']
         
-        # Sistema de pontuação IMPARCIAL
+        # Sistema de pontuação IMPARCIAL - CORRIGIDO
         score = 0.0
         reasons = []
         
-        # Tendência (35%) - Peso balanceado
+        # Tendência (40%)
         if trend == "bullish":
-            score += trend_strength * 0.35
+            score += trend_strength * 0.4
             reasons.append(f"Tendência ↗️")
         elif trend == "bearish":
-            score -= trend_strength * 0.35
+            score -= trend_strength * 0.4
             reasons.append(f"Tendência ↘️")
             
-        # RSI (35%) - Mais importância para condições extremas
+        # RSI (35%)
         if rsi < 30:
             score += 0.35  # Forte sinal de compra em oversold
-            reasons.append(f"RSI {rsi:.1f} (oversold - reversão esperada)")
+            reasons.append(f"RSI {rsi:.1f} (oversold)")
         elif rsi > 70:
             score -= 0.35  # Forte sinal de venda em overbought
-            reasons.append(f"RSI {rsi:.1f} (overbought - reversão esperada)")
+            reasons.append(f"RSI {rsi:.1f} (overbought)")
+        elif 45 <= rsi <= 55:
+            score += 0  # Neutro
         elif rsi > 55:
             score += 0.15  # Leve bullish
-        elif rsi < 45:
+        else:
             score -= 0.15  # Leve bearish
                 
-        # MACD (30%) - Momentum
+        # MACD (25%)
         if macd_signal == "bullish":
-            score += macd_strength * 0.3
+            score += macd_strength * 0.25
             reasons.append("MACD positivo")
         elif macd_signal == "bearish":
-            score -= macd_strength * 0.3
+            score -= macd_strength * 0.25
             reasons.append("MACD negativo")
             
-        # Confiança DINÂMICA (70-92%)
-        base_confidence = 0.75
-        if abs(score) > 0.3:
-            confidence = min(0.92, base_confidence + abs(score) * 0.4)
-        elif abs(score) > 0.15:
-            confidence = min(0.85, base_confidence + abs(score) * 0.3)
+        # CORREÇÃO: Confiança baseada na força do sinal
+        abs_score = abs(score)
+        if abs_score > 0.6:
+            confidence = 0.90
+        elif abs_score > 0.4:
+            confidence = 0.85
+        elif abs_score > 0.2:
+            confidence = 0.80
+        elif abs_score > 0.1:
+            confidence = 0.75
         else:
-            confidence = base_confidence
+            confidence = 0.70
             
-        # Decisão final IMPARCIAL
+        # CORREÇÃO: Decisão final baseada no score da IA
         if score > 0.05:
             direction = "buy"
         elif score < -0.05:
             direction = "sell" 
         else:
-            # Empate - segue GARCH
-            direction = "buy" if garch_probs["probability_buy"] > 0.5 else "sell"
-            confidence = max(0.70, confidence - 0.05)
+            # Empate - usa GARCH como desempate
+            direction = "buy" if garch_probs["probability_buy"] > garch_probs["probability_sell"] else "sell"
+            confidence = max(0.65, confidence - 0.05)  # Reduz confiança em caso de empate
             
         return {
             'direction': direction,
@@ -384,13 +393,9 @@ class TradingSystem:
                            garch_probs: Dict, trend_analysis: Dict) -> Dict[str, Any]:
         direction = trend_analysis['direction']
         
-        # Usar probabilidades DINÂMICAS do GARCH
-        if direction == 'buy':
-            prob_buy = garch_probs['probability_buy']
-            prob_sell = garch_probs['probability_sell']
-        else:
-            prob_sell = garch_probs['probability_sell'] 
-            prob_buy = garch_probs['probability_buy']
+        # CORREÇÃO: Usar probabilidades corretas do GARCH
+        prob_buy = garch_probs['probability_buy']
+        prob_sell = garch_probs['probability_sell']
             
         entry_time = self.calculate_entry_time()
         current_time = datetime.now(timezone(timedelta(hours=-3))).strftime("%H:%M:%S BRT")
@@ -401,7 +406,7 @@ class TradingSystem:
             'direction': direction,
             'probability_buy': prob_buy,
             'probability_sell': prob_sell,
-            'confidence': trend_analysis['confidence'],  # CONFIANÇA DINÂMICA
+            'confidence': trend_analysis['confidence'],
             'rsi': technical_data['rsi'],
             'macd_signal': technical_data['macd_signal'],
             'macd_strength': technical_data['macd_strength'],
@@ -416,19 +421,19 @@ class TradingSystem:
         }
     
     def _create_fallback_signal(self, symbol: str, price: float) -> Dict[str, Any]:
-        # Fallback com valores DINÂMICOS
+        # Fallback com valores CORRETOS
         direction = random.choice(['buy', 'sell'])
         
-        # Confiança variável (70-85%)
-        confidence = round(random.uniform(0.70, 0.85), 4)
+        # CORREÇÃO: Confiança mais realista
+        confidence = round(random.uniform(0.70, 0.80), 4)
         
-        # Probabilidades variáveis (60-85%)
+        # CORREÇÃO: Probabilidades que somam 1
         if direction == 'buy':
-            prob_buy = round(random.uniform(0.65, 0.85), 4)
-            prob_sell = 1 - prob_buy
+            prob_buy = round(random.uniform(0.55, 0.75), 4)
+            prob_sell = round(1 - prob_buy, 4)
         else:
-            prob_sell = round(random.uniform(0.65, 0.85), 4)
-            prob_buy = 1 - prob_sell
+            prob_sell = round(random.uniform(0.55, 0.75), 4)
+            prob_buy = round(1 - prob_sell, 4)
             
         entry_time = self.calculate_entry_time()
         current_time = datetime.now(timezone(timedelta(hours=-3))).strftime("%H:%M:%S BRT")
@@ -481,7 +486,7 @@ class AnalysisManager:
                 signal = self.system.analyze_symbol(symbol)
                 all_signals.append(signal)
                 
-            # Ordenar por confiança (agora variável)
+            # Ordenar por confiança
             all_signals.sort(key=lambda x: x['confidence'], reverse=True)
             self.current_results = all_signals
             
@@ -551,6 +556,26 @@ def index():
                 border-radius: 10px;
                 margin-bottom: 20px;
             }}
+            .symbols-selection {{
+                background: #223148;
+                padding: 15px;
+                border-radius: 10px;
+                margin: 15px 0;
+            }}
+            .symbols-grid {{
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                gap: 10px;
+                margin: 10px 0;
+            }}
+            .symbol-checkbox {{
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }}
+            .symbol-checkbox input {{
+                transform: scale(1.2);
+            }}
             button {{
                 background: #2aa9ff;
                 color: white;
@@ -619,11 +644,41 @@ def index():
             <div class="header">
                 <h1>🚀 IA Signal Pro - IMPARCIAL + DINÂMICO</h1>
                 <div class="clock" id="currentTime">{current_time}</div>
-                <p>🎯 <strong>Próximo Candle (T+1)</strong> | 📊 3000 Simulações GARCH | ✅ Confiança Dinâmica 70-92%</p>
+                <p>🎯 <strong>Próximo Candle (T+1)</strong> | 📊 3000 Simulações GARCH | ✅ Confiança Dinâmica 70-90%</p>
             </div>
             
             <div class="controls">
-                <button onclick="runAnalysis()" id="analyzeBtn">🎯 Analisar 6 Ativos (T+1)</button>
+                <div class="symbols-selection">
+                    <h3>📈 Selecione os Ativos para Análise:</h3>
+                    <div class="symbols-grid" id="symbolsGrid">
+                        <div class="symbol-checkbox">
+                            <input type="checkbox" id="BTC/USDT" checked>
+                            <label for="BTC/USDT">BTC/USDT</label>
+                        </div>
+                        <div class="symbol-checkbox">
+                            <input type="checkbox" id="ETH/USDT" checked>
+                            <label for="ETH/USDT">ETH/USDT</label>
+                        </div>
+                        <div class="symbol-checkbox">
+                            <input type="checkbox" id="SOL/USDT" checked>
+                            <label for="SOL/USDT">SOL/USDT</label>
+                        </div>
+                        <div class="symbol-checkbox">
+                            <input type="checkbox" id="ADA/USDT" checked>
+                            <label for="ADA/USDT">ADA/USDT</label>
+                        </div>
+                        <div class="symbol-checkbox">
+                            <input type="checkbox" id="XRP/USDT" checked>
+                            <label for="XRP/USDT">XRP/USDT</label>
+                        </div>
+                        <div class="symbol-checkbox">
+                            <input type="checkbox" id="BNB/USDT" checked>
+                            <label for="BNB/USDT">BNB/USDT</label>
+                        </div>
+                    </div>
+                </div>
+                
+                <button onclick="runAnalysis()" id="analyzeBtn">🎯 Analisar Ativos Selecionados (T+1)</button>
                 <button onclick="checkStatus()">📊 Status do Sistema</button>
                 <div id="status" class="status info">
                     ⏰ Hora atual: {current_time} | Sistema IMPARCIAL Online
@@ -659,7 +714,24 @@ def index():
             setInterval(updateClock, 1000);
             updateClock();
 
+            function getSelectedSymbols() {{
+                const checkboxes = document.querySelectorAll('.symbol-checkbox input[type="checkbox"]');
+                const selected = [];
+                checkboxes.forEach(checkbox => {{
+                    if (checkbox.checked) {{
+                        selected.push(checkbox.id);
+                    }}
+                }});
+                return selected;
+            }}
+
             async function runAnalysis() {{
+                const selectedSymbols = getSelectedSymbols();
+                if (selectedSymbols.length === 0) {{
+                    alert('Por favor, selecione pelo menos um ativo para análise.');
+                    return;
+                }}
+
                 const btn = document.getElementById('analyzeBtn');
                 btn.disabled = true;
                 btn.textContent = '⏳ Analisando Próximo Candle...';
@@ -672,7 +744,7 @@ def index():
                     const response = await fetch('/api/analyze', {{
                         method: 'POST',
                         headers: {{'Content-Type': 'application/json'}},
-                        body: JSON.stringify({{symbols: ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'ADA/USDT', 'XRP/USDT', 'BNB/USDT']}})
+                        body: JSON.stringify({{symbols: selectedSymbols}})
                     }});
                     
                     const data = await response.json();
@@ -684,13 +756,13 @@ def index():
                         statusDiv.className = 'status error';
                         statusDiv.innerHTML = '❌ ' + data.error;
                         btn.disabled = false;
-                        btn.textContent = '🎯 Analisar 6 Ativos (T+1)';
+                        btn.textContent = '🎯 Analisar Ativos Selecionados (T+1)';
                     }}
                 }} catch (error) {{
                     statusDiv.className = 'status error';
                     statusDiv.innerHTML = '❌ Erro de conexão: ' + error;
                     btn.disabled = false;
-                    btn.textContent = '🎯 Analisar 6 Ativos (T+1)';
+                    btn.textContent = '🎯 Analisar Ativos Selecionados (T+1)';
                 }}
             }}
             
@@ -707,7 +779,7 @@ def index():
                         }} else {{
                             renderResults(data);
                             document.getElementById('analyzeBtn').disabled = false;
-                            document.getElementById('analyzeBtn').textContent = '🎯 Analisar 6 Ativos (T+1)';
+                            document.getElementById('analyzeBtn').textContent = '🎯 Analisar Ativos Selecionados (T+1)';
                             
                             const statusDiv = document.getElementById('status');
                             statusDiv.className = 'status success';
@@ -833,8 +905,8 @@ def health():
     return jsonify({
         "ok": True,
         "simulations": MC_PATHS,
-        "confidence_range": "70-92%",
-        "probabilities_range": "60-90%", 
+        "confidence_range": "70-90%",
+        "probabilities_range": "Dinâmico", 
         "current_time": current_time,
         "timeframe": "T+1 (Próximo candle)",
         "status": "imparcial_operational"
@@ -842,5 +914,5 @@ def health():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    logger.info("app_starting_impartial", port=port, confidence_range="70-92%")
+    logger.info("app_starting_impartial", port=port, confidence_range="70-90%")
     app.run(host="0.0.0.0", port=port, debug=False)
