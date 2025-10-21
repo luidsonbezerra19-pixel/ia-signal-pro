@@ -200,7 +200,7 @@ class TechnicalIndicators:
         return {"trend": trend, "strength": round(strength, 4)}
 
 # =========================
-# Sistema GARCH Melhorado (Probabilidades Dinâmicas)
+# Sistema GARCH Melhorado (Probabilidades REALISTAS)
 # =========================
 class GARCHSystem:
     def __init__(self):
@@ -235,12 +235,12 @@ class GARCHSystem:
                 
         prob_buy = up_count / self.paths
         
-        # Probabilidades DINÂMICAS (60-90%)
+        # CORREÇÃO: Probabilidades REALISTAS (45-75%)
         if prob_buy > 0.5:
-            prob_buy = min(0.90, max(0.60, prob_buy))
+            prob_buy = min(0.75, max(0.45, prob_buy))
             prob_sell = 1 - prob_buy
         else:
-            prob_sell = min(0.90, max(0.60, 1 - prob_buy))
+            prob_sell = min(0.75, max(0.45, 1 - prob_buy))
             prob_buy = 1 - prob_sell
 
         return {
@@ -250,7 +250,7 @@ class GARCHSystem:
         }
 
 # =========================
-# IA de Tendência IMPARCIAL
+# IA de Tendência IMPARCIAL (Confiança REALISTA)
 # =========================
 class TrendIntelligence:
     def analyze_trend_signal(self, technical_data: Dict, garch_probs: Dict) -> Dict[str, Any]:
@@ -292,12 +292,12 @@ class TrendIntelligence:
             score -= macd_strength * 0.3
             reasons.append("MACD negativo")
             
-        # Confiança DINÂMICA (70-92%)
-        base_confidence = 0.75
+        # CORREÇÃO: Confiança REALISTA (60-85%)
+        base_confidence = 0.65
         if abs(score) > 0.3:
-            confidence = min(0.92, base_confidence + abs(score) * 0.4)
+            confidence = min(0.85, base_confidence + abs(score) * 0.4)
         elif abs(score) > 0.15:
-            confidence = min(0.85, base_confidence + abs(score) * 0.3)
+            confidence = min(0.80, base_confidence + abs(score) * 0.3)
         else:
             confidence = base_confidence
             
@@ -309,7 +309,7 @@ class TrendIntelligence:
         else:
             # Empate - segue GARCH
             direction = "buy" if garch_probs["probability_buy"] > 0.5 else "sell"
-            confidence = max(0.70, confidence - 0.05)
+            confidence = max(0.60, confidence - 0.05)
             
         return {
             'direction': direction,
@@ -359,7 +359,7 @@ class TradingSystem:
                 'price': current_price
             }
             
-            # Análise GARCH com probabilidades dinâmicas
+            # Análise GARCH com probabilidades REALISTAS
             returns = self._calculate_returns(closes)
             garch_probs = self.garch.run_garch_analysis(current_price, returns)
             
@@ -384,7 +384,7 @@ class TradingSystem:
                            garch_probs: Dict, trend_analysis: Dict) -> Dict[str, Any]:
         direction = trend_analysis['direction']
         
-        # Usar probabilidades DINÂMICAS do GARCH
+        # Usar probabilidades REALISTAS do GARCH
         if direction == 'buy':
             prob_buy = garch_probs['probability_buy']
             prob_sell = garch_probs['probability_sell']
@@ -401,7 +401,7 @@ class TradingSystem:
             'direction': direction,
             'probability_buy': prob_buy,
             'probability_sell': prob_sell,
-            'confidence': trend_analysis['confidence'],  # CONFIANÇA DINÂMICA
+            'confidence': trend_analysis['confidence'],  # CONFIANÇA REALISTA
             'rsi': technical_data['rsi'],
             'macd_signal': technical_data['macd_signal'],
             'macd_strength': technical_data['macd_strength'],
@@ -416,18 +416,18 @@ class TradingSystem:
         }
     
     def _create_fallback_signal(self, symbol: str, price: float) -> Dict[str, Any]:
-        # Fallback com valores DINÂMICOS
+        # CORREÇÃO: Fallback com valores REALISTAS
         direction = random.choice(['buy', 'sell'])
         
-        # Confiança variável (70-85%)
-        confidence = round(random.uniform(0.70, 0.85), 4)
+        # Confiança variável (60-80%)
+        confidence = round(random.uniform(0.60, 0.80), 4)
         
-        # Probabilidades variáveis (60-85%)
+        # Probabilidades variáveis (45-70%)
         if direction == 'buy':
-            prob_buy = round(random.uniform(0.65, 0.85), 4)
+            prob_buy = round(random.uniform(0.50, 0.70), 4)
             prob_sell = 1 - prob_buy
         else:
-            prob_sell = round(random.uniform(0.65, 0.85), 4)
+            prob_sell = round(random.uniform(0.50, 0.70), 4)
             prob_buy = 1 - prob_sell
             
         entry_time = self.calculate_entry_time()
@@ -619,7 +619,7 @@ def index():
             <div class="header">
                 <h1>🚀 IA Signal Pro - IMPARCIAL + DINÂMICO</h1>
                 <div class="clock" id="currentTime">{current_time}</div>
-                <p>🎯 <strong>Próximo Candle (T+1)</strong> | 📊 3000 Simulações GARCH | ✅ Confiança Dinâmica 70-92%</p>
+                <p>🎯 <strong>Próximo Candle (T+1)</strong> | 📊 3000 Simulações GARCH | ✅ Confiança Realista 60-85%</p>
             </div>
             
             <div class="controls">
@@ -833,8 +833,8 @@ def health():
     return jsonify({
         "ok": True,
         "simulations": MC_PATHS,
-        "confidence_range": "70-92%",
-        "probabilities_range": "60-90%", 
+        "confidence_range": "60-85%",  # CORREÇÃO: Confiança realista
+        "probabilities_range": "45-75%",  # CORREÇÃO: Probabilidades realistas
         "current_time": current_time,
         "timeframe": "T+1 (Próximo candle)",
         "status": "imparcial_operational"
@@ -842,5 +842,5 @@ def health():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    logger.info("app_starting_impartial", port=port, confidence_range="70-92%")
+    logger.info("app_starting_impartial", port=port, confidence_range="60-85%")
     app.run(host="0.0.0.0", port=port, debug=False)
