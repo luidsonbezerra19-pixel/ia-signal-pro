@@ -65,7 +65,7 @@ class DataGenerator:
                 
                 if price and price > 0:
                     self.price_cache[symbol] = price
-                    print(f"✅ PREÇO REAL: {symbol} = ${{price:,.2f}}")
+                    print(f"✅ PREÇO REAL: {symbol} = ${price:,.2f}")
                 else:
                     self._set_realistic_fallback(symbol)
                     
@@ -145,7 +145,7 @@ class DataGenerator:
         
         price = realistic_prices.get(symbol, 100)
         self.price_cache[symbol] = price
-        print(f"⚠️  FALLBACK: {symbol} = ${{price:,.2f}}")
+        print(f"⚠️  FALLBACK: {symbol} = ${price:,.2f}")
 
     def get_current_prices(self) -> Dict[str, float]:
         """Retorna preços atualizados - CORRIGIDO para usar cache atualizado"""
@@ -362,7 +362,7 @@ class EvolutionaryThinking:
             return {
                 'mode': 'contrarian',
                 'suggestion': 'sell',
-                'reason': f'Contrarian: Excessivo otimismo (RSI {rsi}}), possível reversão',
+                'reason': f'Contrarian: Excessivo otimismo (RSI {rsi}), possível reversão',
                 'confidence_boost': 0.15,
                 'risk': 'medium'
             }
@@ -371,7 +371,7 @@ class EvolutionaryThinking:
             return {
                 'mode': 'contrarian', 
                 'suggestion': 'buy',
-                'reason': f'Contrarian: Pânico excessivo (RSI {rsi}}), possível recuperação',
+                'reason': f'Contrarian: Pânico excessivo (RSI {rsi}), possível recuperação',
                 'confidence_boost': 0.15,
                 'risk': 'medium'
             }
@@ -388,7 +388,7 @@ class EvolutionaryThinking:
             return {
                 'mode': 'pattern_breaker',
                 'suggestion': 'buy' if random.random() > 0.5 else 'sell',
-                'reason': f'Pattern Breaker: Alta volatilidade ({volatility:.3f}}) = oportunidade de breakout',
+                'reason': f'Pattern Breaker: Alta volatilidade ({volatility:.3f}) = oportunidade de breakout',
                 'confidence_boost': 0.12,
                 'risk': 'high'
             }
@@ -640,7 +640,7 @@ class EvolutionaryIntelligence:
         quality_assessment = self.quality_filter.evaluate_signal_quality({
             **technical_data,
             'direction': evolutionary_thinking['final_suggestion']
-        }})
+        })
         
         # Síntese Inteligente Final
         return self._synthesize_intelligent_decision(
@@ -752,7 +752,7 @@ class EvolutionaryIntelligence:
             'macd_strength': conventional.get('macd_strength', 0),
             'garch_volatility': conventional.get('garch_volatility', 0.02),
             'quality': quality
-        }})
+        })
         
         # Decisão final com qualidade
         should_trade = (quality['should_trade'] and 
@@ -1180,7 +1180,7 @@ def index():
                 const timeString = brtTime.toLocaleTimeString('pt-BR', {{ 
                     timeZone: 'America/Sao_Paulo',
                     hour12: false 
-                }}}) + ' BRT';
+                }}) + ' BRT';
                 
                 document.getElementById('currentTime').textContent = timeString;
             }}
@@ -1195,7 +1195,7 @@ def index():
                     if (checkbox.checked) {{
                         selected.push(checkbox.id);
                     }}
-                }}});
+                }});
                 return selected;
             }}
 
@@ -1216,8 +1216,8 @@ def index():
                         headers: {{
                             'Content-Type': 'application/json',
                         }},
-                        body: JSON.stringify({{ symbols: selectedSymbols }}}),
-                    }}});
+                        body: JSON.stringify({{ symbols: selectedSymbols }}),
+                    }});
 
                     const result = await response.json();
                     
@@ -1269,7 +1269,7 @@ def index():
                     if (!best || signal.symbol !== best.symbol) {{
                         resultsGrid.innerHTML += createSignalCard(signal, false);
                     }}
-                }}});
+                }});
             }}
 
             function createSignalCard(signal, isBest) {{
@@ -1279,20 +1279,21 @@ def index():
                 const confidencePercent = (signal.confidence * 100).toFixed(1);
                 const qualityPercent = (signal.quality_score * 100).toFixed(1);
                 const priceFormatted = typeof signal.price === 'number' ? 
-                    signal.price.toLocaleString('pt-BR', {{{ style: 'currency', currency: 'USD' }}}) : 
+                    signal.price.toLocaleString('pt-BR', {{ style: 'currency', currency: 'USD' }}) : 
                     '$' + signal.price;
                 
-                // Construir HTML dos modos de pensamento
+                // Construir HTML dos modos de pensamento - CORRIGIDO
                 const thinkingModes = signal.thinking_modes || ['analytical'];
-                const thinkingHTML = thinkingModes.map(mode => {{
-                    const modeIcons = {{
-                        'analytical': '📊',
-                        'contrarian': '🔄', 
-                        'pattern_breaker': '🎯',
-                        'probabilistic': '🎲'
-                    }};
-                    return `<span style="margin-right: 5px;">${{modeIcons[mode] || '🔍'}} ${{mode}}</span>`;
-                }}}).join('');
+                const modeIcons = {{
+                    'analytical': '📊',
+                    'contrarian': '🔄', 
+                    'pattern_breaker': '🎯',
+                    'probabilistic': '🎲'
+                }};
+                
+                const thinkingHTML = thinkingModes.map(mode => 
+                    `<span style="margin-right: 5px;">${{modeIcons[mode] || '🔍'}} ${{mode}}</span>`
+                ).join('');
                 
                 // Construir HTML de warnings
                 const warningsHTML = signal.false_signal_warnings && signal.false_signal_warnings.length > 0 ?
@@ -1300,30 +1301,30 @@ def index():
                         `<div class="info-line warning-line">⚠️ ${{warning}}</div>`
                     ).join('') : '';
                 
-                return '<div class="signal-card ' + directionClass + ' ' + (isBest ? 'best-card' : '') + '">' +
-                    '<h3>' + directionEmoji + ' ' + signal.symbol + ' ' + (isBest ? '🏆' : '') + '</h3>' +
-                    '<div class="info-line">' +
-                        '<span class="badge ' + directionClass + '">' + signal.direction.toUpperCase() + '</span>' +
-                        '<span class="badge confidence">' + confidencePercent + '% Confiança</span>' +
-                        '<span class="badge quality">' + qualityPercent + '% Qualidade</span>' +
-                        '<span class="badge evolution">' + signal.evolutionary_grade + '</span>' +
-                    '</div>' +
-                    '<div class="info-line"><strong>🎯 Entrada:</strong> ' + signal.entry_time + '</div>' +
-                    '<div class="info-line"><strong>💰 Preço Atual:</strong> ' + priceFormatted + '</div>' +
-                    '<div class="info-line"><strong>📊 Probabilidade:</strong> COMPRA ' + (signal.probability_buy * 100).toFixed(1) + '% | VENDA ' + (signal.probability_sell * 100).toFixed(1) + '%</div>' +
-                    '<div class="info-line"><strong>🧠 Modos de Pensamento:</strong> ' + thinkingHTML + '</div>' +
-                    '<div class="info-line"><strong>✅ Confirmações:</strong> ' + signal.confirmations_count + '/3 camadas</div>' +
-                    '<div class="info-line"><strong>📈 RSI:</strong> ' + signal.rsi + '</div>' +
-                    '<div class="info-line"><strong>🔍 MACD:</strong> ' + signal.macd_signal + ' (' + (signal.macd_strength * 100).toFixed(1) + '%)</div>' +
-                    '<div class="info-line"><strong>📊 Tendência:</strong> ' + signal.trend + ' (' + (signal.trend_strength * 100).toFixed(1) + '%)</div>' +
-                    '<div class="info-line"><strong>🎲 Volatilidade GARCH:</strong> ' + (signal.garch_volatility * 100).toFixed(3) + '%</div>' +
-                    '<div class="info-line evolution-line"><strong>🚀 IA Evolutiva:</strong> ' + signal.reason + '</div>' +
-                    warningsHTML +
-                    '<div class="info-line"><strong>⏰ Análise:</strong> ' + signal.timestamp + '</div>' +
-                    '<div class="info-line"><strong>💡 Recomendação:</strong> ' + 
-                        (signal.should_trade ? '✅ TRADING RECOMENDADO' : '⏸️ AGUARDAR CONFIRMAÇÃO') + 
-                    '</div>' +
-                '</div>';
+                return `<div class="signal-card ${{directionClass}} ${{isBest ? 'best-card' : ''}}">
+                    <h3>${{directionEmoji}} ${{signal.symbol}} ${{isBest ? '🏆' : ''}}</h3>
+                    <div class="info-line">
+                        <span class="badge ${{directionClass}}">${{signal.direction.toUpperCase()}}</span>
+                        <span class="badge confidence">${{confidencePercent}}% Confiança</span>
+                        <span class="badge quality">${{qualityPercent}}% Qualidade</span>
+                        <span class="badge evolution">${{signal.evolutionary_grade}}</span>
+                    </div>
+                    <div class="info-line"><strong>🎯 Entrada:</strong> ${{signal.entry_time}}</div>
+                    <div class="info-line"><strong>💰 Preço Atual:</strong> ${{priceFormatted}}</div>
+                    <div class="info-line"><strong>📊 Probabilidade:</strong> COMPRA ${{(signal.probability_buy * 100).toFixed(1)}}% | VENDA ${{(signal.probability_sell * 100).toFixed(1)}}%</div>
+                    <div class="info-line"><strong>🧠 Modos de Pensamento:</strong> ${{thinkingHTML}}</div>
+                    <div class="info-line"><strong>✅ Confirmações:</strong> ${{signal.confirmations_count}}/3 camadas</div>
+                    <div class="info-line"><strong>📈 RSI:</strong> ${{signal.rsi}}</div>
+                    <div class="info-line"><strong>🔍 MACD:</strong> ${{signal.macd_signal}} (${{(signal.macd_strength * 100).toFixed(1)}}%)</div>
+                    <div class="info-line"><strong>📊 Tendência:</strong> ${{signal.trend}} (${{(signal.trend_strength * 100).toFixed(1)}}%)</div>
+                    <div class="info-line"><strong>🎲 Volatilidade GARCH:</strong> ${{(signal.garch_volatility * 100).toFixed(3)}}%</div>
+                    <div class="info-line evolution-line"><strong>🚀 IA Evolutiva:</strong> ${{signal.reason}}</div>
+                    ${{warningsHTML}}
+                    <div class="info-line"><strong>⏰ Análise:</strong> ${{signal.timestamp}}</div>
+                    <div class="info-line"><strong>💡 Recomendação:</strong> ${{ 
+                        signal.should_trade ? '✅ TRADING RECOMENDADO' : '⏸️ AGUARDAR CONFIRMAÇÃO' 
+                    }}</div>
+                </div>`;
             }}
 
             async function checkStatus() {{
@@ -1361,7 +1362,7 @@ def analyze():
             return jsonify({
                 'success': False,
                 'message': 'Análise já em andamento. Aguarde a conclusão.'
-            }})
+            })
         
         thread = threading.Thread(target=manager.analyze_symbols_thread, args=(symbols,))
         thread.daemon = True
@@ -1370,14 +1371,14 @@ def analyze():
         return jsonify({
             'success': True,
             'message': f'Análise evolutiva iniciada para {len(symbols)} ativos. IA pensando fora da caixa...'
-        }})
+        })
         
     except Exception as e:
         logger.error("analyze_endpoint_error", error=str(e))
         return jsonify({
             'success': False,
             'message': f'Erro ao iniciar análise: {str(e)}'
-        }})
+        })
 
 @app.route('/results')
 def get_results():
@@ -1391,14 +1392,14 @@ def get_results():
             'best_opportunity': best,
             'analysis_time': manager.analysis_time,
             'results_count': len(results)
-        }})
+        })
         
     except Exception as e:
         logger.error("results_endpoint_error", error=str(e))
         return jsonify({
             'success': False,
             'message': f'Erro ao obter resultados: {str(e)}'
-        }})
+        })
 
 @app.route('/status')
 def get_status():
@@ -1409,10 +1410,10 @@ def get_status():
             'best_symbol': manager.best_opportunity['symbol'] if manager.best_opportunity else None,
             'last_analysis': manager.analysis_time,
             'current_time': get_current_brazil_time()
-        }})
+        })
     except Exception as e:
         logger.error("status_endpoint_error", error=str(e))
-        return jsonify({'error': str(e)}})
+        return jsonify({'error': str(e)})
 
 if __name__ == '__main__':
     print("🧠 IA Signal Pro - EVOLUTIVA + ALTA ASSERTIVIDADE")
