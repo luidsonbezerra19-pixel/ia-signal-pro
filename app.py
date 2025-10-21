@@ -627,7 +627,7 @@ def index():
     ws_status = 'ws-connected' if ws_manager.connected else 'ws-disconnected'
     ws_text = 'CONECTADO' if ws_manager.connected else 'RECONECTANDO...'
     
-    return f'''
+    html_content = f'''
     <!DOCTYPE html>
     <html>
     <head>
@@ -872,10 +872,11 @@ def index():
                 const directionIcon = signal.direction === 'buy' ? '🟢' : '🔴';
                 const confidencePercent = Math.round(signal.confidence * 100);
                 const bestClass = isBest ? 'best-card' : '';
+                const trophy = isBest ? '🏆' : '';
                 
                 return `
                     <div class="signal-card ${directionClass} ${bestClass}">
-                        <h3>${directionIcon} ${signal.symbol} ${isBest ? '🏆' : ''}</h3>
+                        <h3>${directionIcon} ${signal.symbol} ${trophy}</h3>
                         <div class="info-line">
                             <span class="badge ${directionClass}">${signal.direction.toUpperCase()}</span>
                             <span class="badge confidence">${confidencePercent}% Confiança</span>
@@ -906,6 +907,8 @@ def index():
     </body>
     </html>
     '''
+    
+    return Response(html_content, mimetype='text/html')
 
 @app.route('/api/analyze', methods=['POST'])
 def api_analyze():
