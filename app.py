@@ -57,6 +57,9 @@ CORS(app)
 # =========================
 # Data Generator COM DADOS REAIS BINANCE - FUNCIONANDO
 # =========================
+# =========================
+# Data Generator COM DADOS REAIS KRAKEN - COMPLETO
+# =========================
 class DataGenerator:
     def __init__(self):
         self.price_cache = {}
@@ -64,8 +67,8 @@ class DataGenerator:
         self._initialize_real_prices()
         
     def _initialize_real_prices(self):
-        """Busca preços iniciais REAIS da Binance"""
-        print("🚀 INICIANDO BUSCA DE PREÇOS REAIS BINANCE...")
+        """Busca preços iniciais REAIS da Kraken"""
+        print("🚀 INICIANDO BUSCA DE PREÇOS REAIS KRAKEN...")
         
         # Preços realistas como fallback
         realistic_prices = {
@@ -79,10 +82,10 @@ class DataGenerator:
         
         for symbol in DEFAULT_SYMBOLS:
             try:
-                price = self._fetch_current_price_binance(symbol)
+                price = self._fetch_current_price_kraken(symbol)
                 if price and price > 0:
                     self.price_cache[symbol] = price
-                    print(f"✅ BINANCE PREÇO REAL: {symbol} = ${price:,.2f}")
+                    print(f"✅ KRAKEN PREÇO REAL: {symbol} = ${price:,.2f}")
                 else:
                     # Usa preço realista como fallback
                     self.price_cache[symbol] = realistic_prices.get(symbol, 100)
@@ -92,91 +95,157 @@ class DataGenerator:
                 print(f"❌ ERRO INICIAL: {symbol} - {e}")
                 self.price_cache[symbol] = realistic_prices.get(symbol, 100)
 
-    def _fetch_current_price_binance(self, symbol: str) -> Optional[float]:
-        """Busca preço REAL da Binance - SEM API KEY"""
+    def _fetch_current_price_kraken(self, symbol: str) -> Optional[float]:
+        """Busca preço REAL da Kraken - MUITO CONFIÁVEL"""
         try:
-            # Binance usa formato: BTC/USDT → BTCUSDT
-            binance_symbol = symbol.replace("/", "")
-            url = f"https://api.binance.com/api/v3/ticker/price?symbol={binance_symbol}"
+            # Mapeamento de símbolos para formato Kraken
+            kraken_symbols = {
+                'BTC/USDT': 'XBTUSDT',
+                'ETH/USDT': 'ETHUSDT', 
+                'SOL/USDT': 'SOLUSDT',
+                'ADA/USDT': 'ADAUSDT',
+                'XRP/USDT': 'XRPUSDT',
+                'BNB/USDT': 'BNBUSDT'
+            }
             
-            print(f"🔍 BINANCE: Buscando preço {symbol}")
+            kraken_symbol = kraken_symbols.get(symbol)
+            if not kraken_symbol:
+                print(f"❌ Símbolo não suportado pela Kraken: {symbol}")
+                return None
+                
+            url = f"https://api.kraken.com/0/public/Ticker?pair={kraken_symbol}"
+            
+            print(f"🔍 KRAKEN: Buscando {symbol} → {kraken_symbol}")
             
             response = requests.get(url, timeout=10)
-            print(f"📡 BINANCE Status: {response.status_code}")
+            print(f"📡 KRAKEN Status: {response.status_code}")
             
             if response.status_code == 200:
                 data = response.json()
-                price = float(data['price'])
-                print(f"✅ BINANCE PREÇO REAL: {symbol} = ${price:,.2f}")
-                return price
+                print(f"📊 KRAKEN Response: {data}")
+                
+                if not data.get('error'):
+                    # Kraken retorna dados aninhados com chave dinâmica
+                    for key, value in data['result'].items():
+                        price = float(value['c'][0])  # Preço de fechamento mais recente
+                        print(f"✅ KRAKEN PREÇO REAL: {symbol} = ${price:,.2f}")
+                        return price
+                else:
+                    print(f"❌ KRAKEN API Error: {data.get('error')}")
             else:
-                print(f"❌ BINANCE HTTP Error: {response.status_code}")
-                print(f"📦 Response: {response.text}")
+                print(f"❌ KRAKEN HTTP Error: {response.status_code}")
                 
         except requests.exceptions.Timeout:
-            print(f"⏰ BINANCE Timeout: {symbol}")
+            print(f"⏰ KRAKEN Timeout: {symbol}")
         except requests.exceptions.ConnectionError:
-            print(f"🔌 BINANCE Connection Error: {symbol}")
+            print(f"🔌 KRAKEN Connection Error: {symbol}")
         except Exception as e:
-            print(f"💥 BINANCE Error: {e}")
+            print(f"💥 KRAKEN Error: {e}")
             
         return None
 
-    def _fetch_historical_data_binance(self, symbol: str, periods: int = 100) -> Optional[List[List[float]]]:
-        """Busca candles históricos REAIS da Binance"""
+    def _fetch_historical_data_kraken(self, symbol: str, periods: int = 100) -> Optional[List[List[float]]]:
+        """Busca candles históricos REAIS da Kraken para RSI/ADX/MACD REAIS"""
         try:
-            binance_symbol = symbol.replace("/", "")
-            # Binance API: 1min candles, limit 1000
-            url = f"https://api.binance.com/api/v3/klines?symbol={binance_symbol}&interval=1m&limit={periods}"
+            # Mapeamento de símbolos para formato Kraken
+            kraken_symbols = {
+                'BTC/USDT': 'XBTUSDT',
+                'ETH/USDT': 'ETHUSDT', 
+                'SOL/USDT': 'SOLUSDT',
+                'ADA/USDT': 'ADAUSDT',
+                'XRP/USDT': 'XRPUSDT',
+                'BNB/USDT': 'BNBUSDT'
+            }
             
-            print(f"📊 BINANCE: Buscando históricos {symbol} ({periods} candles)")
+            kraken_symbol = kraken_symbols.get(symbol)
+            if not kraken_symbol:
+                print(f"❌ Símbolo não suportado: {symbol}")
+                return None
+                
+            # Kraken: interval=1 = 1 minuto, limit é implícito (retorna 720 candles)
+            url = f"https://api.kraken.com/0/public/OHLC?pair={kraken_symbol}&interval=1"
+            
+            print(f"📊 KRAKEN: Buscando históricos {symbol} → {kraken_symbol}")
             
             response = requests.get(url, timeout=15)
-            print(f"📡 BINANCE Históricos Status: {response.status_code}")
+            print(f"📡 KRAKEN Históricos Status: {response.status_code}")
             
             if response.status_code == 200:
                 data = response.json()
-                candles = []
-                for candle in data:
-                    # Binance retorna: [openTime, open, high, low, close, volume, closeTime, ...]
-                    candles.append([
-                        float(candle[1]),  # open
-                        float(candle[2]),  # high  
-                        float(candle[3]),  # low
-                        float(candle[4]),  # close
-                        float(candle[5])   # volume
-                    ])
+                print(f"📊 KRAKEN Históricos Response recebida")
                 
-                print(f"✅ BINANCE HISTÓRICOS REAIS: {symbol} - {len(candles)} candles")
-                if candles:
-                    print(f"   Primeiro: O=${candles[0][0]:,.2f}, C=${candles[0][3]:,.2f}")
-                    print(f"   Último: O=${candles[-1][0]:,.2f}, C=${candles[-1][3]:,.2f}")
-                return candles
+                if not data.get('error') and data.get('result'):
+                    candles = []
+                    # Kraken retorna dados aninhados
+                    for key, ohlc_data in data['result'].items():
+                        # Pega os últimos N candles (mais recentes)
+                        for candle in ohlc_data[-periods:]:
+                            candles.append([
+                                float(candle[1]),  # open
+                                float(candle[2]),  # high  
+                                float(candle[3]),  # low
+                                float(candle[4]),  # close
+                                float(candle[6])   # volume
+                            ])
+                        break  # Pega apenas o primeiro par
+                    
+                    print(f"✅ KRAKEN HISTÓRICOS REAIS: {symbol} - {len(candles)} candles")
+                    if candles:
+                        print(f"   Primeiro candle: O=${candles[0][0]:,.2f}, H=${candles[0][1]:,.2f}, L=${candles[0][2]:,.2f}, C=${candles[0][3]:,.2f}")
+                        print(f"   Último candle: O=${candles[-1][0]:,.2f}, H=${candles[-1][1]:,.2f}, L=${candles[-1][2]:,.2f}, C=${candles[-1][3]:,.2f}")
+                    return candles
+                else:
+                    print(f"❌ KRAKEN Históricos API Error: {data.get('error')}")
             else:
-                print(f"❌ BINANCE Históricos HTTP Error: {response.status_code}")
+                print(f"❌ KRAKEN Históricos HTTP Error: {response.status_code}")
                 
+        except requests.exceptions.Timeout:
+            print(f"⏰ KRAKEN Históricos Timeout: {symbol}")
+        except requests.exceptions.ConnectionError:
+            print(f"🔌 KRAKEN Históricos Connection Error: {symbol}")
         except Exception as e:
-            print(f"💥 BINANCE Históricos Error: {e}")
+            print(f"💥 KRAKEN Históricos Error: {e}")
             
+        return None
+
+    def _fetch_current_price_binance_fallback(self, symbol: str) -> Optional[float]:
+        """Fallback para Binance caso Kraken falhe"""
+        try:
+            binance_symbol = symbol.replace("/", "")
+            url = f"https://api.binance.com/api/v3/ticker/price?symbol={binance_symbol}"
+            
+            response = requests.get(url, timeout=8)
+            if response.status_code == 200:
+                data = response.json()
+                price = float(data['price'])
+                print(f"✅ BINANCE FALLBACK: {symbol} = ${price:,.2f}")
+                return price
+        except:
+            pass
         return None
         
     def get_current_prices(self) -> Dict[str, float]:
-        """Retorna preços REAIS da Binance"""
+        """Retorna preços REAIS - Kraken como principal"""
         real_prices = {}
         
         for symbol in DEFAULT_SYMBOLS:
             try:
-                # Busca preço REAL da Binance
-                current_price = self._fetch_current_price_binance(symbol)
+                # 1ª tentativa: KRAKEN (principal)
+                current_price = self._fetch_current_price_kraken(symbol)
+                
+                # 2ª tentativa: BINANCE (fallback)
+                if not current_price:
+                    current_price = self._fetch_current_price_binance_fallback(symbol)
+                
                 if current_price and current_price > 0:
                     real_prices[symbol] = current_price
                     self.price_cache[symbol] = current_price
-                    print(f"🔄 BINANCE PREÇO ATUALIZADO: {symbol} = ${current_price:,.2f}")
+                    print(f"🔄 PREÇO ATUALIZADO: {symbol} = ${current_price:,.2f}")
                 else:
-                    # Se falhar, usa cache com pequena variação
+                    # Fallback inteligente baseado no cache
                     last_price = self.price_cache.get(symbol)
                     if last_price and last_price > 10:
-                        variation = random.uniform(-0.002, 0.002)
+                        variation = random.uniform(-0.001, 0.001)  # ±0.1%
                         real_prices[symbol] = round(last_price * (1 + variation), 6)
                         print(f"🔄 PREÇO CACHE: {symbol} = ${real_prices[symbol]:,.2f}")
                     else:
@@ -189,22 +258,25 @@ class DataGenerator:
         return real_prices
     
     def get_historical_data(self, symbol: str, periods: int = 100) -> List[List[float]]:
-        """Retorna dados históricos REAIS da Binance"""
+        """Retorna dados históricos REAIS da Kraken"""
         try:
-            print(f"🎯 SOLICITANDO DADOS REAIS BINANCE: {symbol}")
+            print(f"🎯 SOLICITANDO DADOS REAIS KRAKEN: {symbol}")
             
-            real_data = self._fetch_historical_data_binance(symbol, periods)
+            # Busca dados reais da Kraken
+            real_data = self._fetch_historical_data_kraken(symbol, periods)
             
             if real_data and len(real_data) >= 20:
                 print(f"✅ INDICADORES REAIS DISPONÍVEIS: {symbol}")
                 self.historical_cache[symbol] = real_data
                 return real_data
             else:
-                print(f"❌ BINANCE FALHOU - DADOS REALISTAS: {symbol}")
+                print(f"❌ KRAKEN FALHOU - DADOS REALISTAS: {symbol}")
                 
             # Fallback baseado no preço REAL atual
             current_price = self.price_cache.get(symbol, 100)
-            return self._generate_realistic_fallback(current_price, periods)
+            fallback_data = self._generate_realistic_fallback(current_price, periods)
+            print(f"📈 DADOS REALISTAS GERADOS: {symbol} baseado em ${current_price:,.2f}")
+            return fallback_data
             
         except Exception as e:
             print(f"💥 ERRO HISTÓRICOS: {symbol} - {e}")
@@ -212,17 +284,18 @@ class DataGenerator:
             return self._generate_realistic_fallback(current_price, periods)
     
     def _generate_realistic_fallback(self, base_price: float, periods: int) -> List[List[float]]:
-        """Gera dados realistas"""
+        """Gera dados realistas quando API falha"""
         candles = []
         price = base_price
         
         for i in range(periods):
             open_price = price
-            change_pct = random.gauss(0, 0.012)
+            # Variação realista do mercado crypto
+            change_pct = random.gauss(0, 0.01)  # ±1.0%
             close_price = open_price * (1 + change_pct)
-            high_price = max(open_price, close_price) * (1 + abs(random.gauss(0, 0.006)))
-            low_price = min(open_price, close_price) * (1 - abs(random.gauss(0, 0.006)))
-            volume = random.uniform(50000, 500000)
+            high_price = max(open_price, close_price) * (1 + abs(random.gauss(0, 0.005)))
+            low_price = min(open_price, close_price) * (1 - abs(random.gauss(0, 0.005)))
+            volume = random.uniform(100000, 1000000)  # Volume realista
             
             candles.append([open_price, high_price, low_price, close_price, volume])
             price = close_price
