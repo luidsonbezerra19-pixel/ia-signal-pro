@@ -1,4 +1,4 @@
-# app.py — IA EVOLUTIVA: SISTEMA DE TENDÊNCIAS AVANÇADO
+# app.py — IA EVOLUTIVA: SISTEMA DE TENDÊNCIAS CORRIGIDO
 from __future__ import annotations
 import os, time, math, random, threading, json, statistics as stats
 from typing import Any, Dict, List, Optional
@@ -779,16 +779,100 @@ class GARCHSystem:
         }
 
 # =========================
-# IA EVOLUTIVA PRINCIPAL - ATUALIZADA COM TENDÊNCIAS
+# SISTEMA DE DECISÃO INTELIGENTE - CORRIGIDO
+# =========================
+class DecisionEngine:
+    def __init__(self):
+        pass
+        
+    def make_final_decision(self, rsi: float, macd_signal: str, macd_strength: float,
+                          trend: str, trend_strength: float, trend_action: str) -> Dict:
+        """Toma decisão FINAL baseada em regras claras"""
+        
+        # REGRA 1: RSI EXTREMO + MACD CONFIRMA → AÇÃO FORTE
+        if rsi < 35 and macd_signal == 'bullish' and macd_strength > 0.3:
+            return {'direction': 'buy', 'confidence': 0.80, 'reason': 'STRONG BUY: RSI oversold + MACD confirmation'}
+        
+        if rsi > 65 and macd_signal == 'bearish' and macd_strength > 0.3:
+            return {'direction': 'sell', 'confidence': 0.80, 'reason': 'STRONG SELL: RSI overbought + MACD confirmation'}
+        
+        # REGRA 2: TENDÊNCIA FORTE + ALINHAMENTO
+        if trend == 'bullish' and trend_strength > 0.7 and rsi < 60:
+            return {'direction': 'buy', 'confidence': 0.75, 'reason': 'TREND BUY: Strong bullish trend + RSI not overbought'}
+        
+        if trend == 'bearish' and trend_strength > 0.7 and rsi > 40:
+            return {'direction': 'sell', 'confidence': 0.75, 'reason': 'TREND SELL: Strong bearish trend + RSI not oversold'}
+        
+        # REGRA 3: MOMENTUM CONFIRMADO
+        if macd_strength > 0.5 and ((macd_signal == 'bullish' and rsi < 50) or (macd_signal == 'bearish' and rsi > 50)):
+            direction = 'buy' if macd_signal == 'bullish' else 'sell'
+            return {'direction': direction, 'confidence': 0.70, 'reason': f'MOMENTUM {direction.upper()}: Strong MACD + RSI alignment'}
+        
+        # REGRA 4: PREPARAÇÃO PARA REVERSÃO
+        if trend_action == 'prepare_reversal':
+            reversal_direction = 'sell' if trend == 'bullish' else 'buy'
+            return {'direction': reversal_direction, 'confidence': 0.70, 'reason': f'REVERSAL {reversal_direction.upper()}: Trend transition detected'}
+        
+        # SE NENHUMA REGRA APLICA → HOLD
+        return {'direction': 'hold', 'confidence': 0.60, 'reason': 'No clear signal - waiting for confirmation'}
+
+    def adjust_garch_probabilities(self, rsi: float, macd_signal: str, 
+                                 trend: str, garch_probs: Dict) -> Dict:
+        """Ajusta probabilidades GARCH baseado em indicadores reais"""
+        
+        prob_buy = garch_probs['probability_buy']
+        prob_sell = garch_probs['probability_sell']
+        
+        # AJUSTES BASEADOS NO RSI (MAIS IMPORTANTE)
+        if rsi < 30:  # OVERSOLD FORTE
+            prob_buy = min(0.85, prob_buy + 0.3)
+            prob_sell = max(0.15, prob_sell - 0.3)
+        elif rsi < 35:  # OVERSOLD
+            prob_buy = min(0.75, prob_buy + 0.2) 
+            prob_sell = max(0.25, prob_sell - 0.2)
+        elif rsi > 70:  # OVERBOUGHT FORTE
+            prob_sell = min(0.85, prob_sell + 0.3)
+            prob_buy = max(0.15, prob_buy - 0.3)
+        elif rsi > 65:  # OVERBOUGHT
+            prob_sell = min(0.75, prob_sell + 0.2)
+            prob_buy = max(0.25, prob_buy - 0.2)
+        
+        # AJUSTES BASEADOS NO MACD
+        if macd_signal == 'bullish':
+            prob_buy = min(0.80, prob_buy + 0.15)
+        elif macd_signal == 'bearish':
+            prob_sell = min(0.80, prob_sell + 0.15)
+        
+        # AJUSTES BASEADOS NA TENDÊNCIA
+        if trend == 'bullish':
+            prob_buy = min(0.75, prob_buy + 0.10)
+        elif trend == 'bearish':
+            prob_sell = min(0.75, prob_sell + 0.10)
+        
+        # NORMALIZAR
+        total = prob_buy + prob_sell
+        if total > 0:
+            prob_buy = prob_buy / total
+            prob_sell = prob_sell / total
+        
+        return {
+            "probability_buy": round(prob_buy, 4),
+            "probability_sell": round(prob_sell, 4),
+            "volatility": garch_probs['volatility']
+        }
+
+# =========================
+# IA EVOLUTIVA PRINCIPAL - CORRIGIDA
 # =========================
 class EvolutionaryIntelligence:
     def __init__(self):
         self.trend_entry_system = TrendEntrySystem()
         self.indicators = TechnicalIndicators()
         self.garch = GARCHSystem()
+        self.decision_engine = DecisionEngine()
         
     def analyze_with_trend_focus(self, symbol: str, technical_data: Dict) -> Dict[str, Any]:
-        """Análise EVOLUTIVA focada em tendências"""
+        """Análise EVOLUTIVA focada em tendências - CORRIGIDA"""
         
         closes = technical_data.get('closes', [])
         current_price = technical_data.get('price', 100)
@@ -802,19 +886,34 @@ class EvolutionaryIntelligence:
         # 2. INDICADORES TÉCNICOS TRADICIONAIS
         rsi = self.indicators.rsi_wilder(closes)
         macd_result = self.indicators.macd(closes)
+        trend_result = self.indicators.calculate_trend_strength(closes)
         
         # 3. ANÁLISE PROBABILÍSTICA GARCH
         returns = self._calculate_returns(closes)
         garch_probs = self.garch.run_garch_analysis(current_price, returns)
         
-        # 4. SÍNTESE INTELIGENTE
-        return self._synthesize_comprehensive_signal(
+        # 4. CORRIGIR PROBABILIDADES GARCH
+        garch_probs = self.decision_engine.adjust_garch_probabilities(
+            rsi, macd_result['signal'], trend_result['trend'], garch_probs
+        )
+        
+        # 5. DECISÃO FINAL INTELIGENTE
+        final_decision = self.decision_engine.make_final_decision(
+            rsi, macd_result['signal'], macd_result['strength'],
+            trend_result['trend'], trend_result['strength'], 
+            trend_entry_signal.get('trend_analysis', {}).get('action', 'wait_confirm')
+        )
+        
+        # 6. SÍNTESE COMPLETA DO SINAL
+        return self._create_comprehensive_signal(
             symbol, 
-            trend_entry_signal, 
+            final_decision,
             technical_data,
             rsi, 
             macd_result, 
-            garch_probs
+            garch_probs,
+            trend_result,
+            trend_entry_signal
         )
     
     def _calculate_returns(self, prices: List[float]) -> List[float]:
@@ -825,59 +924,46 @@ class EvolutionaryIntelligence:
                 returns.append(ret)
         return returns if returns else [random.gauss(0, 0.015) for _ in range(20)]
     
-    def _synthesize_comprehensive_signal(self, symbol: str, trend_signal: Dict, 
-                                       technical_data: Dict, rsi: float, 
-                                       macd_result: Dict, garch_probs: Dict) -> Dict:
-        """Combina análise de tendência com indicadores técnicos"""
+    def _create_comprehensive_signal(self, symbol: str, final_decision: Dict, 
+                                   technical_data: Dict, rsi: float, 
+                                   macd_result: Dict, garch_probs: Dict,
+                                   trend_result: Dict, trend_signal: Dict) -> Dict:
+        """Cria sinal completo e coerente"""
         
-        # BASE: Sinal de tendência é o principal
-        direction = trend_signal['direction']
-        base_confidence = trend_signal['confidence']
-        reason = trend_signal['reason']
-        
-        # AJUSTAR COM INDICADORES TÉCNICOS
-        confidence_boost = 0.0
-        
-        # RSI confirmation
-        if ((direction == 'buy' and rsi < 40) or 
-            (direction == 'sell' and rsi > 60)):
-            confidence_boost += 0.10
-            reason += " | RSI confirmed"
-        
-        # MACD confirmation  
-        if ((direction == 'buy' and macd_result['signal'] == 'bullish') or
-            (direction == 'sell' and macd_result['signal'] == 'bearish')):
-            confidence_boost += 0.08
-            reason += " | MACD aligned"
-        
-        # GARCH probabilities
-        if ((direction == 'buy' and garch_probs['probability_buy'] > 0.6) or
-            (direction == 'sell' and garch_probs['probability_sell'] > 0.6)):
-            confidence_boost += 0.07
-            reason += " | GARCH favorable"
-        
-        final_confidence = min(0.95, base_confidence + confidence_boost)
+        current_time = datetime.now(timezone(timedelta(hours=-3))).strftime("%H:%M:%S BRT")
         
         return {
             'symbol': symbol,
-            'direction': direction,
-            'confidence': round(final_confidence, 4),
-            'reason': reason,
+            'direction': final_decision['direction'],
+            'confidence': round(final_decision['confidence'], 4),
+            'reason': final_decision['reason'],
             'rsi': round(rsi, 2),
             'macd_signal': macd_result['signal'],
             'macd_strength': macd_result['strength'],
             'probability_buy': garch_probs['probability_buy'],
             'probability_sell': garch_probs['probability_sell'],
             'price': technical_data['price'],
-            'entry_type': trend_signal.get('entry_type', 'standard'),
-            'trend_strength': trend_signal.get('trend_strength', 0.5),
-            'risk_level': trend_signal.get('risk_level', 'medium'),
+            'trend': trend_result['trend'],
+            'trend_strength': trend_result['strength'],
+            'entry_type': trend_signal.get('entry_type', 'decision_engine'),
+            'risk_level': self._calculate_risk_level(final_decision['direction'], final_decision['confidence']),
             'garch_volatility': garch_probs['volatility'],
-            'timestamp': datetime.now(timezone(timedelta(hours=-3))).strftime("%H:%M:%S BRT"),
+            'timestamp': current_time,
             'entry_time': self._calculate_entry_time(),
             'timeframe': 'T+1 (Próximo candle)',
             'trend_analysis': trend_signal.get('trend_analysis', {})
         }
+    
+    def _calculate_risk_level(self, direction: str, confidence: float) -> str:
+        """Calcula nível de risco baseado na direção e confiança"""
+        if direction == 'hold':
+            return 'none'
+        elif confidence >= 0.75:
+            return 'low'
+        elif confidence >= 0.65:
+            return 'medium'
+        else:
+            return 'high'
     
     def _calculate_entry_time(self) -> str:
         now = datetime.now(timezone(timedelta(hours=-3)))
@@ -899,8 +985,9 @@ class EvolutionaryIntelligence:
             'probability_buy': 0.5,
             'probability_sell': 0.5,
             'price': price,
-            'entry_type': 'none',
+            'trend': 'neutral',
             'trend_strength': 0.5,
+            'entry_type': 'none',
             'risk_level': 'none',
             'garch_volatility': 0.02,
             'timestamp': current_time,
@@ -930,9 +1017,7 @@ class TradingSystem:
             
             technical_data = {
                 'closes': closes,
-                'price': current_price,
-                'rsi': 50.0,  # Será calculado pela IA
-                'macd_signal': 'neutral'
+                'price': current_price
             }
             
             # ANÁLISE EVOLUTIVA COM FOCO EM TENDÊNCIAS
@@ -974,8 +1059,8 @@ class AnalysisManager:
                 signal = self.system.analyze_symbol(symbol)
                 all_signals.append(signal)
                 
-            # Ordenar por confiança e força de tendência
-            all_signals.sort(key=lambda x: (x['confidence'], x.get('trend_strength', 0)), reverse=True)
+            # Ordenar por confiança
+            all_signals.sort(key=lambda x: x['confidence'], reverse=True)
             self.current_results = all_signals
             
             if all_signals:
@@ -1011,7 +1096,7 @@ def index():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>IA Signal Pro - SISTEMA DE TENDÊNCIAS AVANÇADO</title>
+        <title>IA Signal Pro - SISTEMA DECISÓRIO CORRIGIDO</title>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
@@ -1114,6 +1199,7 @@ def index():
             .badge.trend {{ background: #1f5f4a; color: white; }}
             .badge.entry {{ background: #5f1f4a; color: white; }}
             .badge.risk {{ background: #5f4a1f; color: white; }}
+            .badge.probability {{ background: #1f4a5f; color: white; }}
             .info-line {{
                 margin: 8px 0;
                 padding: 8px;
@@ -1136,7 +1222,7 @@ def index():
                 background: #1f4a5f !important;
                 border-left: 3px solid #2aa9ff;
             }}
-            .entry-line {{
+            .decision-line {{
                 background: #4a1f5f !important;
                 border-left: 3px solid #b36bff;
             }}
@@ -1148,20 +1234,24 @@ def index():
                 background: #5b4a1f !important;
                 border-left: 3px solid #f2a93b;
             }}
+            .risk-low {{
+                background: #1f5f4a !important;
+                border-left: 3px solid #29d391;
+            }}
         </style>
     </head>
     <body>
         <div class="container">
             <div class="header">
-                <h1>🎯 IA Signal Pro - SISTEMA DE TENDÊNCIAS AVANÇADO</h1>
+                <h1>🎯 IA Signal Pro - SISTEMA DECISÓRIO CORRIGIDO</h1>
                 <div class="clock" id="currentTime">{current_time}</div>
-                <p>🚀 <strong>Análise de Tendências</strong> | ✅ Entradas a favor da tendência | 🎯 Detecção de reversões</p>
-                <p>🔧 <strong>Novo Sistema:</strong> Trend Following + Pullbacks/Rallies + Alertas de Reversão</p>
+                <p>🚀 <strong>Decisões Inteligentes</strong> | ✅ Probabilidades Ajustadas | 🎯 Menos "Hold"</p>
+                <p>🔧 <strong>Correções:</strong> Regras claras de decisão + GARCH ajustado + Conflitos resolvidos</p>
             </div>
             
             <div class="controls">
                 <div class="symbols-selection">
-                    <h3>📈 Selecione os Ativos para Análise de Tendências:</h3>
+                    <h3>📈 Selecione os Ativos para Análise Corrigida:</h3>
                     <div class="symbols-grid" id="symbolsGrid">
                         <div class="symbol-checkbox">
                             <input type="checkbox" id="BTC-USDT" checked>
@@ -1190,20 +1280,20 @@ def index():
                     </div>
                 </div>
                 
-                <button onclick="runAnalysis()" id="analyzeBtn">🎯 Analisar Tendências (T+1)</button>
+                <button onclick="runAnalysis()" id="analyzeBtn">🎯 Analisar com Decisões Inteligentes</button>
                 <button onclick="checkStatus()">📊 Status do Sistema</button>
                 <div id="status" class="status info">
-                    ⏰ Hora atual: {current_time} | ✅ Sistema de Tendências Online
+                    ⏰ Hora atual: {current_time} | ✅ Sistema Decisório Corrigido Online
                 </div>
             </div>
             
             <div id="bestSignal" style="display: none;">
-                <h2>🥇 MELHOR OPORTUNIDADE - ANÁLISE DE TENDÊNCIA</h2>
+                <h2>🥇 MELHOR OPORTUNIDADE - DECISÃO INTELIGENTE</h2>
                 <div id="bestCard"></div>
             </div>
             
             <div id="allSignals" style="display: none;">
-                <h2>📊 TODOS OS SINAIS - SISTEMA DE TENDÊNCIAS</h2>
+                <h2>📊 TODOS OS SINAIS - SISTEMA CORRIGIDO</h2>
                 <div class="results" id="resultsGrid"></div>
             </div>
         </div>
@@ -1246,7 +1336,7 @@ def index():
 
                 const analyzeBtn = document.getElementById('analyzeBtn');
                 analyzeBtn.disabled = true;
-                analyzeBtn.textContent = '🎯 Analisando Tendências...';
+                analyzeBtn.textContent = '🎯 Analisando com Decisões Inteligentes...';
 
                 try {{
                     const response = await fetch('/analyze', {{
@@ -1273,7 +1363,7 @@ def index():
                         '<div class="status error">💥 Erro de conexão: ' + error.message + '</div>';
                 }} finally {{
                     analyzeBtn.disabled = false;
-                    analyzeBtn.textContent = '🎯 Analisar Tendências (T+1)';
+                    analyzeBtn.textContent = '🎯 Analisar com Decisões Inteligentes';
                 }}
             }}
 
@@ -1320,13 +1410,7 @@ def index():
                     signal.price.toLocaleString('pt-BR', {{ style: 'currency', currency: 'USD' }}) : 
                     '$' + signal.price;
                 
-                const riskClass = signal.risk_level === 'high' ? 'risk-high' : 
-                                signal.risk_level === 'medium' ? 'risk-medium' : '';
-                
-                // Informações de tendência
-                const trendAnalysis = signal.trend_analysis || {{}};
-                const primaryTrend = trendAnalysis.primary_trend || 'neutral';
-                const trendAction = trendAnalysis.action || 'wait_confirm';
+                const riskClass = 'risk-' + signal.risk_level;
                 
                 return `<div class="signal-card ${{directionClass}} ${{isBest ? 'best-card' : ''}}">
                     <h3>${{directionEmoji}} ${{signal.symbol}} ${{isBest ? '🏆' : ''}}</h3>
@@ -1334,22 +1418,20 @@ def index():
                         <span class="badge ${{directionClass}}">${{signal.direction.toUpperCase()}}</span>
                         <span class="badge confidence">${{confidencePercent}}% Confiança</span>
                         <span class="badge trend">${{trendStrengthPercent}}% Força Trend</span>
-                        <span class="badge entry">${{signal.entry_type}}</span>
-                        <span class="badge risk">Risk: ${{signal.risk_level}}</span>
+                        <span class="badge probability">COMPRA ${{(signal.probability_buy * 100).toFixed(1)}}%</span>
                     </div>
                     <div class="info-line"><strong>🎯 Entrada:</strong> ${{signal.entry_time}}</div>
                     <div class="info-line"><strong>💰 Preço Atual:</strong> ${{priceFormatted}}</div>
                     <div class="info-line trend-line">
-                        <strong>📊 Tendência:</strong> ${{primaryTrend}} | ${{trendAction}}
+                        <strong>📊 Tendência:</strong> ${{signal.trend}} | <strong>MACD:</strong> ${{signal.macd_signal}} (${{(signal.macd_strength * 100).toFixed(1)}}%)
                     </div>
                     <div class="info-line ${{riskClass}}">
                         <strong>🎯 Tipo Entrada:</strong> ${{signal.entry_type}} | <strong>Risk:</strong> ${{signal.risk_level}}
                     </div>
-                    <div class="info-line"><strong>📈 Probabilidade:</strong> COMPRA ${{(signal.probability_buy * 100).toFixed(1)}}% | VENDA ${{(signal.probability_sell * 100).toFixed(1)}}%</div>
-                    <div class="info-line"><strong>📊 RSI:</strong> ${{signal.rsi}}</div>
-                    <div class="info-line"><strong>🔍 MACD:</strong> ${{signal.macd_signal}} (${{(signal.macd_strength * 100).toFixed(1)}}%)</div>
+                    <div class="info-line"><strong>📈 RSI:</strong> ${{signal.rsi}} ${{signal.rsi < 35 ? '(OVERSOLD)' : signal.rsi > 65 ? '(OVERBOUGHT)' : ''}}</div>
+                    <div class="info-line"><strong>📊 Probabilidade VENDA:</strong> ${{(signal.probability_sell * 100).toFixed(1)}}%</div>
                     <div class="info-line"><strong>🎲 Volatilidade GARCH:</strong> ${{(signal.garch_volatility * 100).toFixed(3)}}%</div>
-                    <div class="info-line entry-line"><strong>🚀 Estratégia:</strong> ${{signal.reason}}</div>
+                    <div class="info-line decision-line"><strong>🚀 Decisão:</strong> ${{signal.reason}}</div>
                     <div class="info-line"><strong>⏰ Análise:</strong> ${{signal.timestamp}}</div>
                 </div>`;
             }}
@@ -1360,7 +1442,7 @@ def index():
                     const status = await response.json();
                     
                     let statusHtml = '<div class="status info">' +
-                        '<strong>🎯 Status do Sistema de Tendências:</strong><br>' +
+                        '<strong>🎯 Status do Sistema Corrigido:</strong><br>' +
                         '⏰ Hora: ' + status.current_time + '<br>' +
                         '🔄 Analisando: ' + (status.is_analyzing ? 'Sim' : 'Não') + '<br>' +
                         '📈 Resultados: ' + status.results_count + ' sinais<br>' +
@@ -1397,7 +1479,7 @@ def analyze():
         
         return jsonify({
             'success': True,
-            'message': f'Análise de tendências iniciada para {len(symbols)} ativos.'
+            'message': f'Análise com sistema decisório corrigido iniciada para {len(symbols)} ativos.'
         })
         
     except Exception as e:
@@ -1443,9 +1525,9 @@ def get_status():
         return jsonify({'error': str(e)})
 
 if __name__ == '__main__':
-    print("🎯 IA Signal Pro - SISTEMA DE TENDÊNCIAS AVANÇADO")
-    print("🚀 Sistema Atualizado: Análise de Tendências + Entradas Inteligentes")
-    print("✅ Novos Recursos: Trend Following + Pullbacks/Rallies + Alertas de Reversão")
+    print("🎯 IA Signal Pro - SISTEMA DECISÓRIO CORRIGIDO")
+    print("🚀 Sistema Atualizado: Decisões Inteligentes + Probabilidades Ajustadas")
+    print("✅ Correções Aplicadas: Regras claras + GARCH corrigido + Conflitos resolvidos")
     print("📊 Ativos padrão:", DEFAULT_SYMBOLS)
     print("🌐 Servidor iniciando na porta 8080...")
     
