@@ -7,7 +7,7 @@ import time
 
 # Configuração da página
 st.set_page_config(
-    page_title="Sinais de Trading - IA Simplificada",
+    page_title="Sinais Trading - IA Direta",
     page_icon="📈",
     layout="wide"
 )
@@ -30,7 +30,7 @@ st.markdown("""
         margin: 10px 0;
         text-align: center;
         font-weight: bold;
-        font-size: 1.3rem;
+        font-size: 1.4rem;
     }
     .signal-sell {
         background-color: #FFCDD2;
@@ -40,7 +40,7 @@ st.markdown("""
         margin: 10px 0;
         text-align: center;
         font-weight: bold;
-        font-size: 1.3rem;
+        font-size: 1.4rem;
     }
     .asset-card {
         padding: 20px;
@@ -55,6 +55,15 @@ st.markdown("""
     }
     .price-down {
         color: #F44336;
+        font-weight: bold;
+    }
+    .update-btn {
+        background-color: #1E88E5;
+        color: white;
+        border: none;
+        padding: 12px 24px;
+        border-radius: 8px;
+        font-size: 1.1rem;
         font-weight: bold;
     }
 </style>
@@ -96,7 +105,8 @@ class TradingSignalAI:
         ema26 = self.calculate_ema(prices, 26)
         macd = ema12 - ema26
         signal = macd.ewm(span=9, adjust=False).mean()
-        return macd.iloc[-1], signal.iloc[-1]
+        histogram = macd - signal
+        return macd.iloc[-1], signal.iloc[-1], histogram.iloc[-1]
 
     def calculate_rsi(self, prices, period=14):
         """Calcula RSI"""
@@ -128,49 +138,54 @@ class TradingSignalAI:
             return "NEUTRO"
 
     def generate_signal(self, pair):
-        """Gera sinal COMPRAR ou VENDER - LÓGICA SIMPLES"""
+        """Gera sinal COMPRAR ou VENDER - LÓGICA DIRETA"""
         try:
             df = self.get_ohlc_data(pair)
             if df is None or len(df) < 50:
-                return "ERRO", 0, 0, 0, 0, "ERRO"
+                return "ERRO", 0, 0, 0, 0, 0, "ERRO"
             
             prices = df['close']
             current_price = prices.iloc[-1]
             previous_price = prices.iloc[-2] if len(prices) > 1 else current_price
             
             # Calcula indicadores
-            macd, signal = self.calculate_macd(prices)
+            macd, signal, histogram = self.calculate_macd(prices)
             rsi = self.calculate_rsi(prices)
             trend = self.analyze_trend(prices)
             
-            # LÓGICA ULTRA SIMPLES E INTELIGENTE
-            # MACD: Sinal mais forte
-            macd_signal = "COMPRAR" if macd > signal else "VENDER"
+            # LÓGICA ULTRA SIMPLES - APENAS COMPRAR OU VENDER
+            buy_signals = 0
+            sell_signals = 0
             
-            # RSI: Confirmação
-            rsi_signal = "COMPRAR" if rsi < 35 else "VENDER" if rsi > 65 else "NEUTRO"
+            # MACD (Sinal Principal)
+            if macd > signal and histogram > 0:
+                buy_signals += 2
+            elif macd < signal and histogram < 0:
+                sell_signals += 2
             
-            # Tendência: Contexto
-            trend_signal = "COMPRAR" if trend == "ALTA" else "VENDER" if trend == "BAIXA" else "NEUTRO"
+            # RSI (Confirmação)
+            if rsi < 35:
+                buy_signals += 1
+            elif rsi > 65:
+                sell_signals += 1
             
-            # Decisão FINAL (maioria dos sinais)
-            signals = [macd_signal, rsi_signal, trend_signal]
-            buy_count = signals.count("COMPRAR")
-            sell_count = signals.count("VENDER")
+            # Tendência (Contexto)
+            if trend == "ALTA":
+                buy_signals += 1
+            elif trend == "BAIXA":
+                sell_signals += 1
             
-            if buy_count >= 2:
-                return "COMPRAR", current_price, current_price - previous_price, rsi, macd, trend
-            elif sell_count >= 2:
-                return "VENDER", current_price, current_price - previous_price, rsi, macd, trend
+            # DECISÃO FINAL
+            if buy_signals > sell_signals:
+                return "COMPRAR", current_price, current_price - previous_price, rsi, macd, histogram, trend
             else:
-                # Se empate, segue o MACD (sinal principal)
-                return macd_signal, current_price, current_price - previous_price, rsi, macd, trend
+                return "VENDER", current_price, current_price - previous_price, rsi, macd, histogram, trend
                 
         except Exception as e:
-            return "ERRO", 0, 0, 0, 0, f"ERRO"
+            return "ERRO", 0, 0, 0, 0, 0, f"ERRO"
 
 def main():
-    st.markdown('<div class="main-header">🚀 SINAIS DE TRADING - IA SIMPLIFICADA</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">🚀 SINAIS TRADING - IA DIRETA</div>', unsafe_allow_html=True)
     
     # Inicializa a IA
     ai = TradingSignalAI()
@@ -185,44 +200,39 @@ def main():
     
     # Analisa cada ativo
     for asset in ASSETS:
-        with st.spinner(f"Analisando {asset}..."):
-            signal, price, change, rsi, macd, trend = ai.generate_signal(asset)
-            
-            # Layout do card
-            col1, col2 = st.columns([3, 2])
-            
-            with col1:
-                # Informações do ativo
-                price_class = "price-up" if change >= 0 else "price-down"
-                change_symbol = "↗" if change >= 0 else "↘"
-                change_percent = (change / price) * 100 if price > 0 else 0
-                
-                st.markdown(f"""
-                <div class="asset-card">
-                    <h3>{asset}</h3>
-                    <p><span class="{price_class}">${price:,.2f} {change_symbol} ({change_percent:+.2f}%)</span></p>
-                    <p><strong>RSI:</strong> {rsi:.1f} | <strong>MACD:</strong> {macd:.4f} | <strong>Tendência:</strong> {trend}</p>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            with col2:
-                # Sinal
-                if signal == "COMPRAR":
-                    st.markdown('<div class="signal-buy">🎯 COMPRAR</div>', unsafe_allow_html=True)
-                elif signal == "VENDER":
-                    st.markdown('<div class="signal-sell">🎯 VENDER</div>', unsafe_allow_html=True)
-                else:
-                    st.markdown('<div style="background-color: #FFE0B2; padding: 20px; border-radius: 10px; border: 3px solid #FF9800; margin: 10px 0; text-align: center; font-weight: bold; font-size: 1.3rem;">⚠️ AGUARDAR</div>', unsafe_allow_html=True)
+        signal, price, change, rsi, macd, histogram, trend = ai.generate_signal(asset)
         
+        # Layout do card
+        col1, col2 = st.columns([3, 2])
+        
+        with col1:
+            # Informações do ativo
+            price_class = "price-up" if change >= 0 else "price-down"
+            change_symbol = "↗" if change >= 0 else "↘"
+            change_percent = (change / price) * 100 if price > 0 else 0
+            
+            st.markdown(f"""
+            <div class="asset-card">
+                <h3>{asset}</h3>
+                <p><span class="{price_class}">${price:,.2f} {change_symbol} ({change_percent:+.2f}%)</span></p>
+                <p><strong>RSI:</strong> {rsi:.1f} | <strong>MACD:</strong> {macd:.4f}</p>
+                <p><strong>Histograma:</strong> {histogram:.4f} | <strong>Tendência:</strong> {trend}</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            # Sinal PRINCIPAL
+            if signal == "COMPRAR":
+                st.markdown('<div class="signal-buy">🎯 COMPRAR</div>', unsafe_allow_html=True)
+            elif signal == "VENDER":
+                st.markdown('<div class="signal-sell">🎯 VENDER</div>', unsafe_allow_html=True)
+            else:
+                st.markdown('<div style="background-color: #FFE0B2; padding: 20px; border-radius: 10px; border: 3px solid #FF9800; margin: 10px 0; text-align: center; font-weight: bold; font-size: 1.4rem;">⚠️ ERRO</div>', unsafe_allow_html=True)
+    
         st.markdown("---")
     
-    # Informações
-    st.markdown("""
-    **🎯 SISTEMA DE SINAIS SIMPLIFICADO:**
-    - **COMPRAR**: Condições favoráveis para entrada comprada
-    - **VENDER**: Condições favoráveis para entrada vendida
-    - **Lógica**: Análise combinada de MACD, RSI e Tendência
-    """)
+    # Timestamp
+    st.markdown(f"<small>Última atualização: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}</small>", unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
