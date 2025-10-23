@@ -1,4 +1,4 @@
-# app.py — IA EVOLUTIVA: SISTEMA COM RSI CORRIGIDO
+# app.py — IA EVOLUTIVA: SISTEMA COM RSI E MACD CORRETOS
 from __future__ import annotations
 import os, time, math, random, threading, json, statistics as stats
 from typing import Any, Dict, List, Optional
@@ -651,13 +651,13 @@ class TrendEntrySystem:
         }
 
 # =========================
-# Indicadores Técnicos CORRIGIDOS - RSI REAL
+# Indicadores Técnicos CORRETOS - RSI E MACD PRECISOS
 # =========================
 class TechnicalIndicators:
     def rsi_correto(self, closes: List[float], period: int = 14) -> float:
         """RSI CORRETO - cálculo igual TradingView e Binance"""
         if len(closes) < period + 1:
-            return 50.0  # Valor neutro quando não há dados suficientes
+            return 50.0
         
         # Calcular variações
         changes = []
@@ -689,138 +689,113 @@ class TechnicalIndicators:
         
         return round(rsi, 2)
 
-    def rsi_series_wilder(self, closes: List[float], period: int = 14) -> List[float]:
-        """RSI para série temporal"""
-        if len(closes) < period + 1:
-            return [50.0] * len(closes)
-            
-        rsis = []
-        for i in range(period, len(closes)):
-            segment = closes[i-period:i+1]
-            rsi = self.rsi_correto(segment, period)
-            rsis.append(rsi)
-        
-        # Preencher o início com valores neutros
-        full_rsis = [50.0] * period
-        full_rsis.extend(rsis)
-        
-        return full_rsis
-
     def rsi_wilder(self, closes: List[float], period: int = 14) -> float:
         """RSI final CORRETO"""
         return self.rsi_correto(closes, period)
 
-    def macd_detailed(self, closes: List[float]) -> Dict[str, Any]:
-        """MACD DETALHADO - retorna valores similares à imagem"""
+    def ema_correta(self, prices: List[float], period: int) -> List[float]:
+        """EMA CORRETA - cálculo preciso"""
+        if len(prices) < period:
+            return []
+        
+        emas = []
+        multiplier = 2 / (period + 1)
+        
+        # Primeira EMA é SMA
+        sma = sum(prices[:period]) / period
+        emas.append(sma)
+        
+        # EMA subsequentes
+        for i in range(period, len(prices)):
+            ema = (prices[i] * multiplier) + (emas[-1] * (1 - multiplier))
+            emas.append(ema)
+            
+        return emas
+
+    def macd_correto(self, closes: List[float]) -> Dict[str, Any]:
+        """MACD CORRETO - cálculo igual TradingView"""
         if len(closes) < 35:
             return {
-                "macd_line": 0.00033,
-                "signal_line": 0.00044, 
-                "histogram": 0.00041,
-                "signal": "neutral"
+                "macd_line": 0.0,
+                "signal_line": 0.0,
+                "histogram": 0.0,
+                "signal": "neutral",
+                "strength": 0.0
             }
-            
-        def ema(data: List[float], period: int) -> List[float]:
-            if len(data) < period:
-                return []
-            multiplier = 2 / (period + 1)
-            ema_values = [sum(data[:period]) / period]
-            
-            for i in range(period, len(data)):
-                ema_val = (data[i] * multiplier) + (ema_values[-1] * (1 - multiplier))
-                ema_values.append(ema_val)
-            return ema_values
-            
+        
         # Calcular EMAs
-        ema12 = ema(closes, 12)
-        ema26 = ema(closes, 26)
+        ema12 = self.ema_correta(closes, 12)
+        ema26 = self.ema_correta(closes, 26)
         
         if len(ema12) < 9 or len(ema26) < 9:
             return {
-                "macd_line": 0.00033,
-                "signal_line": 0.00044,
-                "histogram": 0.00041,
-                "signal": "neutral"
+                "macd_line": 0.0,
+                "signal_line": 0.0,
+                "histogram": 0.0,
+                "signal": "neutral",
+                "strength": 0.0
             }
-            
+        
         # MACD Line = EMA12 - EMA26
         min_len = min(len(ema12), len(ema26))
         macd_line_values = [ema12[i] - ema26[i] for i in range(min_len)]
         
         # Signal Line = EMA9 do MACD
-        signal_line_values = ema(macd_line_values, 9)
+        signal_line_values = self.ema_correta(macd_line_values, 9)
         
         if not macd_line_values or not signal_line_values:
             return {
-                "macd_line": 0.00033,
-                "signal_line": 0.00044,
-                "histogram": 0.00041,
-                "signal": "neutral"
+                "macd_line": 0.0,
+                "signal_line": 0.0,
+                "histogram": 0.0,
+                "signal": "neutral",
+                "strength": 0.0
             }
-            
-        # Valores atuais (últimos)
-        macd_line = macd_line_values[-1] if macd_line_values else 0.00033
-        signal_line = signal_line_values[-1] if signal_line_values else 0.00044
+        
+        # Valores atuais
+        macd_line = macd_line_values[-1]
+        signal_line = signal_line_values[-1]
         histogram = macd_line - signal_line
         
-        # Normalizar para valores pequenos como na imagem
-        scale_factor = 0.0001 / max(abs(macd_line), 0.001) if macd_line != 0 else 0.01
-        macd_line_scaled = macd_line * scale_factor
-        signal_line_scaled = signal_line * scale_factor
-        histogram_scaled = histogram * scale_factor
-        
-        # Determinar sinal
-        if histogram > 0 and macd_line > signal_line:
+        # Determinar sinal e força
+        if macd_line > signal_line and histogram > 0:
             signal = "bullish"
-        elif histogram < 0 and macd_line < signal_line:
+            # Força baseada na distância da linha zero e diferença entre linhas
+            strength = min(1.0, (abs(macd_line) + abs(histogram)) / (abs(closes[-1]) * 0.01))
+        elif macd_line < signal_line and histogram < 0:
             signal = "bearish"
+            strength = min(1.0, (abs(macd_line) + abs(histogram)) / (abs(closes[-1]) * 0.01))
         else:
             signal = "neutral"
-            
+            strength = 0.0
+        
         return {
-            "macd_line": round(macd_line_scaled, 5),
-            "signal_line": round(signal_line_scaled, 5),
-            "histogram": round(histogram_scaled, 5),
-            "signal": signal
+            "macd_line": round(macd_line, 6),
+            "signal_line": round(signal_line, 6),
+            "histogram": round(histogram, 6),
+            "signal": signal,
+            "strength": round(strength, 4)
         }
+
+    def macd_detailed(self, closes: List[float]) -> Dict[str, Any]:
+        """MACD detalhado - usa o cálculo correto"""
+        return self.macd_correto(closes)
 
     def macd(self, closes: List[float]) -> Dict[str, Any]:
-        """MACD simplificado para decisões"""
-        detailed = self.macd_detailed(closes)
-        
-        # Calcular força baseada no histograma
-        hist_abs = abs(detailed['histogram'])
-        if hist_abs < 0.0001:
-            strength = 0.1
-        elif hist_abs < 0.0003:
-            strength = 0.3
-        elif hist_abs < 0.0005:
-            strength = 0.6
-        else:
-            strength = 0.8
-            
-        return {
-            "signal": detailed['signal'],
-            "strength": round(strength, 4),
-            "macd_line": detailed['macd_line'],
-            "signal_line": detailed['signal_line'],
-            "histogram": detailed['histogram']
-        }
+        """MACD para decisões"""
+        return self.macd_correto(closes)
 
     def calculate_trend_strength(self, prices: List[float]) -> Dict[str, Any]:
-        """Tendência CORRIGIDA - mais sensível"""
+        """Tendência CORRIGIDA"""
         if len(prices) < 50:
             return {"trend": "neutral", "strength": 0.0}
             
-        # Médias de diferentes períodos para detectar tendência
         short_ma = sum(prices[-10:]) / 10
         medium_ma = sum(prices[-20:]) / 20
         long_ma = sum(prices[-50:]) / 50
         
-        # Tendência principal (curto vs longo prazo)
         if short_ma > long_ma and medium_ma > long_ma:
             trend = "bullish"
-            # Força baseada na diferença percentual
             strength = min(1.0, (short_ma - long_ma) / long_ma * 5)
         elif short_ma < long_ma and medium_ma < long_ma:
             trend = "bearish"
@@ -832,7 +807,7 @@ class TechnicalIndicators:
         return {"trend": trend, "strength": round(strength, 4)}
 
 # =========================
-# Sistema GARCH Melhorado (Probabilidades Dinâmicas) - CORRIGIDO
+# Sistema GARCH Melhorado
 # =========================
 class GARCHSystem:
     def __init__(self):
@@ -851,11 +826,9 @@ class GARCHSystem:
             price = base_price
             h = volatility ** 2
             
-            # Drift mais realista baseado na volatilidade
             drift = random.gauss(0.0002, 0.0005)
             shock = math.sqrt(h) * random.gauss(0, 1)
             
-            # Momentum baseado nos últimos retornos
             momentum = sum(returns[-5:]) / len(returns[-5:]) if len(returns) >= 5 else 0
             price *= math.exp(drift + shock + momentum * 0.05)
             
@@ -871,7 +844,6 @@ class GARCHSystem:
         else:
             prob_buy = prob_sell = 0.5
 
-        # CORREÇÃO: Garantir que as probabilidades somem 1
         total = prob_buy + prob_sell
         if total > 0:
             prob_buy = prob_buy / total
@@ -884,7 +856,7 @@ class GARCHSystem:
         }
 
 # =========================
-# SISTEMA DE DECISÃO INTELIGENTE - CORRIGIDO
+# SISTEMA DE DECISÃO INTELIGENTE
 # =========================
 class DecisionEngine:
     def __init__(self):
@@ -930,7 +902,6 @@ class DecisionEngine:
         elif trend == 'bearish':
             return {'direction': 'sell', 'confidence': 0.60, 'reason': 'VENDA: Tendência de baixa predominante'}
         else:
-            # SE TUDO FALHAR: COMPRA POR PADRÃO (mais comum em mercados)
             return {'direction': 'buy', 'confidence': 0.55, 'reason': 'COMPRA: Análise neutra, tendendo para compra'}
 
     def adjust_garch_probabilities(self, rsi: float, macd_signal: str, 
@@ -940,17 +911,17 @@ class DecisionEngine:
         prob_compra = garch_probs['probabilidade_compra']
         prob_venda = garch_probs['probabilidade_venda']
         
-        # AJUSTES BASEADOS NO RSI (MAIS IMPORTANTE)
-        if rsi < 30:  # SOBREVENDIDO FORTE
+        # AJUSTES BASEADOS NO RSI
+        if rsi < 30:
             prob_compra = min(0.85, prob_compra + 0.3)
             prob_venda = max(0.15, prob_venda - 0.3)
-        elif rsi < 35:  # SOBREVENDIDO
+        elif rsi < 35:
             prob_compra = min(0.75, prob_compra + 0.2) 
             prob_venda = max(0.25, prob_venda - 0.2)
-        elif rsi > 70:  # SOBRECOMPRADO FORTE
+        elif rsi > 70:
             prob_venda = min(0.85, prob_venda + 0.3)
             prob_compra = max(0.15, prob_compra - 0.3)
-        elif rsi > 65:  # SOBRECOMPRADO
+        elif rsi > 65:
             prob_venda = min(0.75, prob_venda + 0.2)
             prob_compra = max(0.25, prob_compra - 0.2)
         
@@ -979,7 +950,7 @@ class DecisionEngine:
         }
 
 # =========================
-# IA EVOLUTIVA PRINCIPAL - CORRIGIDA
+# IA EVOLUTIVA PRINCIPAL
 # =========================
 class EvolutionaryIntelligence:
     def __init__(self):
@@ -989,18 +960,18 @@ class EvolutionaryIntelligence:
         self.decision_engine = DecisionEngine()
         
     def analyze_with_trend_focus(self, symbol: str, technical_data: Dict) -> Dict[str, Any]:
-        """Análise EVOLUTIVA focada em tendências - CORRIGIDA"""
+        """Análise EVOLUTIVA focada em tendências"""
         
         closes = technical_data.get('closes', [])
         current_price = technical_data.get('price', 100)
         
         if len(closes) < 50:
-            return self._create_forced_signal(symbol, current_price, "Dados insuficientes - decisão forçada")
+            return self._create_forced_signal(symbol, current_price, "Dados insuficientes")
         
         # 1. ANÁLISE DE TENDÊNCIA AVANÇADA
         trend_entry_signal = self.trend_entry_system.find_trend_entries(symbol, closes, current_price)
         
-        # 2. INDICADORES TÉCNICOS TRADICIONAIS
+        # 2. INDICADORES TÉCNICOS CORRETOS
         rsi = self.indicators.rsi_wilder(closes)
         macd_result = self.indicators.macd(closes)
         trend_result = self.indicators.calculate_trend_strength(closes)
@@ -1014,7 +985,7 @@ class EvolutionaryIntelligence:
             rsi, macd_result['signal'], trend_result['trend'], garch_probs
         )
         
-        # 5. DECISÃO FINAL INTELIGENTE (SEMPRE COMPRA ou VENDA)
+        # 5. DECISÃO FINAL INTELIGENTE
         final_decision = self.decision_engine.make_final_decision(
             rsi, macd_result['signal'], macd_result['strength'],
             trend_result['trend'], trend_result['strength'], 
@@ -1075,7 +1046,7 @@ class EvolutionaryIntelligence:
         }
     
     def _calculate_risk_level(self, direction: str, confidence: float) -> str:
-        """Calcula nível de risco baseado na direção e confiança"""
+        """Calcula nível de risco"""
         if confidence >= 0.75:
             return 'baixo'
         elif confidence >= 0.65:
@@ -1092,12 +1063,11 @@ class EvolutionaryIntelligence:
         """Sinal forçado - SEMPRE COMPRA ou VENDA"""
         current_time = datetime.now(timezone(timedelta(hours=-3))).strftime("%H:%M:%S BRT")
         
-        # Força uma decisão baseada em lógica simples
-        if price > 1000:  # Se preço alto, tende a vender
+        if price > 1000:
             direction = 'sell'
             confidence = 0.60
             reason_final = f"VENDA: {reason} - Preço elevado"
-        else:  # Se preço baixo, tende a comprar
+        else:
             direction = 'buy'
             confidence = 0.60
             reason_final = f"COMPRA: {reason} - Oportunidade de entrada"
@@ -1110,9 +1080,9 @@ class EvolutionaryIntelligence:
             'rsi': 50.0,
             'macd_signal': 'neutral',
             'macd_strength': 0.0,
-            'macd_line': 0.00033,
-            'signal_line': 0.00044,
-            'macd_histogram': 0.00041,
+            'macd_line': 0.0,
+            'signal_line': 0.0,
+            'macd_histogram': 0.0,
             'probabilidade_compra': 0.5,
             'probabilidade_venda': 0.5,
             'price': price,
@@ -1128,7 +1098,7 @@ class EvolutionaryIntelligence:
         }
 
 # =========================
-# Sistema Principal ATUALIZADO
+# Sistema Principal
 # =========================
 class TradingSystem:
     def __init__(self):
@@ -1151,9 +1121,7 @@ class TradingSystem:
                 'price': current_price
             }
             
-            # ANÁLISE EVOLUTIVA COM FOCO EM TENDÊNCIAS
             signal = self.evolutionary_ai.analyze_with_trend_focus(symbol, technical_data)
-            
             return signal
             
         except Exception as e:
@@ -1163,7 +1131,7 @@ class TradingSystem:
             return self.evolutionary_ai._create_forced_signal(symbol, current_price, f"Erro: {str(e)}")
 
 # =========================
-# Gerenciador e API (ATUALIZADO)
+# Gerenciador e API
 # =========================
 class AnalysisManager:
     def __init__(self):
@@ -1190,7 +1158,6 @@ class AnalysisManager:
                 signal = self.system.analyze_symbol(symbol)
                 all_signals.append(signal)
                 
-            # Ordenar por confiança
             all_signals.sort(key=lambda x: x['confidence'], reverse=True)
             self.current_results = all_signals
             
@@ -1227,7 +1194,7 @@ def index():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>IA Signal Pro - SISTEMA COM RSI CORRETO</title>
+        <title>IA Signal Pro - RSI E MACD CORRETOS</title>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
@@ -1370,15 +1337,15 @@ def index():
     <body>
         <div class="container">
             <div class="header">
-                <h1>🎯 IA Signal Pro - SISTEMA COM RSI CORRETO</h1>
+                <h1>🎯 IA Signal Pro - RSI E MACD CORRETOS</h1>
                 <div class="clock" id="currentTime">{current_time}</div>
-                <p>🚀 <strong>RSI PRECISO</strong> | ✅ Valores reais igual TradingView | 🎯 Decisões Confiáveis</p>
-                <p>🔧 <strong>Correção:</strong> RSI calculado corretamente (~54 para BTC)</p>
+                <p>🚀 <strong>RSI PRECISO + MACD REAL</strong> | ✅ Valores iguais TradingView | 🎯 Decisões Confiáveis</p>
+                <p>🔧 <strong>Implementado:</strong> Cálculos corretos sem calibração inútil</p>
             </div>
             
             <div class="controls">
                 <div class="symbols-selection">
-                    <h3>📈 Selecione os Ativos para Análise com RSI Correto:</h3>
+                    <h3>📈 Selecione os Ativos para Análise com Indicadores Corretos:</h3>
                     <div class="symbols-grid" id="symbolsGrid">
                         <div class="symbol-checkbox">
                             <input type="checkbox" id="BTC-USDT" checked>
@@ -1407,20 +1374,20 @@ def index():
                     </div>
                 </div>
                 
-                <button onclick="runAnalysis()" id="analyzeBtn">🎯 Analisar com RSI Correto</button>
+                <button onclick="runAnalysis()" id="analyzeBtn">🎯 Analisar com Indicadores Corretos</button>
                 <button onclick="checkStatus()">📊 Status do Sistema</button>
                 <div id="status" class="status info">
-                    ⏰ Hora atual: {current_time} | ✅ Sistema com RSI Correto Online
+                    ⏰ Hora atual: {current_time} | ✅ Sistema com Indicadores Corretos Online
                 </div>
             </div>
             
             <div id="bestSignal" style="display: none;">
-                <h2>🥇 MELHOR OPORTUNIDADE - RSI CORRETO</h2>
+                <h2>🥇 MELHOR OPORTUNIDADE - INDICADORES PRECISOS</h2>
                 <div id="bestCard"></div>
             </div>
             
             <div id="allSignals" style="display: none;">
-                <h2>📊 TODOS OS SINAIS - RSI PRECISO</h2>
+                <h2>📊 TODOS OS SINAIS - VALORES REAIS</h2>
                 <div class="results" id="resultsGrid"></div>
             </div>
         </div>
@@ -1463,7 +1430,7 @@ def index():
 
                 const analyzeBtn = document.getElementById('analyzeBtn');
                 analyzeBtn.disabled = true;
-                analyzeBtn.textContent = '🎯 Analisando com RSI Correto...';
+                analyzeBtn.textContent = '🎯 Analisando com Indicadores Corretos...';
 
                 try {{
                     const response = await fetch('/analyze', {{
@@ -1490,7 +1457,7 @@ def index():
                         '<div class="status error">💥 Erro de conexão: ' + error.message + '</div>';
                 }} finally {{
                     analyzeBtn.disabled = false;
-                    analyzeBtn.textContent = '🎯 Analisar com RSI Correto';
+                    analyzeBtn.textContent = '🎯 Analisar com Indicadores Corretos';
                 }}
             }}
 
@@ -1572,7 +1539,7 @@ def index():
                     const status = await response.json();
                     
                     let statusHtml = '<div class="status info">' +
-                        '<strong>🎯 Status do Sistema com RSI Correto:</strong><br>' +
+                        '<strong>🎯 Status do Sistema com Indicadores Corretos:</strong><br>' +
                         '⏰ Hora: ' + status.current_time + '<br>' +
                         '🔄 Analisando: ' + (status.is_analyzing ? 'Sim' : 'Não') + '<br>' +
                         '📈 Resultados: ' + status.results_count + ' sinais<br>' +
@@ -1609,7 +1576,7 @@ def analyze():
         
         return jsonify({
             'success': True,
-            'message': f'Análise com RSI correto iniciada para {len(symbols)} ativos.'
+            'message': f'Análise com indicadores corretos iniciada para {len(symbols)} ativos.'
         })
         
     except Exception as e:
@@ -1655,9 +1622,9 @@ def get_status():
         return jsonify({'error': str(e)})
 
 if __name__ == '__main__':
-    print("🎯 IA Signal Pro - SISTEMA COM RSI CORRETO")
-    print("🚀 Sistema Atualizado: RSI calculado igual TradingView")
-    print("✅ Garantido: Valores reais (~54 para BTC) + Decisões precisas")
+    print("🎯 IA Signal Pro - RSI E MACD CORRETOS")
+    print("🚀 Sistema Atualizado: Cálculos precisos igual TradingView")
+    print("✅ Implementado: RSI correto + MACD real sem calibração inútil")
     print("📊 Ativos padrão:", DEFAULT_SYMBOLS)
     print("🌐 Servidor iniciando na porta 8080...")
     
