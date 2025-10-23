@@ -3,7 +3,10 @@ import pandas as pd
 import requests
 import numpy as np
 from datetime import datetime
-import time
+import os
+
+# Configuração para Railway
+PORT = int(os.environ.get("PORT", 8080))
 
 # Configuração da página
 st.set_page_config(
@@ -55,15 +58,6 @@ st.markdown("""
     }
     .price-down {
         color: #F44336;
-        font-weight: bold;
-    }
-    .update-btn {
-        background-color: #1E88E5;
-        color: white;
-        border: none;
-        padding: 12px 24px;
-        border-radius: 8px;
-        font-size: 1.1rem;
         font-weight: bold;
     }
 </style>
@@ -138,7 +132,7 @@ class TradingSignalAI:
             return "NEUTRO"
 
     def generate_signal(self, pair):
-        """Gera sinal COMPRAR ou VENDER - LÓGICA DIRETA"""
+        """Gera sinal COMPRAR ou VENDER"""
         try:
             df = self.get_ohlc_data(pair)
             if df is None or len(df) < 50:
@@ -153,23 +147,23 @@ class TradingSignalAI:
             rsi = self.calculate_rsi(prices)
             trend = self.analyze_trend(prices)
             
-            # LÓGICA ULTRA SIMPLES - APENAS COMPRAR OU VENDER
+            # LÓGICA SIMPLES
             buy_signals = 0
             sell_signals = 0
             
-            # MACD (Sinal Principal)
+            # MACD
             if macd > signal and histogram > 0:
                 buy_signals += 2
             elif macd < signal and histogram < 0:
                 sell_signals += 2
             
-            # RSI (Confirmação)
+            # RSI
             if rsi < 35:
                 buy_signals += 1
             elif rsi > 65:
                 sell_signals += 1
             
-            # Tendência (Contexto)
+            # Tendência
             if trend == "ALTA":
                 buy_signals += 1
             elif trend == "BAIXA":
