@@ -8,5 +8,5 @@ websocket-client==1.6.3
 structlog>=23.0.0
 aiohttp
 streamlit==1.28.0
-pandas==2.1.0
+pandas==1.5.3
 numpy==1.24.0
