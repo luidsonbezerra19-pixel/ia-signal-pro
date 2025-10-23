@@ -1,4 +1,4 @@
-# app.py — IA SIMPLES E ASSERTIVA
+# app.py — IA SIMPLES E ASSERTIVA COM ENTRADA AUTOMÁTICA
 from __future__ import annotations
 import os, time, math, random, statistics as stats
 from typing import Any, Dict, List, Optional
@@ -222,6 +222,11 @@ class SimpleAI:
         # REGRAS CLARAS E ASSERTIVAS
         decision = self._make_decision(rsi, macd, trend)
         
+        # Calcular horário de entrada (próximo candle - 1 minuto no futuro)
+        now = datetime.now(timezone(timedelta(hours=-3)))
+        entry_time = (now + timedelta(minutes=1)).strftime("%H:%M")
+        analysis_time = now.strftime("%H:%M:%S")
+        
         return {
             'symbol': symbol,
             'decision': decision['action'],
@@ -234,7 +239,9 @@ class SimpleAI:
             'macd_histogram': macd['histogram'],
             'trend': trend['direction'],
             'trend_strength': trend['strength'],
-            'timestamp': datetime.now(timezone(timedelta(hours=-3))).strftime("%H:%M:%S BRT")
+            'analysis_time': analysis_time,
+            'entry_time': entry_time,
+            'timestamp': now.strftime("%H:%M:%S BRT")
         }
     
     def _make_decision(self, rsi: float, macd: Dict, trend: Dict) -> Dict:
@@ -317,6 +324,9 @@ class TradingSystem:
     
     def _create_error_signal(self, symbol: str, error: str) -> Dict[str, Any]:
         """Sinal de fallback em caso de erro"""
+        now = datetime.now(timezone(timedelta(hours=-3)))
+        entry_time = (now + timedelta(minutes=1)).strftime("%H:%M")
+        
         return {
             'symbol': symbol,
             'decision': 'COMPRAR',  # Sempre decide mesmo com erro
@@ -329,7 +339,9 @@ class TradingSystem:
             'macd_histogram': 0,
             'trend': 'neutral',
             'trend_strength': 0.5,
-            'timestamp': datetime.now(timezone(timedelta(hours=-3))).strftime("%H:%M:%S BRT")
+            'analysis_time': now.strftime("%H:%M:%S"),
+            'entry_time': entry_time,
+            'timestamp': now.strftime("%H:%M:%S BRT")
         }
 
 # =========================
@@ -364,83 +376,253 @@ class AnalysisManager:
 # =========================
 manager = AnalysisManager()
 
+def get_brazil_time():
+    return datetime.now(timezone(timedelta(hours=-3))).strftime("%H:%M:%S BRT")
+
 @app.route('/')
 def index():
-    return '''
+    current_time = get_brazil_time()
+    return Response(f'''
     <!DOCTYPE html>
     <html>
     <head>
         <title>IA Trading Simples</title>
         <meta charset="utf-8">
         <style>
-            body { font-family: Arial; background: #0f1120; color: white; padding: 20px; }
-            .container { max-width: 800px; margin: 0 auto; }
-            .header { text-align: center; margin-bottom: 30px; }
-            button { background: #2aa9ff; color: white; border: none; padding: 15px 30px; 
-                    border-radius: 5px; cursor: pointer; font-size: 16px; margin: 10px; }
-            .signal { background: #223148; padding: 20px; border-radius: 10px; margin: 10px 0; }
-            .buy { border-left: 5px solid #29d391; }
-            .sell { border-left: 5px solid #ff5b5b; }
-            .confidence { color: #2aa9ff; font-weight: bold; }
+            body {{
+                font-family: Arial, sans-serif;
+                background: #0f1120;
+                color: white;
+                margin: 0;
+                padding: 20px;
+            }}
+            .container {{
+                max-width: 1000px;
+                margin: 0 auto;
+            }}
+            .header {{
+                text-align: center;
+                margin-bottom: 30px;
+                background: #181a2e;
+                padding: 20px;
+                border-radius: 10px;
+            }}
+            .clock {{
+                font-size: 28px;
+                font-weight: bold;
+                color: #2aa9ff;
+                margin: 10px 0;
+                font-family: 'Courier New', monospace;
+            }}
+            button {{
+                background: #2aa9ff;
+                color: white;
+                border: none;
+                padding: 15px 30px;
+                border-radius: 5px;
+                cursor: pointer;
+                font-size: 16px;
+                margin: 10px;
+                transition: all 0.3s;
+            }}
+            button:hover {{
+                background: #1e8fd6;
+                transform: scale(1.05);
+            }}
+            button:disabled {{
+                background: #666;
+                cursor: not-allowed;
+                transform: none;
+            }}
+            .signal {{
+                background: #223148;
+                padding: 20px;
+                border-radius: 10px;
+                margin: 15px 0;
+                border-left: 5px solid #2aa9ff;
+            }}
+            .signal.buy {{
+                border-left-color: #29d391;
+            }}
+            .signal.sell {{
+                border-left-color: #ff5b5b;
+            }}
+            .signal.best {{
+                background: linear-gradient(135deg, #223148, #2a3a5f);
+                border: 2px solid #f2a93b;
+            }}
+            .confidence {{
+                color: #2aa9ff;
+                font-weight: bold;
+                font-size: 18px;
+            }}
+            .decision {{
+                font-size: 20px;
+                font-weight: bold;
+                margin: 10px 0;
+            }}
+            .buy-decision {{
+                color: #29d391;
+            }}
+            .sell-decision {{
+                color: #ff5b5b;
+            }}
+            .info-line {{
+                margin: 8px 0;
+                padding: 8px;
+                background: #1b2b41;
+                border-radius: 5px;
+            }}
+            .status {{
+                padding: 15px;
+                border-radius: 5px;
+                margin: 15px 0;
+                text-align: center;
+                font-weight: bold;
+            }}
+            .status.analyzing {{
+                background: #f2a93b;
+                color: #000;
+            }}
+            .status.success {{
+                background: #29d391;
+                color: #000;
+            }}
+            .status.error {{
+                background: #ff5b5b;
+                color: white;
+            }}
         </style>
     </head>
     <body>
         <div class="container">
             <div class="header">
                 <h1>🎯 IA TRADING SIMPLES</h1>
+                <div class="clock" id="currentTime">{current_time}</div>
                 <p>Preços reais Kraken • RSI/MACD Oficiais • Decisões Assertivas</p>
             </div>
             
-            <button onclick="runAnalysis()">🎯 ANALISAR MERCADO</button>
-            <button onclick="getResults()">📊 VER RESULTADOS</button>
+            <div style="text-align: center;">
+                <button onclick="runAnalysis()" id="analyzeBtn">🎯 ANALISAR MERCADO</button>
+            </div>
             
+            <div id="status"></div>
             <div id="results"></div>
         </div>
 
         <script>
-            async function runAnalysis() {
-                const btn = event.target;
+            // Atualizar relógio em tempo real
+            function updateClock() {{
+                const now = new Date();
+                const brtOffset = -3 * 60;
+                const localOffset = now.getTimezoneOffset();
+                const brtTime = new Date(now.getTime() + (brtOffset + localOffset) * 60000);
+                
+                const timeString = brtTime.toLocaleTimeString('pt-BR', {{ 
+                    timeZone: 'America/Sao_Paulo',
+                    hour12: false 
+                }}) + ' BRT';
+                
+                document.getElementById('currentTime').textContent = timeString;
+            }}
+            
+            setInterval(updateClock, 1000);
+            updateClock();
+
+            async function runAnalysis() {{
+                const btn = document.getElementById('analyzeBtn');
                 btn.disabled = true;
                 btn.textContent = '🎯 ANALISANDO...';
                 
-                try {
-                    const response = await fetch('/analyze', { method: 'POST' });
+                // Mostrar status de análise
+                document.getElementById('status').innerHTML = 
+                    '<div class="status analyzing">🔄 ANALISANDO MERCADO... AGUARDE</div>';
+                document.getElementById('results').innerHTML = '';
+                
+                try {{
+                    const response = await fetch('/analyze', {{ method: 'POST' }});
                     const result = await response.json();
-                    alert(result.message);
-                } catch (error) {
-                    alert('Erro: ' + error);
-                } finally {
+                    
+                    if (result.success) {{
+                        document.getElementById('status').innerHTML = 
+                            '<div class="status success">✅ ANÁLISE CONCLUÍDA! CARREGANDO RESULTADOS...</div>';
+                        
+                        // Aguardar um pouco e buscar resultados automaticamente
+                        setTimeout(getResults, 1000);
+                    }} else {{
+                        document.getElementById('status').innerHTML = 
+                            '<div class="status error">❌ ' + result.message + '</div>';
+                    }}
+                }} catch (error) {{
+                    document.getElementById('status').innerHTML = 
+                        '<div class="status error">💥 Erro: ' + error.message + '</div>';
+                }} finally {{
                     btn.disabled = false;
                     btn.textContent = '🎯 ANALISAR MERCADO';
-                }
-            }
+                }}
+            }}
 
-            async function getResults() {
-                try {
+            async function getResults() {{
+                try {{
                     const response = await fetch('/results');
                     const data = await response.json();
                     
-                    let html = '<h2>🎯 SINAIS:</h2>';
-                    data.results.forEach(signal => {
-                        html += `
-                            <div class="signal ${signal.direction}">
-                                <h3>${signal.symbol} - ${signal.decision} (${(signal.confidence * 100).toFixed(1)}% confiança)</h3>
-                                <p>${signal.reason}</p>
-                                <p>💰 Preço: $${signal.price.toFixed(2)} | 📊 RSI: ${signal.rsi} | 📈 MACD: ${signal.macd_signal}</p>
-                                <p>🎯 Tendência: ${signal.trend} (${(signal.trend_strength * 100).toFixed(1)}%) | ⏰ ${signal.timestamp}</p>
-                            </div>
-                        `;
-                    });
-                    
-                    document.getElementById('results').innerHTML = html;
-                } catch (error) {
-                    alert('Erro ao buscar resultados: ' + error);
-                }
-            }
+                    if (data.success && data.results.length > 0) {{
+                        let html = '<h2>🎯 SINAIS DE TRADING:</h2>';
+                        
+                        data.results.forEach((signal, index) => {{
+                            const isBest = index === 0;
+                            const decisionClass = signal.direction === 'buy' ? 'buy-decision' : 'sell-decision';
+                            
+                            html += `
+                                <div class="signal ${{signal.direction}} ${{isBest ? 'best' : ''}}">
+                                    <div class="decision ${{decisionClass}}">
+                                        ${{signal.decision}} • ${{signal.symbol}} • ${{(signal.confidence * 100).toFixed(1)}}% Confiança
+                                        ${{isBest ? ' 🏆' : ''}}
+                                    </div>
+                                    <div class="info-line">🎯 <strong>Razão:</strong> ${{signal.reason}}</div>
+                                    <div class="info-line">
+                                        💰 <strong>Preço:</strong> $${signal.price.toFixed(2)} | 
+                                        📊 <strong>RSI:</strong> ${{signal.rsi}} ${{signal.rsi < 35 ? '(SOBREVENDIDO)' : signal.rsi > 65 ? '(SOBRECOMPRADO)' : ''}} |
+                                        📈 <strong>MACD:</strong> ${{signal.macd_signal}}
+                                    </div>
+                                    <div class="info-line">
+                                        🎯 <strong>Tendência:</strong> ${{signal.trend}} (${{(signal.trend_strength * 100).toFixed(1)}}%) |
+                                        ⏰ <strong>Análise:</strong> ${{signal.analysis_time}} |
+                                        🚀 <strong>Entrada:</strong> ${{signal.entry_time}}
+                                    </div>
+                                    <div class="info-line">
+                                        📊 <strong>MACD Hist:</strong> ${{signal.macd_histogram}} |
+                                        🕒 <strong>Timestamp:</strong> ${{signal.timestamp}}
+                                    </div>
+                                </div>
+                            `;
+                        }});
+                        
+                        document.getElementById('results').innerHTML = html;
+                        document.getElementById('status').innerHTML = 
+                            '<div class="status success">✅ ANÁLISE CONCLUÍDA • ' + data.results.length + ' SINAIS ENCONTRADOS</div>';
+                    }} else {{
+                        document.getElementById('status').innerHTML = 
+                            '<div class="status error">❌ Nenhum resultado encontrado</div>';
+                    }}
+                }} catch (error) {{
+                    document.getElementById('status').innerHTML = 
+                        '<div class="status error">💥 Erro ao buscar resultados: ' + error.message + '</div>';
+                }}
+            }}
+
+            // Iniciar análise automaticamente quando a página carregar
+            window.addEventListener('load', function() {{
+                setTimeout(() => {{
+                    document.getElementById('status').innerHTML = 
+                        '<div class="status info">✅ Sistema pronto • Clique em ANALISAR MERCADO para começar</div>';
+                }}, 1000);
+            }});
         </script>
     </body>
     </html>
-    '''
+    ''', mimetype='text/html')
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
@@ -460,5 +642,6 @@ def get_results():
 if __name__ == '__main__':
     print("🎯 IA TRADING SIMPLES INICIADA")
     print("✅ Preços reais Kraken • RSI/MACD Oficiais • Decisões Assertivas")
+    print("⏰ Relógio em tempo real • Entrada automática no próximo candle")
     print("🌐 Servidor: http://localhost:8080")
-    app.run(host='0.0.0.0', port=8080, debug=False) 
+    app.run(host='0.0.0.0', port=8080, debug=False)
