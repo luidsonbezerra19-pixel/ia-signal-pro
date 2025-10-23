@@ -1,1631 +1,255 @@
-# app.py — IA EVOLUTIVA: SISTEMA COM RSI E MACD CORRETOS
-from __future__ import annotations
-import os, time, math, random, threading, json, statistics as stats
-from typing import Any, Dict, List, Optional
-from datetime import datetime, timezone, timedelta
-from flask import Flask, jsonify, request, Response
-from flask_cors import CORS
-import structlog
+import streamlit as st
+import pandas as pd
 import requests
-import websocket
-import threading
-import json
+import numpy as np
+from datetime import datetime, timedelta
+import time
 
-# =========================
-# Configuração de Logging
-# =========================
-structlog.configure(
-    processors=[
-        structlog.stdlib.filter_by_level,
-        structlog.stdlib.add_logger_name,
-        structlog.stdlib.add_log_level,
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
-        structlog.processors.UnicodeDecoder(),
-        structlog.processors.JSONRenderer()
-    ],
-    context_class=dict,
-    logger_factory=structlog.stdlib.LoggerFactory(),
-    wrapper_class=structlog.stdlib.BoundLogger,
-    cache_logger_on_first_use=True,
+# Configuração da página
+st.set_page_config(
+    page_title="Analisador Cripto - Sinais em Tempo Real",
+    page_icon="📈",
+    layout="wide"
 )
 
-logger = structlog.get_logger()
+# CSS personalizado
+st.markdown("""
+<style>
+    .main-header {
+        font-size: 2.5rem;
+        color: #1E88E5;
+        text-align: center;
+        margin-bottom: 2rem;
+        font-weight: bold;
+    }
+    .signal-buy {
+        background-color: #C8E6C9;
+        padding: 15px;
+        border-radius: 8px;
+        border-left: 5px solid #4CAF50;
+        margin: 10px 0;
+        font-weight: bold;
+        font-size: 1.1rem;
+    }
+    .signal-sell {
+        background-color: #FFCDD2;
+        padding: 15px;
+        border-radius: 8px;
+        border-left: 5px solid #F44336;
+        margin: 10px 0;
+        font-weight: bold;
+        font-size: 1.1rem;
+    }
+    .asset-card {
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        margin-bottom: 15px;
+        background-color: white;
+    }
+    .price-up {
+        color: #4CAF50;
+        font-weight: bold;
+    }
+    .price-down {
+        color: #F44336;
+        font-weight: bold;
+    }
+    .info-box {
+        background-color: #E3F2FD;
+        padding: 15px;
+        border-radius: 8px;
+        border-left: 5px solid #2196F3;
+        margin: 10px 0;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-# =========================
-# Config (Simplificado)
-# =========================
-MC_PATHS = 3000
-DEFAULT_SYMBOLS = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "ADA-USDT", "XRP-USDT", "BNB-USDT"]
+# Lista de ativos
+ASSETS = ['BTC/USD', 'ETH/USD', 'XRP/USD', 'SOL/USD', 'ADA/USD', 'BNB/USD']
 
-app = Flask(__name__)
-CORS(app)
-
-# =========================
-# Data Generator COM DADOS REAIS KRAKEN - CORRIGIDO
-# =========================
-class DataGenerator:
+class TradingSignalAI:
     def __init__(self):
-        self.price_cache = {}
-        self.historical_cache = {}
-        self._initialize_real_prices()
+        self.base_url = "https://api.kraken.com/0/public"
         
-    def _initialize_real_prices(self):
-        """Busca preços iniciais REAIS"""
-        print("🚀 INICIANDO BUSCA DE PREÇOS REAIS...")
-        
-        for symbol in DEFAULT_SYMBOLS:
-            try:
-                # Tenta Kraken primeiro
-                price = self._fetch_current_price_kraken(symbol)
-                if not price:
-                    # Fallback para Binance
-                    price = self._fetch_current_price_binance(symbol)
-                
-                if price and price > 0:
-                    self.price_cache[symbol] = price
-                    print(f"✅ PREÇO REAL: {symbol} = ${price:,.2f}")
-                else:
-                    self._set_realistic_fallback(symbol)
-                    
-            except Exception as e:
-                print(f"💥 Error inicializando {symbol}: {e}")
-                self._set_realistic_fallback(symbol)
-
-    def _get_kraken_symbol(self, symbol: str) -> str:
-        """Converte qualquer formato de símbolo para Kraken"""
-        clean_symbol = symbol.replace("/", "").replace("-", "").upper()
-        
-        kraken_map = {
-            'BTCUSDT': 'XBTUSDT',
-            'ETHUSDT': 'ETHUSDT', 
-            'SOLUSDT': 'SOLUSD',    
-            'ADAUSDT': 'ADAUSD',     
-            'XRPUSDT': 'XRPUSD',    
-            'BNBUSDT': 'BNBUSD',
-            'BTCUSD': 'XBTUSD',
-            'ETHUSD': 'ETHUSD',
-            'SOLUSD': 'SOLUSD',
-            'ADAUSD': 'ADAUSD', 
-            'XRPUSD': 'XRPUSD',
-            'BNBUSD': 'BNBUSD'
-        }
-        
-        return kraken_map.get(clean_symbol, clean_symbol)
-
-    def _fetch_current_price_kraken(self, symbol: str) -> Optional[float]:
-        """Busca preço da Kraken - formato flexível"""
+    def get_ohlc_data(self, pair, interval=60):
+        """Busca dados OHLC da Kraken"""
         try:
-            kraken_symbol = self._get_kraken_symbol(symbol)
-            url = f"https://api.kraken.com/0/public/Ticker?pair={kraken_symbol}"
+            url = f"{self.base_url}/OHLC"
+            kraken_pair = pair.replace('/USD', 'USD')
+            params = {'pair': kraken_pair, 'interval': interval}
+            response = requests.get(url, params=params, timeout=10)
+            data = response.json()
             
-            response = requests.get(url, timeout=8)
-            
-            if response.status_code == 200:
-                data = response.json()
-                
-                if not data.get('error') and data.get('result'):
-                    for key, value in data['result'].items():
-                        price = float(value['c'][0])
-                        return price
-                    
+            if 'result' in data and data['result']:
+                key = list(data['result'].keys())[0]
+                df = pd.DataFrame(data['result'][key], 
+                                columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'count'])
+                df['close'] = pd.to_numeric(df['close'])
+                df['high'] = pd.to_numeric(df['high'])
+                df['low'] = pd.to_numeric(df['low'])
+                return df
         except Exception as e:
-            print(f"💥 KRAKEN Error {symbol}: {e}")
-            
+            st.error(f"Erro ao buscar dados para {pair}: {str(e)}")
         return None
 
-    def _fetch_current_price_binance(self, symbol: str) -> Optional[float]:
-        """Busca preço da Binance - formato flexível"""
-        try:
-            binance_symbol = symbol.replace("/", "").replace("-", "")
-            url = f"https://api.binance.com/api/v3/ticker/price?symbol={binance_symbol}"
-            
-            response = requests.get(url, timeout=8)
-            if response.status_code == 200:
-                data = response.json()
-                price = float(data['price'])
-                return price
-                
-        except Exception as e:
-            print(f"💥 BINANCE Error {symbol}: {e}")
-            
-        return None
+    def calculate_ema(self, prices, period):
+        """Calcula EMA"""
+        return prices.ewm(span=period, adjust=False).mean()
 
-    def _set_realistic_fallback(self, symbol: str):
-        """Define fallback realista para símbolo"""
-        realistic_prices = {
-            'BTC-USDT': 67432.10, 'BTC/USDT': 67432.10, 'BTCUSDT': 67432.10,
-            'ETH-USDT': 3756.78, 'ETH/USDT': 3756.78, 'ETHUSDT': 3756.78,
-            'SOL-USDT': 143.45, 'SOL/USDT': 143.45, 'SOLUSDT': 143.45,
-            'ADA-USDT': 0.5567, 'ADA/USDT': 0.5567, 'ADAUSDT': 0.5567,
-            'XRP-USDT': 0.6678, 'XRP/USDT': 0.6678, 'XRPUSDT': 0.6678,
-            'BNB-USDT': 587.89, 'BNB/USDT': 587.89, 'BNBUSDT': 587.89
-        }
-        
-        price = realistic_prices.get(symbol, 100)
-        self.price_cache[symbol] = price
-        print(f"⚠️  FALLBACK: {symbol} = ${price:,.2f}")
+    def calculate_macd(self, prices):
+        """Calcula MACD"""
+        ema12 = self.calculate_ema(prices, 12)
+        ema26 = self.calculate_ema(prices, 26)
+        macd = ema12 - ema26
+        signal = macd.ewm(span=9, adjust=False).mean()
+        histogram = macd - signal
+        return macd.iloc[-1], signal.iloc[-1], histogram.iloc[-1]
 
-    def get_current_prices(self) -> Dict[str, float]:
-        """Retorna preços atualizados - CORRIGIDO para usar cache atualizado"""
-        return self.price_cache.copy()
-    
-    def get_historical_data(self, symbol: str, periods: int = 100) -> List[List[float]]:
-        """Retorna dados históricos - CORRIGIDO para usar preços reais"""
-        try:
-            # Para demo, gera dados baseados no preço REAL atual
-            current_price = self.price_cache.get(symbol, 100)
-            return self._generate_realistic_data(current_price, periods)
-            
-        except Exception as e:
-            current_price = self.price_cache.get(symbol, 100)
-            return self._generate_realistic_data(current_price, periods)
-    
-    def _generate_realistic_data(self, base_price: float, periods: int) -> List[List[float]]:
-        """Gera dados realistas baseados no preço REAL"""
-        candles = []
-        price = base_price
-        
-        for i in range(periods):
-            open_price = price
-            # Volatilidade realista baseada no preço
-            volatility = 0.01 if base_price > 1000 else 0.02 if base_price > 100 else 0.03
-            change_pct = random.gauss(0, volatility)
-            close_price = open_price * (1 + change_pct)
-            high_price = max(open_price, close_price) * (1 + abs(random.gauss(0, volatility/2)))
-            low_price = min(open_price, close_price) * (1 - abs(random.gauss(0, volatility/2)))
-            volume = random.uniform(100000, 1000000) * (base_price / 100)  # Volume proporcional ao preço
-            
-            candles.append([open_price, high_price, low_price, close_price, volume])
-            price = close_price
-            
-        return candles
-
-# =========================
-# SISTEMA AVANÇADO DE ANÁLISE DE TENDÊNCIAS
-# =========================
-class TrendAnalysisSystem:
-    def __init__(self):
-        self.trend_states = {}
-        
-    def analyze_trend_direction(self, symbol: str, closes: List[float]) -> Dict:
-        """Análise COMPLETA de tendência com múltiplas confirmações"""
-        
-        if len(closes) < 50:
-            return self._default_trend_analysis()
-        
-        # 1. DETECÇÃO DE TENDÊNCIA PRINCIPAL
-        primary_trend = self._detect_primary_trend(closes)
-        
-        # 2. FORÇA DA TENDÊNCIA
-        trend_strength = self._calculate_trend_strength(closes, primary_trend)
-        
-        # 3. MOMENTUM DA TENDÊNCIA
-        trend_momentum = self._analyze_trend_momentum(closes)
-        
-        # 4. PONTOS DE TRANSIÇÃO
-        transition_points = self._detect_trend_transition(closes, primary_trend)
-        
-        # 5. SUGESTÃO DE AÇÃO
-        action_suggestion = self._suggest_trend_action(primary_trend, trend_strength, transition_points)
-        
-        return {
-            'primary_trend': primary_trend,
-            'trend_strength': round(trend_strength, 4),
-            'trend_momentum': round(trend_momentum, 4),
-            'is_transitioning': transition_points['is_transitioning'],
-            'transition_stage': transition_points['stage'],
-            'confidence': round(trend_strength * 0.7 + trend_momentum * 0.3, 4),
-            'action': action_suggestion,
-            'momentum_divergence': transition_points['momentum_divergence'],
-            'exhaustion_signals': transition_points['exhaustion_signals'],
-            'structure_break': transition_points['structure_break']
-        }
-    
-    def _detect_primary_trend(self, closes: List[float]) -> str:
-        """Detecta tendência com MÚLTIPLOS timeframes internos"""
-        if len(closes) < 50:
-            return "neutral"
-            
-        # Análise multi-período
-        short_ma = sum(closes[-10:]) / 10
-        medium_ma = sum(closes[-20:]) / 20 
-        long_ma = sum(closes[-50:]) / 50
-        
-        # Tendência de VERY SHORT TERM (5 períodos)
-        vst_trend = "up" if closes[-1] > closes[-5] else "down"
-        
-        # Tendência de SHORT TERM
-        st_trend = "up" if short_ma > medium_ma else "down"
-        
-        # Tendência de MEDIUM TERM
-        mt_trend = "up" if medium_ma > long_ma else "down"
-        
-        # CONFIRMAÇÃO: 2 de 3 devem concordar
-        trends = [vst_trend, st_trend, mt_trend]
-        up_count = trends.count("up")
-        down_count = trends.count("down")
-        
-        if up_count >= 2:
-            return "bullish"
-        elif down_count >= 2:
-            return "bearish"
-        else:
-            return "neutral"
-
-    def _calculate_trend_strength(self, closes: List[float], trend: str) -> float:
-        """Calcula força da tendência baseado na consistência"""
-        if len(closes) < 20:
-            return 0.5
-            
-        # Calcular direcionalidade
-        price_changes = [closes[i] - closes[i-1] for i in range(1, len(closes))]
-        
-        if trend == "bullish":
-            positive_moves = sum(1 for change in price_changes if change > 0)
-            strength = positive_moves / len(price_changes)
-        elif trend == "bearish":
-            negative_moves = sum(1 for change in price_changes if change < 0)
-            strength = negative_moves / len(price_changes)
-        else:
-            # Para tendência neutra, força baseada na volatilidade
-            volatility = stats.stdev(price_changes) / stats.mean(closes) if stats.mean(closes) > 0 else 0.02
-            strength = max(0.1, 1 - volatility * 10)  # Baixa volatilidade = força
-        
-        return min(1.0, max(0.1, strength))
-
-    def _analyze_trend_momentum(self, closes: List[float]) -> float:
-        """Analisa momentum atual da tendência"""
-        if len(closes) < 10:
-            return 0.5
-            
-        # Momentum baseado na aceleração dos preços
-        recent_changes = [closes[i] - closes[i-1] for i in range(max(1, len(closes)-5), len(closes))]
-        previous_changes = [closes[i] - closes[i-1] for i in range(max(1, len(closes)-10), len(closes)-5)]
-        
-        if not recent_changes or not previous_changes:
-            return 0.5
-            
-        recent_momentum = sum(recent_changes) / len(recent_changes)
-        previous_momentum = sum(previous_changes) / len(previous_changes)
-        
-        # Momentum aumentando = bom, diminuindo = ruim
-        if previous_momentum == 0:
-            return 0.5
-            
-        momentum_ratio = recent_momentum / previous_momentum
-        momentum_score = min(1.0, max(0.0, 0.5 + (momentum_ratio - 1) * 2))
-        
-        return momentum_score
-
-    def _detect_trend_transition(self, closes: List[float], current_trend: str) -> Dict:
-        """Detecta quando a tendência está prestes a mudar"""
-        
-        if len(closes) < 20:
-            return {'is_transitioning': False, 'stage': 'insufficient_data'}
-        
-        # 1. DIVERGÊNCIAS DE MOMENTUM
-        momentum_divergence = self._check_momentum_divergence(closes, current_trend)
-        
-        # 2. ESGOTAMENTO DE MOVIMENTO
-        exhaustion = self._check_trend_exhaustion(closes, current_trend)
-        
-        # 3. QUEBRA DE ESTRUTURA
-        structure_break = self._check_structure_break(closes, current_trend)
-        
-        # CLASSIFICAR ESTÁGIO DE TRANSIÇÃO
-        if structure_break and momentum_divergence:
-            stage = "reversal_confirmed"
-            is_transitioning = True
-        elif exhaustion and momentum_divergence:
-            stage = "potential_reversal" 
-            is_transitioning = True
-        elif exhaustion:
-            stage = "trend_weakening"
-            is_transitioning = False
-        else:
-            stage = "trend_healthy"
-            is_transitioning = False
-            
-        return {
-            'is_transitioning': is_transitioning,
-            'stage': stage,
-            'momentum_divergence': momentum_divergence,
-            'exhaustion_signals': exhaustion,
-            'structure_break': structure_break
-        }
-
-    def _check_momentum_divergence(self, closes: List[float], trend: str) -> bool:
-        """Detecta divergência entre preço e momentum"""
-        if len(closes) < 20:
-            return False
-            
-        # Últimos 10 candles vs anteriores
-        recent_prices = closes[-10:]
-        previous_prices = closes[-20:-10]
-        
-        if len(recent_prices) < 5 or len(previous_prices) < 5:
-            return False
-            
-        # Direção do preço
-        price_direction = "up" if recent_prices[-1] > recent_prices[0] else "down"
-        
-        # Momentum (variação percentual)
-        recent_momentum = (recent_prices[-1] - recent_prices[0]) / recent_prices[0] if recent_prices[0] != 0 else 0
-        previous_momentum = (previous_prices[-1] - previous_prices[0]) / previous_prices[0] if previous_prices[0] != 0 else 0
-        
-        # Divergência: Preço vai uma direção, momentum vai outra
-        if trend == "bullish" and price_direction == "up" and recent_momentum < previous_momentum:
-            return True
-        elif trend == "bearish" and price_direction == "down" and recent_momentum > previous_momentum:
-            return True
-            
-        return False
-
-    def _check_trend_exhaustion(self, closes: List[float], trend: str) -> bool:
-        """Verifica se o movimento atual está esgotado"""
-        if len(closes) < 15:
-            return False
-            
-        recent_high = max(closes[-10:])
-        recent_low = min(closes[-10:])
-        previous_high = max(closes[-15:-5])
-        previous_low = min(closes[-15:-5])
-        
-        if trend == "bullish":
-            # Exaustão: não consegue fazer novos máximos
-            return recent_high <= previous_high
-        elif trend == "bearish":
-            # Exaustão: não consegue fazer novos mínimos
-            return recent_low >= previous_low
-            
-        return False
-
-    def _check_structure_break(self, closes: List[float], trend: str) -> bool:
-        """Verifica quebra da estrutura de tendência"""
-        if len(closes) < 25:
-            return False
-            
-        # Para tendência de alta: fundos devem ser crescentes
-        if trend == "bullish":
-            first_low = min(closes[-25:-15])
-            second_low = min(closes[-15:-5])
-            current_low = min(closes[-5:])
-            # Quebra: fundo atual é menor que fundo anterior
-            return current_low < second_low
-            
-        # Para tendência de baixa: topos devem ser decrescentes
-        elif trend == "bearish":
-            first_high = max(closes[-25:-15])
-            second_high = max(closes[-15:-5])
-            current_high = max(closes[-5:])
-            # Quebra: topo atual é maior que topo anterior
-            return current_high > second_high
-            
-        return False
-
-    def _suggest_trend_action(self, trend: str, strength: float, transition: Dict) -> str:
-        """Sugere ação baseada na análise de tendência"""
-        if transition['is_transitioning']:
-            return "prepare_reversal"
-        elif trend == "bullish" and strength > 0.6:
-            return "trend_follow_buy"
-        elif trend == "bearish" and strength > 0.6:
-            return "trend_follow_sell"
-        elif trend == "neutral" and strength > 0.7:
-            return "breakout_watch"
-        else:
-            return "wait_confirm"
-
-    def _default_trend_analysis(self) -> Dict:
-        """Retorna análise padrão para dados insuficientes"""
-        return {
-            'primary_trend': 'neutral',
-            'trend_strength': 0.5,
-            'trend_momentum': 0.5,
-            'is_transitioning': False,
-            'transition_stage': 'insufficient_data',
-            'confidence': 0.5,
-            'action': 'wait_confirm',
-            'momentum_divergence': False,
-            'exhaustion_signals': False,
-            'structure_break': False
-        }
-
-# =========================
-# SISTEMA DE ENTRADAS NA TENDÊNCIA
-# =========================
-class TrendEntrySystem:
-    def __init__(self):
-        self.trend_analyzer = TrendAnalysisSystem()
-        
-    def find_trend_entries(self, symbol: str, closes: List[float], current_price: float) -> Dict:
-        """Encontra as melhores entradas baseadas em tendência"""
-        
-        trend_analysis = self.trend_analyzer.analyze_trend_direction(symbol, closes)
-        
-        # SÓ OPERA SE TENDÊNCIA ESTÁ FORTE E SAUDÁVEL
-        if not self._is_tradable_trend(trend_analysis):
-            return self._create_forced_decision(symbol, trend_analysis, closes, current_price)
-        
-        # ENCONTRAR MELHORES ENTRADAS BASEADO NA TENDÊNCIA
-        if trend_analysis['action'] == 'trend_follow_buy':
-            entry_signal = self._find_buy_entries(closes, current_price, trend_analysis)
-        elif trend_analysis['action'] == 'trend_follow_sell':
-            entry_signal = self._find_sell_entries(closes, current_price, trend_analysis)
-        elif trend_analysis['action'] == 'prepare_reversal':
-            entry_signal = self._find_reversal_entries(closes, current_price, trend_analysis)
-        else:
-            entry_signal = self._create_forced_decision(symbol, trend_analysis, closes, current_price)
-            
-        return entry_signal
-    
-    def _is_tradable_trend(self, trend_analysis: Dict) -> bool:
-        """Verifica se a tendência é operável"""
-        return (trend_analysis['trend_strength'] > 0.6 and 
-                trend_analysis['confidence'] > 0.65 and
-                trend_analysis['action'] != 'wait_confirm')
-    
-    def _find_buy_entries(self, closes: List[float], current_price: float, trend_analysis: Dict) -> Dict:
-        """Encontra entradas de COMPRA em tendência de alta"""
-        if len(closes) < 15:
-            return self._create_buy_signal("COMPRA", trend_analysis, "Tendência de alta detectada")
-            
-        # Estratégia 1: Pullback em suporte
-        recent_low = min(closes[-10:])
-        pullback_depth = (current_price - recent_low) / current_price
-        
-        if pullback_depth > 0.02:  # Pullback de pelo menos 2%
-            return {
-                'direction': 'buy',
-                'entry_type': 'pullback',
-                'confidence': trend_analysis['confidence'] * 0.9,
-                'reason': f"COMPRA: Pullback {pullback_depth:.2%} em tendência de alta",
-                'trend_strength': trend_analysis['trend_strength'],
-                'risk_level': 'médio'
-            }
-        
-        # Estratégia 2: Breakout de consolidação
-        consolidation_break = self._check_consolidation_breakout(closes, "up")
-        if consolidation_break:
-            return {
-                'direction': 'buy',
-                'entry_type': 'breakout',
-                'confidence': trend_analysis['confidence'] * 0.85,
-                'reason': "COMPRA: Breakout de consolidação",
-                'trend_strength': trend_analysis['trend_strength'],
-                'risk_level': 'alto'
-            }
-            
-        return self._create_buy_signal("COMPRA", trend_analysis, "Tendência de alta confirmada")
-
-    def _find_sell_entries(self, closes: List[float], current_price: float, trend_analysis: Dict) -> Dict:
-        """Encontra entradas de VENDA em tendência de baixa"""
-        if len(closes) < 15:
-            return self._create_sell_signal("VENDA", trend_analysis, "Tendência de baixa detectada")
-            
-        # Estratégia 1: Rally em resistência
-        recent_high = max(closes[-10:])
-        rally_height = (recent_high - current_price) / current_price
-        
-        if rally_height > 0.02:  # Rally de pelo menos 2%
-            return {
-                'direction': 'sell',
-                'entry_type': 'rally',
-                'confidence': trend_analysis['confidence'] * 0.9,
-                'reason': f"VENDA: Rally {rally_height:.2%} em tendência de baixa",
-                'trend_strength': trend_analysis['trend_strength'],
-                'risk_level': 'médio'
-            }
-        
-        # Estratégia 2: Breakdown de consolidação
-        consolidation_break = self._check_consolidation_breakout(closes, "down")
-        if consolidation_break:
-            return {
-                'direction': 'sell',
-                'entry_type': 'breakdown',
-                'confidence': trend_analysis['confidence'] * 0.85,
-                'reason': "VENDA: Breakdown de consolidação",
-                'trend_strength': trend_analysis['trend_strength'],
-                'risk_level': 'alto'
-            }
-            
-        return self._create_sell_signal("VENDA", trend_analysis, "Tendência de baixa confirmada")
-
-    def _find_reversal_entries(self, closes: List[float], current_price: float, trend_analysis: Dict) -> Dict:
-        """Encontra entradas em possíveis reversões"""
-        if len(closes) < 20:
-            current_trend = trend_analysis['primary_trend']
-            if current_trend == "bullish":
-                return self._create_sell_signal("VENDA", trend_analysis, "Possível reversão de alta para baixa")
-            else:
-                return self._create_buy_signal("COMPRA", trend_analysis, "Possível reversão de baixa para alta")
-        
-        # Determinar direção da reversão
-        current_trend = trend_analysis['primary_trend']
-        reversal_direction = "sell" if current_trend == "bullish" else "buy"
-        
-        if reversal_direction == "buy":
-            return self._create_buy_signal("COMPRA", trend_analysis, f"Reversão: {trend_analysis['transition_stage']}")
-        else:
-            return self._create_sell_signal("VENDA", trend_analysis, f"Reversão: {trend_analysis['transition_stage']}")
-
-    def _check_consolidation_breakout(self, closes: List[float], direction: str) -> bool:
-        """Verifica breakout de formação de consolidação"""
-        if len(closes) < 20:
-            return False
-            
-        # Verificar se preço rompeu faixa de consolidação
-        consolidation_high = max(closes[-15:-5])
-        consolidation_low = min(closes[-15:-5])
-        current_price = closes[-1]
-        
-        if direction == "up":
-            return current_price > consolidation_high
-        else:
-            return current_price < consolidation_low
-
-    def _create_forced_decision(self, symbol: str, trend_analysis: Dict, closes: List[float], current_price: float) -> Dict:
-        """FORÇA uma decisão COMPRA ou VENDA baseada em análise técnica"""
-        if len(closes) < 10:
-            # Se não tem dados suficientes, decide baseado no preço atual vs médio
-            avg_price = sum(closes) / len(closes) if closes else current_price
-            if current_price > avg_price * 1.02:
-                return self._create_buy_signal("COMPRA", trend_analysis, "Preço acima da média")
-            else:
-                return self._create_sell_signal("VENDA", trend_analysis, "Preço abaixo da média")
-        
-        # Análise técnica forçada
-        rsi = self._calculate_simple_rsi(closes)
-        trend = trend_analysis['primary_trend']
-        
-        if rsi < 40 and trend != "bearish":
-            return self._create_buy_signal("COMPRA", trend_analysis, "RSI sobrevendido + Tendência neutra/alta")
-        elif rsi > 60 and trend != "bullish":
-            return self._create_sell_signal("VENDA", trend_analysis, "RSI sobrecomprado + Tendência neutra/baixa")
-        elif trend == "bullish":
-            return self._create_buy_signal("COMPRA", trend_analysis, "Tendência de alta predominante")
-        elif trend == "bearish":
-            return self._create_sell_signal("VENDA", trend_analysis, "Tendência de baixa predominante")
-        else:
-            # Último recurso: análise de momentum
-            momentum = closes[-1] - closes[-5] if len(closes) >= 6 else 0
-            if momentum > 0:
-                return self._create_buy_signal("COMPRA", trend_analysis, "Momentum positivo")
-            else:
-                return self._create_sell_signal("VENDA", trend_analysis, "Momentum negativo")
-
-    def _calculate_simple_rsi(self, closes: List[float], period: int = 14) -> float:
-        """Calcula RSI simplificado"""
-        if len(closes) < period + 1:
-            return 50.0
-            
-        gains = []
-        losses = []
-        
-        for i in range(1, len(closes)):
-            change = closes[i] - closes[i-1]
-            if change > 0:
-                gains.append(change)
-            else:
-                losses.append(abs(change))
-        
-        if len(gains) < period or len(losses) < period:
-            return 50.0
-            
-        avg_gain = sum(gains[-period:]) / period
-        avg_loss = sum(losses[-period:]) / period
-        
-        if avg_loss == 0:
-            return 100.0
-            
-        rs = avg_gain / avg_loss
+    def calculate_rsi(self, prices, period=14):
+        """Calcula RSI"""
+        delta = prices.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+        rs = gain / loss
         rsi = 100 - (100 / (1 + rs))
-        return rsi
+        return rsi.iloc[-1]
 
-    def _create_buy_signal(self, symbol: str, trend_analysis: Dict, reason: str) -> Dict:
-        """Cria sinal de COMPRA forçado"""
-        confidence = max(0.6, trend_analysis['confidence'] * 0.9)
-        return {
-            'direction': 'buy',
-            'entry_type': 'forçado',
-            'confidence': confidence,
-            'reason': f"COMPRA: {reason}",
-            'trend_strength': trend_analysis['trend_strength'],
-            'risk_level': 'alto',
-            'trend_analysis': trend_analysis
-        }
-
-    def _create_sell_signal(self, symbol: str, trend_analysis: Dict, reason: str) -> Dict:
-        """Cria sinal de VENDA forçado"""
-        confidence = max(0.6, trend_analysis['confidence'] * 0.9)
-        return {
-            'direction': 'sell',
-            'entry_type': 'forçado',
-            'confidence': confidence,
-            'reason': f"VENDA: {reason}",
-            'trend_strength': trend_analysis['trend_strength'],
-            'risk_level': 'alto',
-            'trend_analysis': trend_analysis
-        }
-
-# =========================
-# Indicadores Técnicos CORRETOS - RSI E MACD PRECISOS
-# =========================
-class TechnicalIndicators:
-    def rsi_correto(self, closes: List[float], period: int = 14) -> float:
-        """RSI CORRETO - cálculo igual TradingView e Binance"""
-        if len(closes) < period + 1:
-            return 50.0
-        
-        # Calcular variações
-        changes = []
-        for i in range(1, len(closes)):
-            change = closes[i] - closes[i-1]
-            changes.append(change)
-        
-        # Pegar as últimas 'period' variações
-        recent_changes = changes[-period:] if len(changes) >= period else changes
-        
-        # Separar ganhos e perdas
-        gains = [max(0, change) for change in recent_changes]
-        losses = [max(0, -change) for change in recent_changes]
-        
-        # Calcular médias
-        avg_gain = sum(gains) / len(gains) if gains else 0
-        avg_loss = sum(losses) / len(losses) if losses else 0
-        
-        # Evitar divisão por zero
-        if avg_loss == 0:
-            return 100.0 if avg_gain > 0 else 50.0
-        
-        # Calcular RS e RSI
-        rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-        
-        # Garantir que está entre 0 e 100
-        rsi = max(0, min(100, rsi))
-        
-        return round(rsi, 2)
-
-    def rsi_wilder(self, closes: List[float], period: int = 14) -> float:
-        """RSI final CORRETO"""
-        return self.rsi_correto(closes, period)
-
-    def ema_correta(self, prices: List[float], period: int) -> List[float]:
-        """EMA CORRETA - cálculo preciso"""
-        if len(prices) < period:
-            return []
-        
-        emas = []
-        multiplier = 2 / (period + 1)
-        
-        # Primeira EMA é SMA
-        sma = sum(prices[:period]) / period
-        emas.append(sma)
-        
-        # EMA subsequentes
-        for i in range(period, len(prices)):
-            ema = (prices[i] * multiplier) + (emas[-1] * (1 - multiplier))
-            emas.append(ema)
-            
-        return emas
-
-    def macd_correto(self, closes: List[float]) -> Dict[str, Any]:
-        """MACD CORRETO - cálculo igual TradingView"""
-        if len(closes) < 35:
-            return {
-                "macd_line": 0.0,
-                "signal_line": 0.0,
-                "histogram": 0.0,
-                "signal": "neutral",
-                "strength": 0.0
-            }
-        
-        # Calcular EMAs
-        ema12 = self.ema_correta(closes, 12)
-        ema26 = self.ema_correta(closes, 26)
-        
-        if len(ema12) < 9 or len(ema26) < 9:
-            return {
-                "macd_line": 0.0,
-                "signal_line": 0.0,
-                "histogram": 0.0,
-                "signal": "neutral",
-                "strength": 0.0
-            }
-        
-        # MACD Line = EMA12 - EMA26
-        min_len = min(len(ema12), len(ema26))
-        macd_line_values = [ema12[i] - ema26[i] for i in range(min_len)]
-        
-        # Signal Line = EMA9 do MACD
-        signal_line_values = self.ema_correta(macd_line_values, 9)
-        
-        if not macd_line_values or not signal_line_values:
-            return {
-                "macd_line": 0.0,
-                "signal_line": 0.0,
-                "histogram": 0.0,
-                "signal": "neutral",
-                "strength": 0.0
-            }
-        
-        # Valores atuais
-        macd_line = macd_line_values[-1]
-        signal_line = signal_line_values[-1]
-        histogram = macd_line - signal_line
-        
-        # Determinar sinal e força
-        if macd_line > signal_line and histogram > 0:
-            signal = "bullish"
-            # Força baseada na distância da linha zero e diferença entre linhas
-            strength = min(1.0, (abs(macd_line) + abs(histogram)) / (abs(closes[-1]) * 0.01))
-        elif macd_line < signal_line and histogram < 0:
-            signal = "bearish"
-            strength = min(1.0, (abs(macd_line) + abs(histogram)) / (abs(closes[-1]) * 0.01))
-        else:
-            signal = "neutral"
-            strength = 0.0
-        
-        return {
-            "macd_line": round(macd_line, 6),
-            "signal_line": round(signal_line, 6),
-            "histogram": round(histogram, 6),
-            "signal": signal,
-            "strength": round(strength, 4)
-        }
-
-    def macd_detailed(self, closes: List[float]) -> Dict[str, Any]:
-        """MACD detalhado - usa o cálculo correto"""
-        return self.macd_correto(closes)
-
-    def macd(self, closes: List[float]) -> Dict[str, Any]:
-        """MACD para decisões"""
-        return self.macd_correto(closes)
-
-    def calculate_trend_strength(self, prices: List[float]) -> Dict[str, Any]:
-        """Tendência CORRIGIDA"""
+    def analyze_trend(self, prices):
+        """Analisa tendência usando médias móveis"""
         if len(prices) < 50:
-            return {"trend": "neutral", "strength": 0.0}
-            
-        short_ma = sum(prices[-10:]) / 10
-        medium_ma = sum(prices[-20:]) / 20
-        long_ma = sum(prices[-50:]) / 50
+            return "NEUTRO"
         
-        if short_ma > long_ma and medium_ma > long_ma:
-            trend = "bullish"
-            strength = min(1.0, (short_ma - long_ma) / long_ma * 5)
-        elif short_ma < long_ma and medium_ma < long_ma:
-            trend = "bearish"
-            strength = min(1.0, (long_ma - short_ma) / long_ma * 5)
+        ema9 = self.calculate_ema(prices, 9).iloc[-1]
+        ema21 = self.calculate_ema(prices, 21).iloc[-1]
+        current_price = prices.iloc[-1]
+        
+        if current_price > ema9 and ema9 > ema21:
+            return "ALTA"
+        elif current_price < ema9 and ema9 < ema21:
+            return "BAIXA"
         else:
-            trend = "neutral"
-            strength = 0.0
-        
-        return {"trend": trend, "strength": round(strength, 4)}
+            return "NEUTRO"
 
-# =========================
-# Sistema GARCH Melhorado
-# =========================
-class GARCHSystem:
-    def __init__(self):
-        self.paths = MC_PATHS
+    def generate_signal(self, pair):
+        """Gera sinal COMPRAR ou VENDER apenas"""
+        df = self.get_ohlc_data(pair)
+        if df is None or len(df) < 50:
+            return "ERRO", 0, 0, 0, 0, 0
         
-    def run_garch_analysis(self, base_price: float, returns: List[float]) -> Dict[str, float]:
-        if not returns or len(returns) < 10:
-            returns = [random.gauss(0, 0.02) for _ in range(50)]
-            
-        volatility = stats.stdev(returns) if len(returns) > 1 else 0.025
+        prices = df['close']
+        current_price = prices.iloc[-1]
+        previous_price = prices.iloc[-2] if len(prices) > 1 else current_price
         
-        up_count = 0
-        down_count = 0
+        # Calcula indicadores
+        macd, signal, histogram = self.calculate_macd(prices)
+        rsi = self.calculate_rsi(prices)
+        trend = self.analyze_trend(prices)
         
-        for _ in range(self.paths):
-            price = base_price
-            h = volatility ** 2
-            
-            drift = random.gauss(0.0002, 0.0005)
-            shock = math.sqrt(h) * random.gauss(0, 1)
-            
-            momentum = sum(returns[-5:]) / len(returns[-5:]) if len(returns) >= 5 else 0
-            price *= math.exp(drift + shock + momentum * 0.05)
-            
-            if price > base_price:
-                up_count += 1
-            else:
-                down_count += 1
-                
-        total_paths = up_count + down_count
-        if total_paths > 0:
-            prob_buy = up_count / total_paths
-            prob_sell = down_count / total_paths
+        # Lógica SIMPLES e DIRETA - apenas COMPRAR ou VENDER
+        buy_score = 0
+        sell_score = 0
+        
+        # MACD
+        if macd > signal:
+            buy_score += 2
         else:
-            prob_buy = prob_sell = 0.5
-
-        total = prob_buy + prob_sell
-        if total > 0:
-            prob_buy = prob_buy / total
-            prob_sell = prob_sell / total
-
-        return {
-            "probabilidade_compra": round(prob_buy, 4),
-            "probabilidade_venda": round(prob_sell, 4),
-            "volatilidade": round(volatility, 6)
-        }
-
-# =========================
-# SISTEMA DE DECISÃO INTELIGENTE
-# =========================
-class DecisionEngine:
-    def __init__(self):
-        pass
+            sell_score += 2
         
-    def make_final_decision(self, rsi: float, macd_signal: str, macd_strength: float,
-                          trend: str, trend_strength: float, trend_action: str) -> Dict:
-        """Toma decisão FINAL baseada em regras claras - SEMPRE COMPRA ou VENDA"""
+        # Tendência
+        if trend == "ALTA":
+            buy_score += 1
+        elif trend == "BAIXA":
+            sell_score += 1
         
-        # REGRA 1: RSI EXTREMO + MACD CONFIRMA → AÇÃO FORTE
-        if rsi < 35 and macd_signal == 'bullish' and macd_strength > 0.3:
-            return {'direction': 'buy', 'confidence': 0.80, 'reason': 'COMPRA FORTE: RSI sobrevendido + confirmação MACD'}
+        # RSI
+        if rsi < 40:
+            buy_score += 1
+        elif rsi > 60:
+            sell_score += 1
         
-        if rsi > 65 and macd_signal == 'bearish' and macd_strength > 0.3:
-            return {'direction': 'sell', 'confidence': 0.80, 'reason': 'VENDA FORTE: RSI sobrecomprado + confirmação MACD'}
-        
-        # REGRA 2: TENDÊNCIA FORTE + ALINHAMENTO
-        if trend == 'bullish' and trend_strength > 0.7 and rsi < 60:
-            return {'direction': 'buy', 'confidence': 0.75, 'reason': 'COMPRA: Tendência de alta forte + RSI não sobrecomprado'}
-        
-        if trend == 'bearish' and trend_strength > 0.7 and rsi > 40:
-            return {'direction': 'sell', 'confidence': 0.75, 'reason': 'VENDA: Tendência de baixa forte + RSI não sobrevendido'}
-        
-        # REGRA 3: MOMENTUM CONFIRMADO
-        if macd_strength > 0.5 and ((macd_signal == 'bullish' and rsi < 50) or (macd_signal == 'bearish' and rsi > 50)):
-            direction = 'buy' if macd_signal == 'bullish' else 'sell'
-            return {'direction': direction, 'confidence': 0.70, 'reason': f'MOMENTUM {direction.upper()}: MACD forte + RSI alinhado'}
-        
-        # REGRA 4: PREPARAÇÃO PARA REVERSÃO
-        if trend_action == 'prepare_reversal':
-            reversal_direction = 'sell' if trend == 'bullish' else 'buy'
-            return {'direction': reversal_direction, 'confidence': 0.70, 'reason': f'REVERSÃO {reversal_direction.upper()}: Transição de tendência detectada'}
-        
-        # REGRA 5: DECISÃO FORÇADA BASEADA NO RSI
-        if rsi < 45:
-            return {'direction': 'buy', 'confidence': 0.65, 'reason': 'COMPRA: RSI em zona de compra'}
-        elif rsi > 55:
-            return {'direction': 'sell', 'confidence': 0.65, 'reason': 'VENDA: RSI em zona de venda'}
-        
-        # ÚLTIMO RECURSO: DECISÃO BASEADA NA TENDÊNCIA
-        if trend == 'bullish':
-            return {'direction': 'buy', 'confidence': 0.60, 'reason': 'COMPRA: Tendência de alta predominante'}
-        elif trend == 'bearish':
-            return {'direction': 'sell', 'confidence': 0.60, 'reason': 'VENDA: Tendência de baixa predominante'}
+        # Decisão FINAL - apenas COMPRAR ou VENDER
+        if buy_score > sell_score:
+            return "COMPRAR", current_price, current_price - previous_price, rsi, macd, trend
         else:
-            return {'direction': 'buy', 'confidence': 0.55, 'reason': 'COMPRA: Análise neutra, tendendo para compra'}
+            return "VENDER", current_price, current_price - previous_price, rsi, macd, trend
 
-    def adjust_garch_probabilities(self, rsi: float, macd_signal: str, 
-                                 trend: str, garch_probs: Dict) -> Dict:
-        """Ajusta probabilidades GARCH baseado em indicadores reais"""
-        
-        prob_compra = garch_probs['probabilidade_compra']
-        prob_venda = garch_probs['probabilidade_venda']
-        
-        # AJUSTES BASEADOS NO RSI
-        if rsi < 30:
-            prob_compra = min(0.85, prob_compra + 0.3)
-            prob_venda = max(0.15, prob_venda - 0.3)
-        elif rsi < 35:
-            prob_compra = min(0.75, prob_compra + 0.2) 
-            prob_venda = max(0.25, prob_venda - 0.2)
-        elif rsi > 70:
-            prob_venda = min(0.85, prob_venda + 0.3)
-            prob_compra = max(0.15, prob_compra - 0.3)
-        elif rsi > 65:
-            prob_venda = min(0.75, prob_venda + 0.2)
-            prob_compra = max(0.25, prob_compra - 0.2)
-        
-        # AJUSTES BASEADOS NO MACD
-        if macd_signal == 'bullish':
-            prob_compra = min(0.80, prob_compra + 0.15)
-        elif macd_signal == 'bearish':
-            prob_venda = min(0.80, prob_venda + 0.15)
-        
-        # AJUSTES BASEADOS NA TENDÊNCIA
-        if trend == 'bullish':
-            prob_compra = min(0.75, prob_compra + 0.10)
-        elif trend == 'bearish':
-            prob_venda = min(0.75, prob_venda + 0.10)
-        
-        # NORMALIZAR
-        total = prob_compra + prob_venda
-        if total > 0:
-            prob_compra = prob_compra / total
-            prob_venda = prob_venda / total
-        
-        return {
-            "probabilidade_compra": round(prob_compra, 4),
-            "probabilidade_venda": round(prob_venda, 4),
-            "volatilidade": garch_probs['volatilidade']
-        }
-
-# =========================
-# IA EVOLUTIVA PRINCIPAL
-# =========================
-class EvolutionaryIntelligence:
-    def __init__(self):
-        self.trend_entry_system = TrendEntrySystem()
-        self.indicators = TechnicalIndicators()
-        self.garch = GARCHSystem()
-        self.decision_engine = DecisionEngine()
-        
-    def analyze_with_trend_focus(self, symbol: str, technical_data: Dict) -> Dict[str, Any]:
-        """Análise EVOLUTIVA focada em tendências"""
-        
-        closes = technical_data.get('closes', [])
-        current_price = technical_data.get('price', 100)
-        
-        if len(closes) < 50:
-            return self._create_forced_signal(symbol, current_price, "Dados insuficientes")
-        
-        # 1. ANÁLISE DE TENDÊNCIA AVANÇADA
-        trend_entry_signal = self.trend_entry_system.find_trend_entries(symbol, closes, current_price)
-        
-        # 2. INDICADORES TÉCNICOS CORRETOS
-        rsi = self.indicators.rsi_wilder(closes)
-        macd_result = self.indicators.macd(closes)
-        trend_result = self.indicators.calculate_trend_strength(closes)
-        
-        # 3. ANÁLISE PROBABILÍSTICA GARCH
-        returns = self._calculate_returns(closes)
-        garch_probs = self.garch.run_garch_analysis(current_price, returns)
-        
-        # 4. CORRIGIR PROBABILIDADES GARCH
-        garch_probs = self.decision_engine.adjust_garch_probabilities(
-            rsi, macd_result['signal'], trend_result['trend'], garch_probs
-        )
-        
-        # 5. DECISÃO FINAL INTELIGENTE
-        final_decision = self.decision_engine.make_final_decision(
-            rsi, macd_result['signal'], macd_result['strength'],
-            trend_result['trend'], trend_result['strength'], 
-            trend_entry_signal.get('trend_analysis', {}).get('action', 'wait_confirm')
-        )
-        
-        # 6. SÍNTESE COMPLETA DO SINAL
-        return self._create_comprehensive_signal(
-            symbol, 
-            final_decision,
-            technical_data,
-            rsi, 
-            macd_result, 
-            garch_probs,
-            trend_result,
-            trend_entry_signal
-        )
+def main():
+    st.markdown('<div class="main-header">🚀 ANALISADOR CRIPTO - SINAIS EM TEMPO REAL</div>', unsafe_allow_html=True)
     
-    def _calculate_returns(self, prices: List[float]) -> List[float]:
-        returns = []
-        for i in range(1, len(prices)):
-            if prices[i-1] != 0:
-                ret = (prices[i] - prices[i-1]) / prices[i-1]
-                returns.append(ret)
-        return returns if returns else [random.gauss(0, 0.015) for _ in range(20)]
+    # Info box
+    st.markdown("""
+    <div class="info-box">
+    <strong>📊 SISTEMA DE ANÁLISE AUTOMÁTICA</strong><br>
+    Análise em tempo real com base em MACD, RSI e Tendência para gerar sinais de COMPRAR ou VENDER
+    </div>
+    """, unsafe_allow_html=True)
     
-    def _create_comprehensive_signal(self, symbol: str, final_decision: Dict, 
-                                   technical_data: Dict, rsi: float, 
-                                   macd_result: Dict, garch_probs: Dict,
-                                   trend_result: Dict, trend_signal: Dict) -> Dict:
-        """Cria sinal completo e coerente"""
-        
-        current_time = datetime.now(timezone(timedelta(hours=-3))).strftime("%H:%M:%S BRT")
-        
-        return {
-            'symbol': symbol,
-            'direction': final_decision['direction'],
-            'confidence': round(final_decision['confidence'], 4),
-            'reason': final_decision['reason'],
-            'rsi': round(rsi, 2),
-            'macd_signal': macd_result['signal'],
-            'macd_strength': macd_result['strength'],
-            'macd_line': macd_result['macd_line'],
-            'signal_line': macd_result['signal_line'],
-            'macd_histogram': macd_result['histogram'],
-            'probabilidade_compra': garch_probs['probabilidade_compra'],
-            'probabilidade_venda': garch_probs['probabilidade_venda'],
-            'price': technical_data['price'],
-            'trend': trend_result['trend'],
-            'trend_strength': trend_result['strength'],
-            'entry_type': trend_signal.get('entry_type', 'motor_decisão'),
-            'risk_level': self._calculate_risk_level(final_decision['direction'], final_decision['confidence']),
-            'garch_volatility': garch_probs['volatilidade'],
-            'timestamp': current_time,
-            'entry_time': self._calculate_entry_time(),
-            'timeframe': 'T+1 (Próximo candle)',
-            'trend_analysis': trend_signal.get('trend_analysis', {})
-        }
+    # Inicializa a IA
+    ai = TradingSignalAI()
     
-    def _calculate_risk_level(self, direction: str, confidence: float) -> str:
-        """Calcula nível de risco"""
-        if confidence >= 0.75:
-            return 'baixo'
-        elif confidence >= 0.65:
-            return 'médio'
-        else:
-            return 'alto'
+    # Botão para atualizar dados
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button("🔄 Atualizar Dados", use_container_width=True, type="primary"):
+            st.rerun()
     
-    def _calculate_entry_time(self) -> str:
-        now = datetime.now(timezone(timedelta(hours=-3)))
-        entry_time = now + timedelta(minutes=1)
-        return entry_time.strftime("%H:%M BRT")
+    st.markdown("---")
     
-    def _create_forced_signal(self, symbol: str, price: float, reason: str) -> Dict[str, Any]:
-        """Sinal forçado - SEMPRE COMPRA ou VENDA"""
-        current_time = datetime.now(timezone(timedelta(hours=-3))).strftime("%H:%M:%S BRT")
-        
-        if price > 1000:
-            direction = 'sell'
-            confidence = 0.60
-            reason_final = f"VENDA: {reason} - Preço elevado"
-        else:
-            direction = 'buy'
-            confidence = 0.60
-            reason_final = f"COMPRA: {reason} - Oportunidade de entrada"
-        
-        return {
-            'symbol': symbol,
-            'direction': direction,
-            'confidence': confidence,
-            'reason': reason_final,
-            'rsi': 50.0,
-            'macd_signal': 'neutral',
-            'macd_strength': 0.0,
-            'macd_line': 0.0,
-            'signal_line': 0.0,
-            'macd_histogram': 0.0,
-            'probabilidade_compra': 0.5,
-            'probabilidade_venda': 0.5,
-            'price': price,
-            'trend': 'neutral',
-            'trend_strength': 0.5,
-            'entry_type': 'forçado',
-            'risk_level': 'alto',
-            'garch_volatility': 0.02,
-            'timestamp': current_time,
-            'entry_time': self._calculate_entry_time(),
-            'timeframe': 'T+1 (Próximo candle)',
-            'trend_analysis': {}
-        }
-
-# =========================
-# Sistema Principal
-# =========================
-class TradingSystem:
-    def __init__(self):
-        self.evolutionary_ai = EvolutionaryIntelligence()
-        self.data_gen = DataGenerator()
-        
-    def analyze_symbol(self, symbol: str) -> Dict[str, Any]:
-        try:
-            current_prices = self.data_gen.get_current_prices()
-            current_price = current_prices.get(symbol, 100)
-            historical_data = self.data_gen.get_historical_data(symbol)
-            
-            if not historical_data:
-                return self.evolutionary_ai._create_forced_signal(symbol, current_price, "Sem dados históricos")
-                
-            closes = [candle[3] for candle in historical_data]
-            
-            technical_data = {
-                'closes': closes,
-                'price': current_price
-            }
-            
-            signal = self.evolutionary_ai.analyze_with_trend_focus(symbol, technical_data)
-            return signal
-            
-        except Exception as e:
-            logger.error("analysis_error", symbol=symbol, error=str(e))
-            current_prices = self.data_gen.get_current_prices()
-            current_price = current_prices.get(symbol, 100)
-            return self.evolutionary_ai._create_forced_signal(symbol, current_price, f"Erro: {str(e)}")
-
-# =========================
-# Gerenciador e API
-# =========================
-class AnalysisManager:
-    def __init__(self):
-        self.is_analyzing = False
-        self.current_results: List[Dict[str, Any]] = []
-        self.best_opportunity: Optional[Dict[str, Any]] = None
-        self.analysis_time: Optional[str] = None
-        self.symbols_default = DEFAULT_SYMBOLS
-        self.system = TradingSystem()
-
-    def get_brazil_time(self) -> datetime:
-        return datetime.now(timezone(timedelta(hours=-3)))
-
-    def br_full(self, dt: datetime) -> str:
-        return dt.strftime("%d/%m/%Y %H:%M:%S BRT")
-
-    def analyze_symbols_thread(self, symbols: List[str]) -> None:
-        self.is_analyzing = True
-        logger.info("analysis_started", symbols_count=len(symbols))
-        
-        try:
-            all_signals = []
-            for symbol in symbols:
-                signal = self.system.analyze_symbol(symbol)
-                all_signals.append(signal)
-                
-            all_signals.sort(key=lambda x: x['confidence'], reverse=True)
-            self.current_results = all_signals
-            
-            if all_signals:
-                self.best_opportunity = all_signals[0]
-                logger.info("best_opportunity_found", 
-                           symbol=self.best_opportunity['symbol'],
-                           confidence=self.best_opportunity['confidence'],
-                           direction=self.best_opportunity['direction'])
-            
-            self.analysis_time = self.br_full(self.get_brazil_time())
-            logger.info("analysis_completed", results_count=len(all_signals))
-            
-        except Exception as e:
-            logger.error("analysis_error", error=str(e))
-            self.current_results = [self.system.evolutionary_ai._create_forced_signal(sym, 100, "Erro na análise") for sym in symbols]
-            self.best_opportunity = self.current_results[0] if self.current_results else None
-            self.analysis_time = self.br_full(self.get_brazil_time())
-        finally:
-            self.is_analyzing = False
-
-# =========================
-# Inicialização
-# =========================
-manager = AnalysisManager()
-
-def get_current_brazil_time() -> str:
-    return datetime.now(timezone(timedelta(hours=-3))).strftime("%H:%M:%S BRT")
-
-@app.route('/')
-def index():
-    current_time = get_current_brazil_time()
-    return Response(f'''
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>IA Signal Pro - RSI E MACD CORRETOS</title>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-            body {{
-                font-family: Arial, sans-serif;
-                margin: 0;
-                padding: 20px;
-                background: #0f1120;
-                color: white;
-            }}
-            .container {{
-                max-width: 1200px;
-                margin: 0 auto;
-            }}
-            .header {{
-                text-align: center;
-                margin-bottom: 30px;
-                background: #181a2e;
-                padding: 20px;
-                border-radius: 10px;
-            }}
-            .clock {{
-                font-size: 24px;
-                font-weight: bold;
-                color: #2aa9ff;
-                margin: 10px 0;
-            }}
-            .controls {{
-                background: #181a2e;
-                padding: 20px;
-                border-radius: 10px;
-                margin-bottom: 20px;
-            }}
-            .symbols-selection {{
-                background: #223148;
-                padding: 15px;
-                border-radius: 10px;
-                margin: 15px 0;
-            }}
-            .symbols-grid {{
-                display: grid;
-                grid-template-columns: repeat(3, 1fr);
-                gap: 10px;
-                margin: 10px 0;
-            }}
-            .symbol-checkbox {{
-                display: flex;
-                align-items: center;
-                gap: 8px;
-            }}
-            .symbol-checkbox input {{
-                transform: scale(1.2);
-            }}
-            button {{
-                background: #2aa9ff;
-                color: white;
-                border: none;
-                padding: 12px 24px;
-                border-radius: 5px;
-                cursor: pointer;
-                margin: 5px;
-                font-size: 16px;
-            }}
-            button:disabled {{
-                background: #666;
-                cursor: not-allowed;
-            }}
-            .results {{
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
-                gap: 20px;
-            }}
-            .signal-card {{
-                background: #223148;
-                padding: 20px;
-                border-radius: 10px;
-                border-left: 5px solid #2aa9ff;
-            }}
-            .signal-card.buy {{
-                border-left-color: #29d391;
-            }}
-            .signal-card.sell {{
-                border-left-color: #ff5b5b;
-            }}
-            .badge {{
-                display: inline-block;
-                padding: 4px 12px;
-                border-radius: 15px;
-                font-size: 12px;
-                margin-right: 8px;
-                font-weight: bold;
-            }}
-            .badge.buy {{ background: #0c5d4b; color: white; }}
-            .badge.sell {{ background: #5b1f1f; color: white; }}
-            .badge.confidence {{ background: #4a1f5f; color: white; }}
-            .badge.trend {{ background: #1f5f4a; color: white; }}
-            .badge.entry {{ background: #5f1f4a; color: white; }}
-            .badge.risk {{ background: #5f4a1f; color: white; }}
-            .badge.probability {{ background: #1f4a5f; color: white; }}
-            .info-line {{
-                margin: 8px 0;
-                padding: 8px;
-                background: #1b2b41;
-                border-radius: 5px;
-            }}
-            .best-card {{
-                background: linear-gradient(135deg, #223148, #2a3a5f);
-                border: 2px solid #f2a93b;
-            }}
-            .status {{
-                padding: 10px;
-                border-radius: 5px;
-                margin: 10px 0;
-            }}
-            .status.success {{ background: #0c5d4b; color: white; }}
-            .status.error {{ background: #5b1f1f; color: white; }}
-            .status.info {{ background: #1f5f4a; color: white; }}
-            .trend-line {{
-                background: #1f4a5f !important;
-                border-left: 3px solid #2aa9ff;
-            }}
-            .decision-line {{
-                background: #4a1f5f !important;
-                border-left: 3px solid #b36bff;
-            }}
-            .risk-high {{
-                background: #5b1f1f !important;
-                border-left: 3px solid #ff5b5b;
-            }}
-            .risk-medium {{
-                background: #5b4a1f !important;
-                border-left: 3px solid #f2a93b;
-            }}
-            .risk-low {{
-                background: #1f5f4a !important;
-                border-left: 3px solid #29d391;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="header">
-                <h1>🎯 IA Signal Pro - RSI E MACD CORRETOS</h1>
-                <div class="clock" id="currentTime">{current_time}</div>
-                <p>🚀 <strong>RSI PRECISO + MACD REAL</strong> | ✅ Valores iguais TradingView | 🎯 Decisões Confiáveis</p>
-                <p>🔧 <strong>Implementado:</strong> Cálculos corretos sem calibração inútil</p>
-            </div>
-            
-            <div class="controls">
-                <div class="symbols-selection">
-                    <h3>📈 Selecione os Ativos para Análise com Indicadores Corretos:</h3>
-                    <div class="symbols-grid" id="symbolsGrid">
-                        <div class="symbol-checkbox">
-                            <input type="checkbox" id="BTC-USDT" checked>
-                            <label for="BTC-USDT">BTC/USDT</label>
-                        </div>
-                        <div class="symbol-checkbox">
-                            <input type="checkbox" id="ETH-USDT" checked>
-                            <label for="ETH-USDT">ETH/USDT</label>
-                        </div>
-                        <div class="symbol-checkbox">
-                            <input type="checkbox" id="SOL-USDT" checked>
-                            <label for="SOL-USDT">SOL/USDT</label>
-                        </div>
-                        <div class="symbol-checkbox">
-                            <input type="checkbox" id="ADA-USDT" checked>
-                            <label for="ADA-USDT">ADA/USDT</label>
-                        </div>
-                        <div class="symbol-checkbox">
-                            <input type="checkbox" id="XRP-USDT" checked>
-                            <label for="XRP-USDT">XRP/USDT</label>
-                        </div>
-                        <div class="symbol-checkbox">
-                            <input type="checkbox" id="BNB-USDT" checked>
-                            <label for="BNB-USDT">BNB/USDT</label>
-                        </div>
-                    </div>
-                </div>
-                
-                <button onclick="runAnalysis()" id="analyzeBtn">🎯 Analisar com Indicadores Corretos</button>
-                <button onclick="checkStatus()">📊 Status do Sistema</button>
-                <div id="status" class="status info">
-                    ⏰ Hora atual: {current_time} | ✅ Sistema com Indicadores Corretos Online
-                </div>
-            </div>
-            
-            <div id="bestSignal" style="display: none;">
-                <h2>🥇 MELHOR OPORTUNIDADE - INDICADORES PRECISOS</h2>
-                <div id="bestCard"></div>
-            </div>
-            
-            <div id="allSignals" style="display: none;">
-                <h2>📊 TODOS OS SINAIS - VALORES REAIS</h2>
-                <div class="results" id="resultsGrid"></div>
-            </div>
-        </div>
-
-        <script>
-            function updateClock() {{
-                const now = new Date();
-                const brtOffset = -3 * 60;
-                const localOffset = now.getTimezoneOffset();
-                const brtTime = new Date(now.getTime() + (brtOffset + localOffset) * 60000);
-                
-                const timeString = brtTime.toLocaleTimeString('pt-BR', {{ 
-                    timeZone: 'America/Sao_Paulo',
-                    hour12: false 
-                }}) + ' BRT';
-                
-                document.getElementById('currentTime').textContent = timeString;
-            }}
-            
-            setInterval(updateClock, 1000);
-            updateClock();
-
-            function getSelectedSymbols() {{
-                const checkboxes = document.querySelectorAll('.symbol-checkbox input[type="checkbox"]');
-                const selected = [];
-                checkboxes.forEach(checkbox => {{
-                    if (checkbox.checked) {{
-                        selected.push(checkbox.id);
-                    }}
-                }});
-                return selected;
-            }}
-
-            async function runAnalysis() {{
-                const selectedSymbols = getSelectedSymbols();
-                if (selectedSymbols.length === 0) {{
-                    alert('Selecione pelo menos um ativo para análise.');
-                    return;
-                }}
-
-                const analyzeBtn = document.getElementById('analyzeBtn');
-                analyzeBtn.disabled = true;
-                analyzeBtn.textContent = '🎯 Analisando com Indicadores Corretos...';
-
-                try {{
-                    const response = await fetch('/analyze', {{
-                        method: 'POST',
-                        headers: {{
-                            'Content-Type': 'application/json',
-                        }},
-                        body: JSON.stringify({{ symbols: selectedSymbols }}),
-                    }});
-
-                    const result = await response.json();
+    # Cria colunas para os cards
+    cols = st.columns(2)
+    
+    # Analisa cada ativo
+    for i, asset in enumerate(ASSETS):
+        with cols[i % 2]:
+            with st.container():
+                with st.spinner(f"Analisando {asset}..."):
+                    signal, price, change, rsi, macd, trend = ai.generate_signal(asset)
                     
-                    if (result.success) {{
-                        document.getElementById('status').innerHTML = 
-                            '<div class="status success">✅ ' + result.message + '</div>';
-                        
-                        setTimeout(getResults, 1000);
-                    }} else {{
-                        document.getElementById('status').innerHTML = 
-                            '<div class="status error">❌ ' + result.message + '</div>';
-                    }}
-                }} catch (error) {{
-                    document.getElementById('status').innerHTML = 
-                        '<div class="status error">💥 Erro de conexão: ' + error.message + '</div>';
-                }} finally {{
-                    analyzeBtn.disabled = false;
-                    analyzeBtn.textContent = '🎯 Analisar com Indicadores Corretos';
-                }}
-            }}
-
-            async function getResults() {{
-                try {{
-                    const response = await fetch('/results');
-                    const data = await response.json();
+                    # Determina a cor do preço
+                    price_class = "price-up" if change >= 0 else "price-down"
+                    change_symbol = "↗" if change >= 0 else "↘"
+                    change_percent = (change / price) * 100 if price > 0 else 0
                     
-                    if (data.results && data.results.length > 0) {{
-                        displayResults(data.results, data.best_opportunity);
-                    }} else {{
-                        document.getElementById('status').innerHTML = 
-                            '<div class="status info">📊 Nenhum resultado disponível ainda. Execute uma análise primeiro.</div>';
-                    }}
-                }} catch (error) {{
-                    console.error('Error fetching results:', error);
-                }}
-            }}
-
-            function displayResults(results, best) {{
-                if (best) {{
-                    document.getElementById('bestSignal').style.display = 'block';
-                    document.getElementById('bestCard').innerHTML = createSignalCard(best, true);
-                }}
-                
-                document.getElementById('allSignals').style.display = 'block';
-                const resultsGrid = document.getElementById('resultsGrid');
-                resultsGrid.innerHTML = '';
-                
-                results.forEach(signal => {{
-                    if (!best || signal.symbol !== best.symbol) {{
-                        resultsGrid.innerHTML += createSignalCard(signal, false);
-                    }}
-                }});
-            }}
-
-            function createSignalCard(signal, isBest) {{
-                const directionClass = signal.direction;
-                const directionEmoji = signal.direction === 'buy' ? '🟢' : '🔴';
-                const directionText = signal.direction === 'buy' ? 'COMPRA' : 'VENDA';
-                const confidencePercent = (signal.confidence * 100).toFixed(1);
-                const trendStrengthPercent = (signal.trend_strength * 100).toFixed(1);
-                const priceFormatted = typeof signal.price === 'number' ? 
-                    signal.price.toLocaleString('pt-BR', {{ style: 'currency', currency: 'USD' }}) : 
-                    '$' + signal.price;
-                
-                const riskClass = 'risk-' + signal.risk_level;
-                const riskText = signal.risk_level === 'baixo' ? 'Baixo' : 
-                               signal.risk_level === 'médio' ? 'Médio' : 'Alto';
-                
-                return `<div class="signal-card ${{directionClass}} ${{isBest ? 'best-card' : ''}}">
-                    <h3>${{directionEmoji}} ${{signal.symbol}} ${{isBest ? '🏆' : ''}}</h3>
-                    <div class="info-line">
-                        <span class="badge ${{directionClass}}">${{directionText}}</span>
-                        <span class="badge confidence">${{confidencePercent}}% Confiança</span>
-                        <span class="badge trend">${{trendStrengthPercent}}% Força Trend</span>
-                        <span class="badge probability">COMPRA ${{(signal.probabilidade_compra * 100).toFixed(1)}}%</span>
-                    </div>
-                    <div class="info-line"><strong>🎯 Entrada:</strong> ${{signal.entry_time}}</div>
-                    <div class="info-line"><strong>💰 Preço Atual:</strong> ${{priceFormatted}}</div>
-                    <div class="info-line trend-line">
-                        <strong>📊 Tendência:</strong> ${{signal.trend}} | <strong>MACD:</strong> ${{signal.macd_signal}} (${{(signal.macd_strength * 100).toFixed(1)}}%)
-                    </div>
-                    <div class="info-line"><strong>📈 RSI:</strong> ${{signal.rsi}} ${{signal.rsi < 35 ? '(SOBREVENDIDO)' : signal.rsi > 65 ? '(SOBRECOMPRADO)' : ''}}</div>
-                    <div class="info-line"><strong>🔧 MACD Detalhado:</strong> Linha: ${{signal.macd_line}} | Sinal: ${{signal.signal_line}} | Hist: ${{signal.macd_histogram}}</div>
-                    <div class="info-line ${{riskClass}}">
-                        <strong>🎯 Tipo Entrada:</strong> ${{signal.entry_type}} | <strong>Risco:</strong> ${{riskText}}
-                    </div>
-                    <div class="info-line"><strong>📊 Probabilidade VENDA:</strong> ${{(signal.probabilidade_venda * 100).toFixed(1)}}%</div>
-                    <div class="info-line"><strong>🎲 Volatilidade GARCH:</strong> ${{(signal.garch_volatility * 100).toFixed(3)}}%</div>
-                    <div class="info-line decision-line"><strong>🚀 Decisão:</strong> ${{signal.reason}}</div>
-                    <div class="info-line"><strong>⏰ Análise:</strong> ${{signal.timestamp}}</div>
-                </div>`;
-            }}
-
-            async function checkStatus() {{
-                try {{
-                    const response = await fetch('/status');
-                    const status = await response.json();
+                    # Card do ativo
+                    st.markdown(f"""
+                    <div class="asset-card">
+                        <h3>{asset}</h3>
+                        <p><span class="{price_class}">${price:,.2f} {change_symbol} ({change_percent:+.2f}%)</span></p>
+                        <p><strong>RSI:</strong> {rsi:.1f}</p>
+                        <p><strong>MACD:</strong> {macd:.4f}</p>
+                        <p><strong>Tendência:</strong> {trend}</p>
+                    """, unsafe_allow_html=True)
                     
-                    let statusHtml = '<div class="status info">' +
-                        '<strong>🎯 Status do Sistema com Indicadores Corretos:</strong><br>' +
-                        '⏰ Hora: ' + status.current_time + '<br>' +
-                        '🔄 Analisando: ' + (status.is_analyzing ? 'Sim' : 'Não') + '<br>' +
-                        '📈 Resultados: ' + status.results_count + ' sinais<br>' +
-                        '🎯 Melhor: ' + (status.best_symbol || 'Nenhum') + '<br>' +
-                        '🕒 Última: ' + (status.last_analysis || 'Nenhuma') +
-                    '</div>';
+                    # Sinal
+                    if signal == "COMPRAR":
+                        st.markdown('<div class="signal-buy">🎯 SINAL: COMPRAR</div>', unsafe_allow_html=True)
+                    else:
+                        st.markdown('<div class="signal-sell">🎯 SINAL: VENDER</div>', unsafe_allow_html=True)
                     
-                    document.getElementById('status').innerHTML = statusHtml;
-                }} catch (error) {{
-                    document.getElementById('status').innerHTML = 
-                        '<div class="status error">💥 Erro ao verificar status: ' + error.message + '</div>';
-                }}
-            }}
-        </script>
-    </body>
-    </html>
-    ''', mimetype='text/html')
+                    st.markdown("</div>", unsafe_allow_html=True)
 
-@app.route('/analyze', methods=['POST'])
-def analyze():
-    try:
-        data = request.get_json()
-        symbols = data.get('symbols', DEFAULT_SYMBOLS)
-        
-        if manager.is_analyzing:
-            return jsonify({
-                'success': False,
-                'message': 'Análise já em andamento. Aguarde a conclusão.'
-            })
-        
-        thread = threading.Thread(target=manager.analyze_symbols_thread, args=(symbols,))
-        thread.daemon = True
-        thread.start()
-        
-        return jsonify({
-            'success': True,
-            'message': f'Análise com indicadores corretos iniciada para {len(symbols)} ativos.'
-        })
-        
-    except Exception as e:
-        logger.error("analyze_endpoint_error", error=str(e))
-        return jsonify({
-            'success': False,
-            'message': f'Erro ao iniciar análise: {str(e)}'
-        })
-
-@app.route('/results')
-def get_results():
-    try:
-        results = manager.current_results
-        best = manager.best_opportunity
-        
-        return jsonify({
-            'success': True,
-            'results': results,
-            'best_opportunity': best,
-            'analysis_time': manager.analysis_time,
-            'results_count': len(results)
-        })
-        
-    except Exception as e:
-        logger.error("results_endpoint_error", error=str(e))
-        return jsonify({
-            'success': False,
-            'message': f'Erro ao obter resultados: {str(e)}'
-        })
-
-@app.route('/status')
-def get_status():
-    try:
-        return jsonify({
-            'is_analyzing': manager.is_analyzing,
-            'results_count': len(manager.current_results),
-            'best_symbol': manager.best_opportunity['symbol'] if manager.best_opportunity else None,
-            'last_analysis': manager.analysis_time,
-            'current_time': get_current_brazil_time()
-        })
-    except Exception as e:
-        logger.error("status_endpoint_error", error=str(e))
-        return jsonify({'error': str(e)})
-
-if __name__ == '__main__':
-    print("🎯 IA Signal Pro - RSI E MACD CORRETOS")
-    print("🚀 Sistema Atualizado: Cálculos precisos igual TradingView")
-    print("✅ Implementado: RSI correto + MACD real sem calibração inútil")
-    print("📊 Ativos padrão:", DEFAULT_SYMBOLS)
-    print("🌐 Servidor iniciando na porta 8080...")
+    st.markdown("---")
     
-    app.run(host='0.0.0.0', port=8080, debug=False)
+    # Legenda
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("""
+        **🎯 LEGENDA DOS SINAIS:**
+        - **COMPRAR**: Condições favoráveis para entrada comprada
+        - **VENDER**: Condições favoráveis para entrada vendida
+        """)
+    
+    with col2:
+        st.markdown("""
+        **📊 INDICADORES:**
+        - **MACD**: Momentum e direção da tendência
+        - **RSI**: Força relativa do preço
+        - **Tendência**: Direção geral do mercado
+        """)
+    
+    # Timestamp da última atualização
+    st.markdown(f"<small>Última atualização: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}</small>", unsafe_allow_html=True)
+
+if __name__ == "__main__":
+    main()
