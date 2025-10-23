@@ -3,7 +3,6 @@ import pandas as pd
 import requests
 import numpy as np
 from datetime import datetime
-import time
 
 # Configuração da página
 st.set_page_config(
@@ -83,8 +82,7 @@ class TradingSignalAI:
                 df['close'] = pd.to_numeric(df['close'])
                 return df
         except Exception as e:
-            st.error(f"Erro ao buscar dados para {pair}: {str(e)}")
-        return None
+            return None
 
     def calculate_ema(self, prices, period):
         """Calcula EMA"""
@@ -129,7 +127,7 @@ class TradingSignalAI:
             return "NEUTRO"
 
     def generate_signal(self, pair):
-        """Gera sinal COMPRAR ou VENDER - LÓGICA DIRETA"""
+        """Gera sinal COMPRAR ou VENDER"""
         try:
             df = self.get_ohlc_data(pair)
             if df is None or len(df) < 50:
@@ -144,23 +142,23 @@ class TradingSignalAI:
             rsi = self.calculate_rsi(prices)
             trend = self.analyze_trend(prices)
             
-            # LÓGICA ULTRA SIMPLES - APENAS COMPRAR OU VENDER
+            # LÓGICA SIMPLES
             buy_signals = 0
             sell_signals = 0
             
-            # MACD (Sinal Principal)
+            # MACD
             if macd > signal and histogram > 0:
                 buy_signals += 2
             elif macd < signal and histogram < 0:
                 sell_signals += 2
             
-            # RSI (Confirmação)
+            # RSI
             if rsi < 35:
                 buy_signals += 1
             elif rsi > 65:
                 sell_signals += 1
             
-            # Tendência (Contexto)
+            # Tendência
             if trend == "ALTA":
                 buy_signals += 1
             elif trend == "BAIXA":
@@ -173,7 +171,7 @@ class TradingSignalAI:
                 return "VENDER", current_price, current_price - previous_price, rsi, macd, histogram, trend
                 
         except Exception as e:
-            return "ERRO", 0, 0, 0, 0, 0, f"ERRO"
+            return "ERRO", 0, 0, 0, 0, 0, "ERRO"
 
 def main():
     st.markdown('<div class="main-header">🚀 SINAIS TRADING - IA DIRETA</div>', unsafe_allow_html=True)
