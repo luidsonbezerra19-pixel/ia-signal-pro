@@ -2,8 +2,11 @@ import streamlit as st
 import pandas as pd
 import requests
 import numpy as np
-from datetime import datetime, timedelta
-import time
+from datetime import datetime
+import os
+
+# Configuração para Railway - Porta 8080
+PORT = int(os.environ.get("PORT", 8080))
 
 # Configuração da página
 st.set_page_config(
@@ -109,11 +112,15 @@ class TradingSignalAI:
     def calculate_rsi(self, prices, period=14):
         """Calcula RSI"""
         delta = prices.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-        rs = gain / loss
+        gain = (delta.where(delta > 0, 0)).fillna(0)
+        loss = (-delta.where(delta < 0, 0)).fillna(0)
+        
+        avg_gain = gain.rolling(window=period).mean()
+        avg_loss = loss.rolling(window=period).mean()
+        
+        rs = avg_gain / avg_loss
         rsi = 100 - (100 / (1 + rs))
-        return rsi.iloc[-1]
+        return rsi.iloc[-1] if not pd.isna(rsi.iloc[-1]) else 50
 
     def analyze_trend(self, prices):
         """Analisa tendência usando médias móveis"""
@@ -133,46 +140,49 @@ class TradingSignalAI:
 
     def generate_signal(self, pair):
         """Gera sinal COMPRAR ou VENDER apenas"""
-        df = self.get_ohlc_data(pair)
-        if df is None or len(df) < 50:
+        try:
+            df = self.get_ohlc_data(pair)
+            if df is None or len(df) < 50:
+                return "ERRO", 0, 0, 0, 0, 0
+            
+            prices = df['close']
+            current_price = prices.iloc[-1]
+            previous_price = prices.iloc[-2] if len(prices) > 1 else current_price
+            
+            # Calcula indicadores
+            macd, signal, histogram = self.calculate_macd(prices)
+            rsi = self.calculate_rsi(prices)
+            trend = self.analyze_trend(prices)
+            
+            # Lógica SIMPLES e DIRETA - apenas COMPRAR ou VENDER
+            buy_score = 0
+            sell_score = 0
+            
+            # MACD
+            if macd > signal:
+                buy_score += 2
+            else:
+                sell_score += 2
+            
+            # Tendência
+            if trend == "ALTA":
+                buy_score += 1
+            elif trend == "BAIXA":
+                sell_score += 1
+            
+            # RSI
+            if rsi < 40:
+                buy_score += 1
+            elif rsi > 60:
+                sell_score += 1
+            
+            # Decisão FINAL - apenas COMPRAR ou VENDER
+            if buy_score > sell_score:
+                return "COMPRAR", current_price, current_price - previous_price, rsi, macd, trend
+            else:
+                return "VENDER", current_price, current_price - previous_price, rsi, macd, trend
+        except Exception as e:
             return "ERRO", 0, 0, 0, 0, 0
-        
-        prices = df['close']
-        current_price = prices.iloc[-1]
-        previous_price = prices.iloc[-2] if len(prices) > 1 else current_price
-        
-        # Calcula indicadores
-        macd, signal, histogram = self.calculate_macd(prices)
-        rsi = self.calculate_rsi(prices)
-        trend = self.analyze_trend(prices)
-        
-        # Lógica SIMPLES e DIRETA - apenas COMPRAR ou VENDER
-        buy_score = 0
-        sell_score = 0
-        
-        # MACD
-        if macd > signal:
-            buy_score += 2
-        else:
-            sell_score += 2
-        
-        # Tendência
-        if trend == "ALTA":
-            buy_score += 1
-        elif trend == "BAIXA":
-            sell_score += 1
-        
-        # RSI
-        if rsi < 40:
-            buy_score += 1
-        elif rsi > 60:
-            sell_score += 1
-        
-        # Decisão FINAL - apenas COMPRAR ou VENDER
-        if buy_score > sell_score:
-            return "COMPRAR", current_price, current_price - previous_price, rsi, macd, trend
-        else:
-            return "VENDER", current_price, current_price - previous_price, rsi, macd, trend
 
 def main():
     st.markdown('<div class="main-header">🚀 ANALISADOR CRIPTO - SINAIS EM TEMPO REAL</div>', unsafe_allow_html=True)
@@ -203,31 +213,32 @@ def main():
     for i, asset in enumerate(ASSETS):
         with cols[i % 2]:
             with st.container():
-                with st.spinner(f"Analisando {asset}..."):
-                    signal, price, change, rsi, macd, trend = ai.generate_signal(asset)
-                    
-                    # Determina a cor do preço
-                    price_class = "price-up" if change >= 0 else "price-down"
-                    change_symbol = "↗" if change >= 0 else "↘"
-                    change_percent = (change / price) * 100 if price > 0 else 0
-                    
-                    # Card do ativo
-                    st.markdown(f"""
-                    <div class="asset-card">
-                        <h3>{asset}</h3>
-                        <p><span class="{price_class}">${price:,.2f} {change_symbol} ({change_percent:+.2f}%)</span></p>
-                        <p><strong>RSI:</strong> {rsi:.1f}</p>
-                        <p><strong>MACD:</strong> {macd:.4f}</p>
-                        <p><strong>Tendência:</strong> {trend}</p>
-                    """, unsafe_allow_html=True)
-                    
-                    # Sinal
-                    if signal == "COMPRAR":
-                        st.markdown('<div class="signal-buy">🎯 SINAL: COMPRAR</div>', unsafe_allow_html=True)
-                    else:
-                        st.markdown('<div class="signal-sell">🎯 SINAL: VENDER</div>', unsafe_allow_html=True)
-                    
-                    st.markdown("</div>", unsafe_allow_html=True)
+                signal, price, change, rsi, macd, trend = ai.generate_signal(asset)
+                
+                # Determina a cor do preço
+                price_class = "price-up" if change >= 0 else "price-down"
+                change_symbol = "↗" if change >= 0 else "↘"
+                change_percent = (change / price) * 100 if price > 0 else 0
+                
+                # Card do ativo
+                st.markdown(f"""
+                <div class="asset-card">
+                    <h3>{asset}</h3>
+                    <p><span class="{price_class}">${price:,.2f} {change_symbol} ({change_percent:+.2f}%)</span></p>
+                    <p><strong>RSI:</strong> {rsi:.1f}</p>
+                    <p><strong>MACD:</strong> {macd:.4f}</p>
+                    <p><strong>Tendência:</strong> {trend}</p>
+                """, unsafe_allow_html=True)
+                
+                # Sinal
+                if signal == "COMPRAR":
+                    st.markdown('<div class="signal-buy">🎯 SINAL: COMPRAR</div>', unsafe_allow_html=True)
+                elif signal == "VENDER":
+                    st.markdown('<div class="signal-sell">🎯 SINAL: VENDER</div>', unsafe_allow_html=True)
+                else:
+                    st.markdown('<div style="background-color: #FFE0B2; padding: 15px; border-radius: 8px; border-left: 5px solid #FF9800; margin: 10px 0; font-weight: bold;">⚠️ ERRO NA ANÁLISE</div>', unsafe_allow_html=True)
+                
+                st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("---")
     
