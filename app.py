@@ -1363,7 +1363,8 @@ class EnhancedTradingSystem:
         por_ativo={}; candidatos=[]
         for sym in symbols:
             tplus=[]
-            for h in (1,2,3):
+            # APENAS T+1 - Modificação aqui
+            for h in (1,):  # ← AGORA SÓ T+1
                 try:
                     r=self.analyze_symbol(sym,h)
                     r['label']=f"{sym} T+{h}"
@@ -1376,7 +1377,7 @@ class EnhancedTradingSystem:
                         "confidence":0.5,"label":f"{sym} T+{h}",
                         "timestamp": datetime.now().strftime("%H:%M:%S")
                     })
-            por_ativo[sym]={"tplus":tplus,"best_for_symbol":max(tplus,key=_rank_key_directional)}
+            por_ativo[sym]={"tplus":tplus,"best_for_symbol":tplus[0] if tplus else None}  # ← Como só tem um, é o primeiro
         best_overall=max(candidatos,key=_rank_key_directional) if candidatos else None
         return {"por_ativo":por_ativo,"best_overall":best_overall}
 
@@ -1654,7 +1655,7 @@ button{background:#2a9df4;cursor:pointer} button:disabled{opacity:.6;cursor:not-
   </div>
 
   <div class="section" id="allSec" style="display:none">
-    <div class="title">📊 TODOS OS HORIZONTES DE CADA ATIVO</div>
+    <div class="title">📊 SINAIS T+1 POR ATIVO</div>
     <div class="grid-syms" id="grid"></div>
   </div>
 </div>
@@ -1757,17 +1758,17 @@ async function fetchAndRenderResults(){
   const groups = {};
   (data.results||[]).forEach(it=>{ (groups[it.symbol]=groups[it.symbol]||[]).push(it); });
   const html = Object.keys(groups).sort().map(sym=>{
-    const arr = groups[sym].sort((a,b)=>(a.horizon||0)-(b.horizon||0));
-    const bestLocal = arr.slice().sort((a,b)=>rank(b)-rank(a))[0];
+    const arr = groups[sym];
+    const signal = arr[0]; // Apenas um sinal T+1 por ativo
     return `
       <div class="card">
         <div class="sym-head"><b>${sym}</b>
-          <span class="tag">TF: ${bestLocal?.multi_timeframe||'neutral'}</span>
-          <span class="tag">Liquidez: ${Number(bestLocal?.liquidity_score||0).toFixed(2)}</span>
-          ${bestLocal?.reversal ? `<span class="tag">🔄 Reversão (${bestLocal.reversal_side})</span>`:''}
+          <span class="tag">TF: ${signal?.multi_timeframe||'neutral'}</span>
+          <span class="tag">Liquidez: ${Number(signal?.liquidity_score||0).toFixed(2)}</span>
+          ${signal?.reversal ? `<span class="tag">🔄 Reversão (${signal.reversal_side})</span>`:''}
           <span class="tag ai-badge">🧠 IA Inteligente</span>
         </div>
-        ${arr.map(item=>renderTbox(item, bestLocal)).join('')}
+        ${renderTbox(signal)}
       </div>`;
   }).join('');
   gridEl.innerHTML = html;
@@ -1793,7 +1794,7 @@ function renderBest(best, analysisTime){
   return `
     <div class="small muted">Atualizado: ${analysisTime} (Horário Brasil) · IA Inteligente Ativa</div>
     <div class="line"></div>
-    <div><b>${best.symbol} T+${best.horizon}</b> ${badgeDir(best.direction)} <span class="tag">🥇 MELHOR ENTRE TODOS OS HORIZONTES</span>${rev} <span class="tag ai-badge">🧠 IA INTELIGENTE</span></div>
+    <div><b>${best.symbol} T+${best.horizon}</b> ${badgeDir(best.direction)} <span class="tag">🥇 MELHOR ENTRE TODOS OS ATIVOS</span>${rev} <span class="tag ai-badge">🧠 IA INTELIGENTE</span></div>
     <div class="kpis">
       <div class="kpi"><b>Prob Compra</b>${pct(best.probability_buy||0)}</div>
       <div class="kpi"><b>Prob Venda</b>${pct(best.probability_sell||0)}</div>
@@ -1809,15 +1810,16 @@ function renderBest(best, analysisTime){
     </div>`;
 }
 
-function renderTbox(it, bestLocal){
-  const isBest = bestLocal && it.symbol===bestLocal.symbol && it.horizon===bestLocal.horizon;
+function renderTbox(it){
+  if(!it) return '<div class="tbox">Erro ao carregar sinal</div>';
+  
   const rev = it.reversal ? ` <span class="tag">🔄 REVERSÃO (${it.reversal_side})</span>` : '';
   const confidence = it.intelligent_confidence || it.confidence;
   const reasoning = it.reasoning ? `<div class="small" style="color:#8ccf9d;margin-top:4px">🧠 ${it.reasoning.slice(0,2).join(' · ')}</div>` : '';
   
   return `
     <div class="tbox">
-      <div><b>T+${it.horizon}</b> ${badgeDir(it.direction)} ${isBest?'<span class="tag">🥇 MELHOR DO ATIVO</span>':''}${rev} <span class="tag ai-badge">🧠 IA</span></div>
+      <div><b>T+${it.horizon}</b> ${badgeDir(it.direction)}${rev} <span class="tag ai-badge">🧠 IA</span></div>
       <div class="small">
         Prob: <span class="${it.direction==='buy'?'ok':'err'}">${pct(it.probability_buy||0)}/${pct(it.probability_sell||0)}</span>
         · Conf IA: <span class="ok">${pct(confidence)}</span>
