@@ -327,6 +327,12 @@ class AdvancedIntelligenceEngine:
         elif (signal.get('direction') == 'buy' and prob_buy < 0.4) or (signal.get('direction') == 'sell' and prob_buy > 0.6):
             base_risk *= 0.9
             
+        # Ajuste por regime de mercado (suave; não bloqueia sinal)
+        regime = market_context.get('volatility_regime') or signal.get('market_regime')
+        if regime == "high" or regime == "high_volatility":
+            base_risk *= 0.92  # -8% em alta vol
+        elif regime == "low" or regime == "low_volatility":
+            base_risk *= 1.05  # +5% em baixa vol
         return base_risk
     
     def _calculate_adaptive_confidence(self, signal: Dict, market_context: Dict, pattern_confidence: Dict) -> Dict:
@@ -346,7 +352,9 @@ class AdvancedIntelligenceEngine:
             'convergence': technical_convergence * 0.2,
             'reliability': reliability * 0.1
         }
-        
+        # bônus quando há alta convergência
+        if technical_convergence >= 0.8:
+            confidence_components['technical'] = min(0.95, confidence_components['technical'] + 0.05)
         final_confidence = sum(confidence_components.values()) * risk_adjustment
         
         # Limites de confiança
@@ -731,7 +739,7 @@ def _calculate_directional_confidence(prob_direction: float, direction: str, rsi
         directional_boosts += 8.0
     
     total_score = base_confidence + directional_boosts
-    total_score *= (0.90 + (liquidity_score * 0.15))
+    total_score *= (0.97 + (liquidity_score * 0.06))
     
     return min(95.0, max(30.0, total_score)) / 100.0
 
@@ -1067,7 +1075,9 @@ class TechnicalIndicators:
         adx = sum(dx_vals[:period]) / period if len(dx_vals) >= period else sum(dx_vals) / len(dx_vals)
         for i in range(period, len(dx_vals)):
             adx = self._wilder_smooth(adx, dx_vals[i], period)
-        return round(max(0.0, min(100.0, adx)), 2)def macd(self, closes: List[float]) -> Dict[str, Any]:
+        return round(max(0.0, min(100.0, adx)), 2)
+
+    def macd(self, closes: List[float]) -> Dict[str, Any]:
         def ema(vals: List[float], n: int) -> List[float]:
             if not vals: return []
             k = 2 / (n + 1)
@@ -1448,6 +1458,15 @@ class EnhancedTradingSystem:
             tf_cons, rev_sig, liq
         )
 
+        # Penalização suave por distância da MA9 (evita topo/fundo esticado; não bloqueia)
+        try:
+            ma9 = sum(closes[-9:]) / 9 if len(closes) >= 9 else closes[-1]
+            dist9 = abs((raw[-1][4] - ma9) / max(1e-9, raw[-1][4]))
+            penalty = min(0.10, max(0.0, (dist9 - 0.004) * 6.0))  # começa em ~0.4%, limita em 10%
+            confidence = max(0.30, confidence * (1.0 - penalty))
+        except Exception:
+            pass
+
         # Análise bruta para IA
         raw_analysis = {
             'symbol': symbol,
@@ -1513,6 +1532,8 @@ class EnhancedTradingSystem:
             'last_volume_1m': round(volume_display, 8),
             'data_source': 'WS_COINAPI' if WS_FEED.enabled else ('CCXT' if self.spot._has_ccxt else 'HTTP'),
             'analysis_time_ms': round(analysis_duration, 2)
+        ,
+            'signal_strength': ('forte' if confidence >= 0.70 else ('normal' if confidence >= 0.55 else 'leve'))
         }
 
         # Adiciona dados de inteligência avançada se habilitada
