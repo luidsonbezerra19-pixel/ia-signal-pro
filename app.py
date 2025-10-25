@@ -8,6 +8,16 @@ from flask_cors import CORS
 import structlog
 from collections import deque, defaultdict
 
+# --- Imports extras para análise de foto ---
+try:
+    import base64 as _b64
+    import io as _io
+    import numpy as _np
+    from PIL import Image as _PILImage
+    import cv2 as _cv
+except Exception:
+    _b64 = _io = _np = _PILImage = _cv = None
+
 # =========================
 # Configuração de Logging Estruturado
 # =========================
@@ -1635,6 +1645,104 @@ class AnalysisManager:
         finally:
             self.is_analyzing=False
 
+
+# =========================
+# MÓDULO: Análise por Foto (proxy heurístico) — não altera fluxo existente
+# =========================
+class PhotoAnalyzer:
+    def __init__(self): pass
+    def _ensure(self):
+        if (_b64 is None) or (_io is None) or (_np is None) or (_PILImage is None) or (_cv is None):
+            raise RuntimeError("Dependências ausentes. Instale: pillow numpy opencv-python-headless")
+    def _read_image(self, data: bytes):
+        self._ensure()
+        arr = _np.frombuffer(data, _np.uint8)
+        img = _cv.imdecode(arr, _cv.IMREAD_COLOR)
+        if img is None:
+            pil = _PILImage.open(_io.BytesIO(data)).convert("RGB")
+            img = _cv.cvtColor(_np.array(pil), _cv.COLOR_RGB2BGR)
+        return img
+    def _pre(self, img):
+        h,w=img.shape[:2]; cut=0.05
+        return img[int(h*cut):int(h*(1-cut)), int(w*cut):int(w*(1-cut))]
+    def _edges(self, gray):
+        e=_cv.Canny(gray,60,150)
+        k=_np.ones((3,3),_np.uint8)
+        e=_cv.dilate(e,k,1); e=_cv.erode(e,k,1)
+        return e
+    def _trend_vol(self, edges):
+        ys,xs=_np.nonzero(edges)
+        if len(xs)<100: return 0.0,0.01
+        X=_np.vstack([xs,_np.ones_like(xs)]).T
+        m,b=_np.linalg.lstsq(X,ys,rcond=None)[0]
+        slope=-m/max(1.0,edges.shape[1]*0.75)
+        yfit=m*xs+b
+        vol=float(_np.std(ys-yfit)/max(1.0,edges.shape[0]))
+        return float(slope),float(vol)
+    def _rsi_proxy(self, gray):
+        gy=_cv.Sobel(gray,_cv.CV_32F,0,1,ksize=3)
+        gpos=float(_np.clip(gy[gy>0].mean() if (gy>0).any() else 0.0,0,255))
+        gneg=float(_np.clip((-gy[gy<0]).mean() if (gy<0).any() else 0.0,0,255))
+        base=50.0
+        if (gpos+gneg)>0:
+            base=100.0*(gpos/((gpos+gneg)+1e-9))
+        return float(max(0.0,min(100.0,base)))
+    def _ema(self,x,n):
+        k=2/(n+1); e=[float(x[0])]
+        for v in x[1:]: e.append(e[-1]+k*(float(v)-e[-1]))
+        return _np.array(e,dtype=float)
+    def _macd_proxy(self, series):
+        if len(series)<50: return {"signal":"neutral","strength":0.0}
+        ema12=self._ema(series,12); ema26=self._ema(series,26)
+        macd=ema12[-len(ema26):]-ema26; signal=self._ema(macd,9)
+        hist=float(macd[-1]-signal[-1]) if len(signal) else 0.0
+        if hist>0: return {"signal":"bullish","strength":min(1.0,abs(hist)/(series.mean()*0.02+1e-9))}
+        if hist<0: return {"signal":"bearish","strength":min(1.0,abs(hist)/(series.mean()*0.02+1e-9))}
+        return {"signal":"neutral","strength":0.0}
+    def extract_features(self, image_bytes: bytes)->dict:
+        img=self._read_image(image_bytes); img=self._pre(img)
+        gray=_cv.cvtColor(img,_cv.COLOR_BGR2GRAY)
+        edges=self._edges(gray)
+        slope,vol=self._trend_vol(edges)
+        lines=_cv.HoughLinesP(edges,1,_np.pi/180,threshold=60,minLineLength=20,maxLineGap=8)
+        adx=20.0
+        if lines is not None and len(lines)>0:
+            ang=[]
+            for l in lines[:500]:
+                x1,y1,x2,y2=l[0]; ang.append(_np.degrees(_np.arctan2((y2-y1),(x2-x1))))
+            if ang:
+                hist,_=_np.histogram(ang,bins=18,range=(-90,90))
+                kons=hist.max()/max(1,len(ang))
+                adx=float(15+80*min(1.0,max(0.0,(kons-0.25)/0.75)))
+        rsi=self._rsi_proxy(gray)
+        h,w=gray.shape[:2]; row=gray[int(h*0.5),:].astype(float)+1.0
+        macd=self._macd_proxy(row)
+        period=min(20,len(row))
+        if period>=12:
+            win=row[-period:]; ma=float(win.mean()); sd=float(win.std()); last=float(win[-1])
+            if   last>ma+2*sd: boll="overbought"
+            elif last<ma-2*sd: boll="oversold"
+            elif last>ma:      boll="bullish"
+            elif last<ma:      boll="bearish"
+            else:              boll="neutral"
+        else: boll="neutral"
+        tf = "buy" if slope>0.002 else ("sell" if slope<-0.002 else "neutral")
+        direction = "buy" if (slope>0 or macd["signal"]=="bullish") else "sell"
+        liq = float(max(0.0, min(1.0, 1.0 - (vol*3.0))))
+        base_pb = 0.5 + float(max(-0.35, min(0.35, slope*8.0)))
+        if macd["signal"]=="bullish": base_pb+=0.05
+        if boll=="oversold": base_pb+=0.05
+        if boll=="overbought": base_pb-=0.05
+        prob_buy=float(max(0.10,min(0.90,base_pb)))
+        return {
+            "symbol":"PHOTO","horizon":1,"rsi":float(rsi),"adx":float(round(adx,2)),
+            "macd_signal":macd["signal"],"boll_signal":boll,"multi_timeframe":tf,
+            "liquidity_score":liq,"reversal":False,"reversal_side":None,"reversal_proximity":0.0,
+            "probability_buy":prob_buy,"probability_sell":1.0-prob_buy,"price":None,
+            "volatility":float(vol),"market_regime":"normal" if vol<0.015 else ("high_volatility" if vol>0.03 else "normal"),
+            "confidence":0.55,"direction":direction
+        }
+
 manager=AnalysisManager()
 
 # =========================
@@ -2082,3 +2190,55 @@ if __name__ == "__main__":
                 enabled=FEATURE_FLAGS["enable_advanced_ai"],
                 learning=FEATURE_FLAGS["enable_learning"])
     app.run(host="0.0.0.0", port=port, threaded=True, debug=False)
+# =========================
+# ENDPOINT: Análise por Foto
+# =========================
+@app.post("/photo/analyze")
+def photo_analyze():
+    try:
+        if _cv is None:
+            return jsonify({"ok": False, "error": "Dependências ausentes. Instale: pillow numpy opencv-python-headless"}), 500
+        img_bytes=None
+        if request.files and "image" in request.files:
+            img_bytes = request.files["image"].read()
+        elif request.is_json:
+            data = request.get_json(silent=True) or {}
+            b64 = (data.get("image_base64") or "").strip()
+            if b64.startswith("data:"): b64 = b64.split(",",1)[-1]
+            if b64: 
+                try: img_bytes = _b64.b64decode(b64)
+                except Exception: return jsonify({"ok": False, "error": "Base64 inválido"}), 400
+        if not img_bytes:
+            return jsonify({"ok": False, "error": "Envie 'image' (arquivo) ou 'image_base64'"}), 400
+
+        pa = PhotoAnalyzer()
+        raw = pa.extract_features(img_bytes)
+
+        # Reutiliza a IA avançada existente via manager.system
+        intelligent = manager.system.intelligent_ai.analyze_with_high_accuracy(raw, [raw])
+
+        out = {
+            "ok": True,
+            "source": "PHOTO",
+            "direction": intelligent.get("direction"),
+            "final_confidence": float(intelligent.get("final_confidence", 0.55)),
+            "reasoning": intelligent.get("reasoning", []),
+            "quality_metrics": intelligent.get("quality_metrics", {}),
+            "market_context": intelligent.get("market_context", {}),
+            "pattern_analysis": intelligent.get("pattern_analysis", {}),
+            "confidence_breakdown": intelligent.get("confidence_breakdown", {}),
+            "technical_convergence": float(intelligent.get("technical_convergence", 0.5)),
+            "market_sentiment_alignment": float(intelligent.get("market_sentiment_alignment", 1.0)),
+            "risk_adjustment": float(intelligent.get("risk_adjustment", 1.0)),
+            "system_accuracy": float(intelligent.get("system_accuracy", 0.5)),
+            "photo_features": {
+                "rsi": raw["rsi"], "adx": raw["adx"], "macd_signal": raw["macd_signal"],
+                "boll_signal": raw["boll_signal"], "multi_timeframe": raw["multi_timeframe"],
+                "probability_buy_seed": raw["probability_buy"], "volatility": raw["volatility"],
+                "liquidity_score": raw["liquidity_score"]
+            }
+        }
+        return jsonify(out), 200
+    except Exception as e:
+        logger.error("photo_analyze_error", error=str(e))
+        return jsonify({"ok": False, "error": "Falha na análise de foto"}), 500
