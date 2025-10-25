@@ -1817,6 +1817,525 @@ def deep_health():
     
     return jsonify(health_data), 200
 
+# =========================
+# ANÁLISE POR FOTO - CORRIGIDO E FUNCIONAL
+# =========================
+class PhotoAnalyzer:
+    def _deps(self):
+        if cv is None:
+            raise RuntimeError("Dependências ausentes. Instale: pillow numpy opencv-python-headless")
+    
+    def _read(self, blob: bytes):
+        self._deps()
+        arr = np.frombuffer(blob, np.uint8)
+        img = cv.imdecode(arr, cv.IMREAD_COLOR)
+        if img is None:
+            pil = Image.open(io.BytesIO(blob)).convert("RGB")
+            img = cv.cvtColor(np.array(pil), cv.COLOR_RGB2BGR)
+        return img
+    
+    def _prep(self, img):
+        h, w = img.shape[:2]
+        c = 0.05
+        return img[int(h*c):int(h*(1-c)), int(w*c):int(w*(1-c))]
+    
+    def _edges(self, gray):
+        edges = cv.Canny(gray, 60, 150)
+        k = np.ones((3,3), np.uint8)
+        edges = cv.dilate(edges, k, 1)
+        edges = cv.erode(edges, k, 1)
+        return edges
+    
+    def _trend(self, edges):
+        ys, xs = np.nonzero(edges)
+        if len(xs) < 100: 
+            return 0.0, 0.01
+        
+        X = np.vstack([xs, np.ones_like(xs)]).T
+        m, b = np.linalg.lstsq(X, ys, rcond=None)[0]
+        slope = -m / max(1.0, edges.shape[1] * 0.75)
+        vol = float(np.std(ys - (m*xs+b)) / max(1.0, edges.shape[0]))
+        return float(slope), float(vol)
+    
+    def _rsi(self, gray):
+        gy = cv.Sobel(gray, cv.CV_32F, 0, 1, 3)
+        gpos = float(np.clip(gy[gy>0].mean() if (gy>0).any() else 0.0, 0, 255))
+        gneg = float(np.clip((-gy[gy<0]).mean() if (gy<0).any() else 0.0, 0, 255))
+        base = 100.0 * (gpos / (gpos + gneg + 1e-9)) if (gpos+gneg) > 0 else 50.0
+        return float(max(0.0, min(100.0, base)))
+    
+    def _macd(self, s):
+        if len(s) < 50: 
+            return {"signal": "neutral"}
+        
+        def ema(x, n):
+            k = 2/(n+1)
+            e = [float(x[0])]
+            for v in x[1:]: 
+                e.append(e[-1] + k*(float(v) - e[-1]))
+            return np.array(e)
+        
+        e12 = ema(s, 12)
+        e26 = ema(s, 26)
+        macd = e12[-len(e26):] - e26
+        sig = ema(macd, 9)
+        hist = float(macd[-1] - sig[-1])
+        
+        return {"signal": "bullish" if hist > 0 else ("bearish" if hist < 0 else "neutral")}
+    
+    def extract(self, blob: bytes):
+        img = self._prep(self._read(blob))
+        gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+        edges = self._edges(gray)
+        slope, vol = self._trend(edges)
+        
+        h, w = gray.shape[:2]
+        row = gray[int(h*0.5), :].astype(np.float32) + 1.0
+        
+        macd = self._macd(row)
+        
+        # Bollinger Bands proxy
+        p = min(20, len(row))
+        if p >= 12:
+            win = row[-p:]
+            ma = float(win.mean())
+            sd = float(win.std())
+            last = float(win[-1])
+            
+            if last > ma + 2*sd:
+                boll = "overbought"
+            elif last < ma - 2*sd:
+                boll = "oversold"
+            elif last > ma:
+                boll = "bullish"
+            elif last < ma:
+                boll = "bearish"
+            else:
+                boll = "neutral"
+        else:
+            boll = "neutral"
+        
+        # Timeframe analysis
+        tf = "buy" if slope > 0.002 else ("sell" if slope < -0.002 else "neutral")
+        
+        # Direction decision
+        direction = "buy" if (slope > 0 or macd["signal"] == "bullish") else "sell"
+        
+        # Probability calculation
+        prob = 0.5 + float(np.clip(slope * 8.0, -0.35, 0.35))
+        if macd["signal"] == "bullish": 
+            prob += 0.05
+        if boll == "oversold": 
+            prob += 0.05
+        if boll == "overbought": 
+            prob -= 0.05
+        
+        prob = max(0.10, min(0.90, prob))
+        
+        return {
+            "direction": direction,
+            "final_confidence": 0.55,
+            "metrics": {
+                "rsi": self._rsi(gray),
+                "adx": 25.0,
+                "macd": macd["signal"],
+                "boll": boll,
+                "volatility": float(vol),
+                "liquidity_score": float(max(0.0, min(1.0, 1.0 - (vol * 3.0)))),
+                "multi_timeframe": tf
+            },
+            "prob_buy": float(prob),
+            "reasoning": [
+                f"Direção com base em tendência/RSI/MACD/Bollinger (proxys).",
+                f"Tendência: {'alta' if slope > 0 else 'baixa' if slope < 0 else 'neutra'}",
+                f"Volatilidade: {'alta' if vol > 0.1 else 'baixa' if vol < 0.05 else 'média'}"
+            ]
+        }
+
+# Instância global do analisador de fotos
+PHOTO_ANALYZER = PhotoAnalyzer()
+
+@app.route('/analise-foto', methods=['GET'])
+def foto_page():
+    """Página de análise por foto"""
+    HTML = """
+<!doctype html>
+<html lang="pt-br">
+<head>
+    <meta charset="utf-8">
+    <title>📷 Análise por Foto - IA Signal Pro</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <style>
+        body {
+            background: #0f1120;
+            color: #dfe6ff;
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, "Helvetica Neue", Arial;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #181a2e;
+            border-radius: 16px;
+            padding: 24px;
+            border: 2px solid #2aa9ff;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 24px;
+        }
+        .header h1 {
+            margin: 0 0 8px 0;
+            font-size: 24px;
+            color: #2aa9ff;
+        }
+        .header .subtitle {
+            color: #9fb4ff;
+            font-size: 14px;
+        }
+        .upload-area {
+            border: 2px dashed #2aa9ff;
+            border-radius: 12px;
+            padding: 40px 20px;
+            text-align: center;
+            background: #223148;
+            margin-bottom: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .upload-area:hover {
+            background: #2a3a5a;
+            border-color: #4bc2ff;
+        }
+        .upload-area.dragover {
+            background: #2a3a5a;
+            border-color: #4bc2ff;
+        }
+        .file-input {
+            display: none;
+        }
+        .upload-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+        .upload-text {
+            margin-bottom: 16px;
+        }
+        .btn {
+            background: #2aa9ff;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            padding: 12px 24px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.3s ease;
+        }
+        .btn:hover {
+            background: #4bc2ff;
+        }
+        .btn:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+        .result {
+            margin-top: 24px;
+            padding: 20px;
+            background: #223148;
+            border-radius: 12px;
+            border: 1px solid #3b577a;
+            display: none;
+        }
+        .signal {
+            font-size: 20px;
+            font-weight: bold;
+            margin-bottom: 16px;
+            text-align: center;
+        }
+        .signal.buy {
+            color: #29d391;
+        }
+        .signal.sell {
+            color: #ff5b5b;
+        }
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .metric {
+            background: #1b2b41;
+            padding: 12px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .metric .label {
+            font-size: 12px;
+            color: #9fb4ff;
+        }
+        .metric .value {
+            font-size: 16px;
+            font-weight: bold;
+            margin-top: 4px;
+        }
+        .reasoning {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px dashed #3b577a;
+        }
+        .reasoning ul {
+            margin: 0;
+            padding-left: 20px;
+        }
+        .reasoning li {
+            margin-bottom: 8px;
+            color: #9fb4ff;
+        }
+        .back-btn {
+            display: inline-block;
+            margin-top: 16px;
+            color: #2aa9ff;
+            text-decoration: none;
+            font-weight: bold;
+        }
+        .back-btn:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📷 Análise por Foto</h1>
+            <div class="subtitle">Envie um print do gráfico para análise técnica automatizada</div>
+        </div>
+        
+        <div class="upload-area" id="uploadArea">
+            <div class="upload-icon">📁</div>
+            <div class="upload-text">
+                <strong>Clique aqui ou arraste uma imagem</strong><br>
+                Formatos: PNG, JPG • Tamanho máximo: 5MB
+            </div>
+            <input type="file" id="fileInput" class="file-input" accept="image/*">
+        </div>
+        
+        <button class="btn" id="analyzeBtn" disabled>📸 ANALISAR FOTO</button>
+        
+        <div class="result" id="result">
+            <div class="signal" id="signalText"></div>
+            <div class="metrics" id="metricsGrid"></div>
+            <div class="reasoning" id="reasoningList"></div>
+            <a href="/" class="back-btn">← Voltar ao Dashboard</a>
+        </div>
+    </div>
+
+    <script>
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const analyzeBtn = document.getElementById('analyzeBtn');
+        const result = document.getElementById('result');
+        const signalText = document.getElementById('signalText');
+        const metricsGrid = document.getElementById('metricsGrid');
+        const reasoningList = document.getElementById('reasoningList');
+        
+        let currentFile = null;
+        
+        // Upload area click
+        uploadArea.addEventListener('click', () => {
+            fileInput.click();
+        });
+        
+        // Drag and drop
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+        
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            
+            if (e.dataTransfer.files.length > 0) {
+                handleFileSelect(e.dataTransfer.files[0]);
+            }
+        });
+        
+        // File input change
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFileSelect(e.target.files[0]);
+            }
+        });
+        
+        function handleFileSelect(file) {
+            if (!file.type.match('image.*')) {
+                alert('Por favor, selecione apenas imagens (PNG, JPG)');
+                return;
+            }
+            
+            if (file.size > 5 * 1024 * 1024) {
+                alert('A imagem deve ter no máximo 5MB');
+                return;
+            }
+            
+            currentFile = file;
+            analyzeBtn.disabled = false;
+            uploadArea.innerHTML = `
+                <div style="color: #29d391;">✓</div>
+                <div>Arquivo selecionado: ${file.name}</div>
+                <div style="font-size: 12px; color: #9fb4ff;">Clique para alterar</div>
+            `;
+        }
+        
+        // Analyze button
+        analyzeBtn.addEventListener('click', async () => {
+            if (!currentFile) return;
+            
+            analyzeBtn.disabled = true;
+            analyzeBtn.textContent = '⏳ Analisando...';
+            
+            const formData = new FormData();
+            formData.append('image', currentFile);
+            
+            try {
+                const response = await fetch('/api/photo/analyze', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    displayResults(data);
+                } else {
+                    throw new Error(data.error || 'Erro na análise');
+                }
+                
+            } catch (error) {
+                alert('Erro ao analisar imagem: ' + error.message);
+            } finally {
+                analyzeBtn.disabled = false;
+                analyzeBtn.textContent = '📸 ANALISAR FOTO';
+            }
+        });
+        
+        function displayResults(data) {
+            result.style.display = 'block';
+            
+            // Signal
+            const direction = data.direction;
+            const confidence = (data.final_confidence * 100).toFixed(1);
+            
+            signalText.className = `signal ${direction}`;
+            signalText.innerHTML = `
+                ${direction === 'buy' ? '🟢 COMPRAR' : '🔴 VENDER'} 
+                <div style="font-size: 14px; margin-top: 4px;">Confiança: ${confidence}%</div>
+            `;
+            
+            // Metrics
+            const metrics = data.metrics || {};
+            metricsGrid.innerHTML = `
+                <div class="metric">
+                    <div class="label">RSI</div>
+                    <div class="value">${metrics.rsi?.toFixed(1) || 'N/A'}</div>
+                </div>
+                <div class="metric">
+                    <div class="label">ADX</div>
+                    <div class="value">${metrics.adx?.toFixed(1) || 'N/A'}</div>
+                </div>
+                <div class="metric">
+                    <div class="label">MACD</div>
+                    <div class="value">${metrics.macd || 'N/A'}</div>
+                </div>
+                <div class="metric">
+                    <div class="label">Bollinger</div>
+                    <div class="value">${metrics.boll || 'N/A'}</div>
+                </div>
+                <div class="metric">
+                    <div class="label">Volatilidade</div>
+                    <div class="value">${metrics.volatility?.toFixed(3) || 'N/A'}</div>
+                </div>
+                <div class="metric">
+                    <div class="label">Liquidez</div>
+                    <div class="value">${metrics.liquidity_score?.toFixed(2) || 'N/A'}</div>
+                </div>
+            `;
+            
+            // Reasoning
+            const reasoning = data.reasoning || [];
+            reasoningList.innerHTML = `
+                <strong>Análise Técnica:</strong>
+                <ul>
+                    ${reasoning.map(reason => `<li>${reason}</li>`).join('')}
+                </ul>
+            `;
+            
+            // Scroll to results
+            result.scrollIntoView({ behavior: 'smooth' });
+        }
+    </script>
+</body>
+</html>
+    """
+    return Response(HTML, mimetype='text/html')
+
+@app.route('/api/photo/analyze', methods=['POST'])
+def api_photo_analyze():
+    """Endpoint para análise de foto"""
+    try:
+        if 'image' not in request.files:
+            return jsonify({
+                "success": False,
+                "error": "Nenhuma imagem enviada"
+            }), 400
+        
+        file = request.files['image']
+        if file.filename == '':
+            return jsonify({
+                "success": False,
+                "error": "Nenhum arquivo selecionado"
+            }), 400
+        
+        if not file.content_type.startswith('image/'):
+            return jsonify({
+                "success": False,
+                "error": "Arquivo deve ser uma imagem (PNG, JPG)"
+            }), 400
+        
+        # Analisar a imagem
+        image_bytes = file.read()
+        analysis_result = PHOTO_ANALYZER.extract(image_bytes)
+        
+        return jsonify({
+            "success": True,
+            "direction": analysis_result["direction"],
+            "final_confidence": analysis_result["final_confidence"],
+            "metrics": analysis_result["metrics"],
+            "probability_buy": analysis_result["prob_buy"],
+            "probability_sell": 1.0 - analysis_result["prob_buy"],
+            "reasoning": analysis_result["reasoning"]
+        })
+        
+    except Exception as e:
+        logger.error("photo_analysis_error", error=str(e))
+        return jsonify({
+            "success": False,
+            "error": f"Erro ao processar imagem: {str(e)}"
+        }), 500
+
+# Adicionar também o endpoint antigo para compatibilidade
+@app.route('/analisar-foto', methods=['POST'])
+def analisar_foto_legacy():
+    """Endpoint legado para análise de foto"""
+    return api_photo_analyze()
+
 @app.get("/")
 def index():
     symbols_js = json.dumps(DEFAULT_SYMBOLS)
@@ -2092,193 +2611,3 @@ if __name__ == "__main__":
                 enabled=FEATURE_FLAGS["enable_advanced_ai"],
                 learning=FEATURE_FLAGS["enable_learning"])
     app.run(host="0.0.0.0", port=port, threaded=True, debug=False)
-
-
-# === [FOTO ANALYZER + ROTAS - AUTO-ADDED] ====================================
-class PhotoAnalyzer:
-    def _deps(self):
-        if cv is None:
-            raise RuntimeError("Dependências ausentes. Instale: pillow numpy opencv-python-headless")
-    def _read(self, blob: bytes):
-        self._deps()
-        arr = np.frombuffer(blob, np.uint8)
-        img = cv.imdecode(arr, cv.IMREAD_COLOR)
-        if img is None:
-            pil = Image.open(io.BytesIO(blob)).convert("RGB")
-            img = cv.cvtColor(np.array(pil), cv.COLOR_RGB2BGR)
-        return img
-    def _prep(self, img):
-        h,w = img.shape[:2]; c=0.05
-        return img[int(h*c):int(h*(1-c)), int(w*c):int(w*(1-c))]
-    def _edges(self, gray):
-        edges = cv.Canny(gray, 60, 150)
-        k = np.ones((3,3), np.uint8)
-        edges = cv.dilate(edges, k, 1); edges = cv.erode(edges, k, 1)
-        return edges
-    def _trend(self, edges):
-        ys,xs = np.nonzero(edges)
-        if len(xs) < 100: return 0.0, 0.01
-        X = np.vstack([xs, np.ones_like(xs)]).T
-        m,b = np.linalg.lstsq(X, ys, rcond=None)[0]
-        slope = -m / max(1.0, edges.shape[1]*0.75)
-        vol = float(np.std(ys - (m*xs+b)) / max(1.0, edges.shape[0]))
-        return float(slope), float(vol)
-    def _rsi(self, gray):
-        gy = cv.Sobel(gray, cv.CV_32F, 0, 1, 3)
-        gpos = float(np.clip(gy[gy>0].mean() if (gy>0).any() else 0.0, 0, 255))
-        gneg = float(np.clip((-gy[gy<0]).mean() if (gy<0).any() else 0.0, 0, 255))
-        base = 100.0 * (gpos / (gpos + gneg + 1e-9)) if (gpos+gneg)>0 else 50.0
-        return float(max(0.0, min(100.0, base)))
-    def _macd(self, s):
-        if len(s) < 50: return {"signal":"neutral"}
-        def ema(x,n):
-            k=2/(n+1); e=[float(x[0])]
-            for v in x[1:]: e.append(e[-1]+k*(float(v)-e[-1]))
-            return np.array(e)
-        e12=ema(s,12); e26=ema(s,26); macd=e12[-len(e26):]-e26; sig=ema(macd,9)
-        hist = float(macd[-1]-sig[-1])
-        return {"signal":"bullish" if hist>0 else ("bearish" if hist<0 else "neutral")}
-    def extract(self, blob: bytes):
-        img = self._prep(self._read(blob)); gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
-        edges = self._edges(gray); slope, vol = self._trend(edges)
-        h,w = gray.shape[:2]; row = gray[int(h*0.5), :].astype(np.float32)+1.0
-        macd = self._macd(row)
-        # boll proxy
-        p=min(20,len(row))
-        if p>=12:
-            win=row[-p:]; ma=float(win.mean()); sd=float(win.std()); last=float(win[-1])
-            if   last>ma+2*sd: boll="overbought"
-            elif last<ma-2*sd: boll="oversold"
-            elif last>ma:      boll="bullish"
-            elif last<ma:      boll="bearish"
-            else:              boll="neutral"
-        else: boll="neutral"
-        tf = "buy" if slope>0.002 else ("sell" if slope<-0.002 else "neutral")
-        direction = "buy" if (slope>0 or macd["signal"]=="bullish") else "sell"
-        prob=0.5+float(np.clip(slope*8.0,-0.35,0.35))
-        if macd["signal"]=="bullish": prob+=0.05
-        if boll=="oversold": prob+=0.05
-        if boll=="overbought": prob-=0.05
-        prob=max(0.10,min(0.90,prob))
-        return {
-            "direction": direction,
-            "final_confidence": 0.55,
-            "metrics": {
-                "rsi": self._rsi(gray),
-                "adx": 25.0,
-                "macd": macd["signal"],
-                "boll": boll,
-                "volatility": float(vol),
-                "liquidity_score": float(max(0.0,min(1.0,1.0-(vol*3.0)))),
-                "multi_timeframe": tf
-            },
-            "prob_buy": float(prob)
-        }
-
-# obtenha app/Flask já existente, sem criar outro
-try:
-    _app_ref = app  # type: ignore
-except NameError:
-    from flask import Flask
-    app = Flask(__name__)
-    _app_ref = app
-
-from flask import request, jsonify, render_template_string
-_PHOTO = PhotoAnalyzer()
-
-# Endpoint RELATIVO + alias absoluto (evita 404 por prefixo de proxy)
-@_app_ref.post("/analisar-foto")
-@_app_ref.post("/photo/analyze")
-def _analisar_foto():
-    image_bytes = None
-    if request.files and "image" in request.files:
-        image_bytes = request.files["image"].read()
-    elif request.is_json:
-        data = request.get_json(silent=True) or {}
-        b64 = (data.get("image_base64") or "").strip()
-        if b64.startswith("data:"):
-            b64 = b64.split(",", 1)[-1]
-        if b64:
-            try:
-                image_bytes = base64.b64decode(b64)
-            except Exception:
-                return jsonify({"ok": False, "error": "Base64 inválido"}), 400
-    if not image_bytes:
-        return jsonify({"ok": False, "error": "Envie 'image' (arquivo) ou 'image_base64'"}), 400
-    try:
-        res = _PHOTO.extract(image_bytes)
-    except Exception as e:
-        return jsonify({"ok": False, "error": f"Falha ao analisar imagem: {e}"}), 500
-    return jsonify({
-        "ok": True,
-        "direction": res["direction"],
-        "final_confidence": float(res["final_confidence"]),
-        "metrics": res["metrics"],
-        "probability_buy": float(res["prob_buy"]),
-        "reasoning": [
-            f"Direção com base em tendência/RSI/MACD/Bollinger (proxys)."
-        ]
-    }), 200
-
-# Página dedicada com o card exato (não mexe no restante do dashboard)
-_FOTO_HTML = r"""<!doctype html>
-<html lang="pt-br">
-<head>
-<meta charset="utf-8">
-<title>📷 Análise por Foto</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-  body{background:#0b1220;color:#e9eef2;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial,sans-serif;margin:0}
-  .wrap{max-width:1200px;margin:24px auto;padding:0 16px}
-  .card{background:#0f1627;border:1px dashed #2a3552;border-radius:16px;padding:18px}
-  .hd{font-weight:800;font-size:20px;margin-bottom:8px;display:flex;gap:8px;align-items:center}
-  .drop{border:2px dashed #2a3552;border-radius:12px;padding:20px;text-align:center;background:#0e1524}
-  .btn{background:#3a86ff;color:#fff;border:none;border-radius:10px;padding:12px 18px;font-weight:800;cursor:pointer;margin-top:10px}
-  .muted{color:#9db0d1}
-  .out{white-space:pre-wrap;background:#0e1524;border:1px solid #223152;border-radius:12px;padding:16px;margin-top:14px;font-family:ui-monospace,Consolas,Monaco}
-</style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="card">
-      <div class="hd">📷 Análise por Foto (Print do Gráfico)</div>
-      <div class="drop">
-        <input type="file" id="file" accept="image/*">
-        <div class="muted" style="margin-top:6px">Formatos aceitos: PNG/JPG • Tamanho recomendado ≤ 5 MB</div>
-        <button class="btn" id="send">📸 ENVIAR E ANALISAR FOTO</button>
-      </div>
-      <div class="out" id="result" style="display:none"></div>
-    </div>
-  </div>
-<script>
-const fileInput = document.getElementById('file');
-const btn = document.getElementById('send');
-const out = document.getElementById('result');
-let blob = null;
-fileInput.addEventListener('change', (e)=>{ blob = e.target.files[0] || null; });
-btn.addEventListener('click', async ()=>{
-  if(!blob){ out.style.display='block'; out.textContent='Selecione uma imagem.'; return; }
-  btn.disabled = true; out.style.display='block'; out.textContent='Enviando e analisando...';
-  try{
-    const fd = new FormData(); fd.append('image', blob);
-    const res = await fetch('analisar-foto', { method:'POST', body: fd }); // RELATIVO
-    const data = await res.json();
-    if(!data.ok){ out.textContent = 'Erro: ' + (data.error || 'Falha desconhecida'); btn.disabled=false; return; }
-    const pill = data.direction==='buy' ? 'COMPRAR' : 'VENDER';
-    const conf = (data.final_confidence*100).toFixed(1) + '%';
-    let lines = 'Sinal: ' + pill + '\\nConfiança: ' + conf + '\\n';
-    lines += '\\nMétricas:\\n' + JSON.stringify(data.metrics || {}, null, 2);
-    if((data.reasoning||[]).length){ lines += '\\n\\nMotivos:\\n- ' + (data.reasoning||[]).join('\\n- '); }
-    out.textContent = lines;
-  }catch(err){
-    out.textContent = 'Erro de rede: ' + err;
-  }
-  btn.disabled=false;
-});
-</script>
-</body>
-</html>"""
-@_app_ref.get("/analise-foto")
-def _foto_page():
-    return render_template_string(_FOTO_HTML)
-# === [FIM FOTO] ===============================================================
