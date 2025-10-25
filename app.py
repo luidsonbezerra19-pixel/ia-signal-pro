@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 """
-IA Signal Pro — Análise PRECISA COM HORÁRIO
-Inclui horário da entrada e relógio em tempo real
+IA Signal Pro — Análise PRECISA COM HORÁRIO CORRETO
+Entrada sempre no próximo minuto
 """
 
 import io
@@ -15,7 +15,7 @@ from flask import Flask, jsonify, render_template_string, request
 from PIL import Image, ImageFilter
 
 # =========================
-#  IA PRECISA COM HORÁRIO
+#  IA PRECISA COM HORÁRIO CORRETO
 # =========================
 class PreciseAnalyzer:
     def _load_image(self, blob: bytes) -> Image.Image:
@@ -134,21 +134,20 @@ class PreciseAnalyzer:
         return float(volume_proxy)
 
     def _get_entry_timeframe(self) -> Dict[str, str]:
-        """Calcula o horário da entrada baseado no tempo atual"""
+        """Calcula o horário da entrada CORRETO - PRÓXIMO MINUTO"""
         now = datetime.datetime.now()
         
-        # Define o timeframe da entrada (próximos 1-5 minutos)
-        entry_minutes = random.randint(1, 5)
-        entry_time = now + datetime.timedelta(minutes=entry_minutes)
+        # Entrada sempre no PRÓXIMO MINUTO (ex: 19:50:37 → 19:51:00)
+        next_minute = now.replace(second=0, microsecond=0) + datetime.timedelta(minutes=1)
         
         # Formata os horários
         current_time = now.strftime("%H:%M:%S")
-        entry_time_str = entry_time.strftime("%H:%M:%S")
+        entry_time_str = next_minute.strftime("%H:%M")
         
         return {
             "current_time": current_time,
             "entry_time": entry_time_str,
-            "timeframe": f"Próximos {entry_minutes} min"
+            "timeframe": "Próximo minuto"
         }
 
     def analyze(self, blob: bytes) -> Dict[str, Any]:
@@ -162,7 +161,7 @@ class PreciseAnalyzer:
             support_resistance = self._calculate_support_resistance(img_array)
             volume = self._analyze_volume_proxy(img_array)
             
-            # Horário da entrada
+            # Horário da entrada CORRETO
             time_info = self._get_entry_timeframe()
             
             # ========== DECISÃO PRECISA E INTELIGENTE ==========
@@ -271,18 +270,17 @@ class PreciseAnalyzer:
             }
             
         except Exception as e:
-            # Fallback com horário
+            # Fallback com horário CORRETO
             now = datetime.datetime.now()
-            entry_time = (now + datetime.timedelta(minutes=2)).strftime("%H:%M:%S")
-            current_time = now.strftime("%H:%M:%S")
+            next_minute = now.replace(second=0, microsecond=0) + datetime.timedelta(minutes=1)
             
             return {
                 "direction": "buy",
                 "final_confidence": 0.55,
                 "entry_signal": "🎯 COMPRAR - ANÁLISE ESTATÍSTICA DE MERCADO",
-                "entry_time": entry_time,
-                "timeframe": "Próximos 2 min",
-                "analysis_time": current_time,
+                "entry_time": next_minute.strftime("%H:%M"),
+                "timeframe": "Próximo minuto",
+                "analysis_time": now.strftime("%H:%M:%S"),
                 "metrics": {
                     "trend_direction": 1,
                     "trend_strength": 45.0,
@@ -310,7 +308,7 @@ HTML_TEMPLATE = '''
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IA Signal Pro - ANÁLISE COM HORÁRIO</title>
+    <title>IA Signal Pro - HORÁRIO CORRETO</title>
     <style>
         * {
             margin: 0;
@@ -536,7 +534,7 @@ HTML_TEMPLATE = '''
     <div class="container">
         <div class="header">
             <div class="title">🎯 IA SIGNAL PRO</div>
-            <div class="subtitle">ANÁLISE COM HORÁRIO DE ENTRADA PRECISO</div>
+            <div class="subtitle">ENTRADA NO PRÓXIMO MINUTO - HORÁRIO CORRETO</div>
             
             <div class="live-clock">
                 <div class="clock-time" id="liveTime">--:--:--</div>
@@ -562,11 +560,11 @@ HTML_TEMPLATE = '''
                 </div>
                 <div class="time-item">
                     <span class="time-label">🎯 Entrada Recomendada:</span>
-                    <span class="time-value" id="entryTime">--:--:--</span>
+                    <span class="time-value" id="entryTime">--:--</span>
                 </div>
                 <div class="time-item">
                     <span class="time-label">⏱️ Timeframe:</span>
-                    <span class="time-value" id="timeframe">--</span>
+                    <span class="time-value" id="timeframe">Próximo minuto</span>
                 </div>
             </div>
             
@@ -632,8 +630,15 @@ HTML_TEMPLATE = '''
             // Atualiza horário atual
             const now = new Date();
             analysisTime.textContent = now.toLocaleTimeString('pt-BR');
-            entryTime.textContent = 'Calculando...';
-            timeframe.textContent = 'Processando...';
+            
+            // Calcula próximo minuto para entrada
+            const nextMinute = new Date(now);
+            nextMinute.setMinutes(nextMinute.getMinutes() + 1);
+            nextMinute.setSeconds(0);
+            nextMinute.setMilliseconds(0);
+            
+            entryTime.textContent = nextMinute.toLocaleTimeString('pt-BR').slice(0, 5); // Apenas HH:mm
+            timeframe.textContent = 'Próximo minuto';
             
             reasoningText.textContent = 'Processando análise técnica...';
             confidenceText.textContent = '';
@@ -672,8 +677,8 @@ HTML_TEMPLATE = '''
                     
                     // Atualiza informações de tempo
                     analysisTime.textContent = data.analysis_time || '--:--:--';
-                    entryTime.textContent = data.entry_time || '--:--:--';
-                    timeframe.textContent = data.timeframe || '--';
+                    entryTime.textContent = data.entry_time || '--:--';
+                    timeframe.textContent = data.timeframe || 'Próximo minuto';
                     
                     reasoningText.textContent = data.reasoning;
                     confidenceText.textContent = `Confiança: ${confidence}%`;
@@ -715,24 +720,32 @@ HTML_TEMPLATE = '''
                     metricsText.innerHTML = metricsHtml;
                     
                 } else {
-                    // Fallback com horário atual
+                    // Fallback com horário CORRETO
                     const now = new Date();
+                    const nextMinute = new Date(now);
+                    nextMinute.setMinutes(nextMinute.getMinutes() + 1);
+                    nextMinute.setSeconds(0);
+                    
                     signalText.className = 'signal-buy';
                     signalText.textContent = '🎯 COMPRAR';
                     analysisTime.textContent = now.toLocaleTimeString('pt-BR');
-                    entryTime.textContent = (new Date(now.getTime() + 2*60000)).toLocaleTimeString('pt-BR');
-                    timeframe.textContent = 'Próximos 2 min';
+                    entryTime.textContent = nextMinute.toLocaleTimeString('pt-BR').slice(0, 5);
+                    timeframe.textContent = 'Próximo minuto';
                     reasoningText.textContent = 'Análise estatística de mercado';
                     confidenceText.textContent = 'Confiança: 55%';
                 }
             } catch (error) {
                 // Fallback em caso de erro
                 const now = new Date();
+                const nextMinute = new Date(now);
+                nextMinute.setMinutes(nextMinute.getMinutes() + 1);
+                nextMinute.setSeconds(0);
+                
                 signalText.className = 'signal-buy';
                 signalText.textContent = '🎯 COMPRAR';
                 analysisTime.textContent = now.toLocaleTimeString('pt-BR');
-                entryTime.textContent = (new Date(now.getTime() + 2*60000)).toLocaleTimeString('pt-BR');
-                timeframe.textContent = 'Próximos 2 min';
+                entryTime.textContent = nextMinute.toLocaleTimeString('pt-BR').slice(0, 5);
+                timeframe.textContent = 'Próximo minuto';
                 reasoningText.textContent = 'Análise conservadora ativada';
                 confidenceText.textContent = 'Confiança: 55%';
             }
@@ -786,19 +799,18 @@ def analyze_photo():
         })
         
     except Exception as e:
-        # Fallback com horário
+        # Fallback com horário CORRETO
         now = datetime.datetime.now()
-        entry_time = (now + datetime.timedelta(minutes=2)).strftime("%H:%M:%S")
-        current_time = now.strftime("%H:%M:%S")
+        next_minute = now.replace(second=0, microsecond=0) + datetime.timedelta(minutes=1)
         
         return jsonify({
             'ok': True,
             'direction': 'buy',
             'final_confidence': 0.55,
             'entry_signal': '🎯 COMPRAR - ANÁLISE ESTATÍSTICA',
-            'entry_time': entry_time,
-            'timeframe': 'Próximos 2 min',
-            'analysis_time': current_time,
+            'entry_time': next_minute.strftime("%H:%M"),
+            'timeframe': 'Próximo minuto',
+            'analysis_time': now.strftime("%H:%M:%S"),
             'metrics': {
                 'trend_direction': 1,
                 'trend_strength': 45.0,
@@ -812,7 +824,7 @@ def analyze_photo():
 
 @app.route('/health')
 def health_check():
-    return jsonify({'status': 'PRECISE', 'message': 'IA COM HORÁRIO FUNCIONANDO!'})
+    return jsonify({'status': 'PRECISE', 'message': 'IA COM HORÁRIO CORRETO FUNCIONANDO!'})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
