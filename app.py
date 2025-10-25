@@ -1866,7 +1866,7 @@ button{background:#2a9df4;cursor:pointer} button:disabled{opacity:.6;cursor:not-
     <div class="clock" id="clock">--:--:-- BRT</div>
     <div class="sub">✅ CoinAPI (WS) · Binance REST · RSI/ADX (Wilder) · Liquidez (ATR%) · Reversão RSI · GARCH(1,1) Adaptativo · 🧠 IA AVANÇADA MULTICAMADAS · 📈 ALTA ASSERTIVIDADE</div>
     <div class="controls">
-      <div class="chips" id="chips"></div>
+      <div class="chips" id="chips"> <button class="btn" onclick="location.href='/photo'">📷 Analisar por Foto</button></div>
       <div class="row">
         <select id="mcsel">
           <option value="3000" selected>3000 simulações GARCH</option>
@@ -2096,15 +2096,11 @@ if __name__ == "__main__":
 
 # === [PHOTO ANALYZER - AUTO-ADDED] ===
 class PhotoAnalyzer:
-    def __init__(self): ...
-    @staticmethod
-    def _ensure_cv_ok():
-        if (base64 is None) or (io is None) or (np is None) or (Image is None) or (cv is None):
-            raise RuntimeError("Dependências ausentes: pip install pillow numpy opencv-python-headless")
+    def _ensure_deps(self):
+        if cv is None:
+            raise RuntimeError("Dependências ausentes. Instale: pillow numpy opencv-python-headless")
     def _read_image(self, image_bytes: bytes):
-        import numpy as np, io
-        from PIL import Image
-        self._ensure_cv_ok()
+        self._ensure_deps()
         arr = np.frombuffer(image_bytes, np.uint8)
         img = cv.imdecode(arr, cv.IMREAD_COLOR)
         if img is None:
@@ -2114,14 +2110,12 @@ class PhotoAnalyzer:
     def _preprocess(self, img):
         h, w = img.shape[:2]; cut = 0.05
         return img[int(h*cut):int(h*(1-cut)), int(w*cut):int(w*(1-cut))]
-    def _extract_edges(self, gray):
-        import numpy as np
+    def _edges(self, gray):
         edges = cv.Canny(gray, 60, 150)
         kernel = np.ones((3,3), np.uint8)
         edges = cv.dilate(edges, kernel, iterations=1); edges = cv.erode(edges, kernel, iterations=1)
         return edges
     def _trend_vol(self, edges):
-        import numpy as np
         ys, xs = np.nonzero(edges)
         if len(xs) < 100: return 0.0, 0.01
         X = np.vstack([xs, np.ones_like(xs)]).T
@@ -2130,40 +2124,40 @@ class PhotoAnalyzer:
         yfit = m*xs + b; vol = float(np.std(ys - yfit) / max(1.0, edges.shape[0]))
         return float(slope), float(vol)
     def _rsi_proxy(self, gray):
-        import numpy as np
         gy = cv.Sobel(gray, cv.CV_32F, 0, 1, ksize=3)
         gpos = float(np.clip(gy[gy>0].mean() if (gy>0).any() else 0.0, 0, 255))
         gneg = float(np.clip((-gy[gy<0]).mean() if (gy<0).any() else 0.0, 0, 255))
         base = 100.0 * (gpos / (gpos + gneg + 1e-9)) if (gpos+gneg)>0 else 50.0
         return float(max(0.0, min(100.0, base)))
     def _macd_proxy(self, series):
-        import numpy as np
         if len(series) < 50: return {"signal":"neutral","strength":0.0}
         def ema(x,n):
             k=2/(n+1); e=[float(x[0])]
             for v in x[1:]: e.append(e[-1] + k*(float(v)-e[-1]))
-            return np.array(e,dtype=float)
+            return np.array(e, dtype=float)
         ema12=ema(series,12); ema26=ema(series,26)
         macd_line=ema12[-len(ema26):]-ema26; signal=ema(macd_line,9)
         hist=float(macd_line[-1]-signal[-1]) if len(signal) else 0.0
-        if hist>0: return {"signal":"bullish","strength":min(1.0, abs(hist)/(np.mean(series)*0.02+1e-9))}
-        if hist<0: return {"signal":"bearish","strength":min(1.0, abs(hist)/(np.mean(series)*0.02+1e-9))}
+        if hist>0: return {"signal":"bullish","strength":1.0}
+        if hist<0: return {"signal":"bearish","strength":1.0}
         return {"signal":"neutral","strength":0.0}
-    def extract_features(self, image_bytes: bytes) -> dict:
-        import numpy as np
+    def extract_features(self, image_bytes: bytes):
         img=self._read_image(image_bytes); img=self._preprocess(img)
-        gray=cv.cvtColor(img, cv.COLOR_BGR2GRAY); edges=self._extract_edges(gray)
+        gray=cv.cvtColor(img, cv.COLOR_BGR2GRAY); edges=self._edges(gray)
         slope, vol=self._trend_vol(edges)
         lines=cv.HoughLinesP(edges,1,np.pi/180,threshold=60,minLineLength=20,maxLineGap=8)
         adx_proxy=20.0
         if lines is not None and len(lines)>0:
-            angles=[]; 
+            import numpy as _np
+            angles=[]
             for l in lines[:500]:
-                x1,y1,x2,y2=l[0]; ang=np.degrees(np.arctan2((y2-y1),(x2-x1))); angles.append(ang)
+                x1,y1,x2,y2=l[0]
+                ang=_np.degrees(_np.arctan2((y2-y1),(x2-x1)))
+                angles.append(ang)
             if angles:
-                hist,_=np.histogram(angles,bins=18,range=(-90,90))
-                kons=hist.max()/max(1,len(angles)); adx_proxy=float(15+80*min(1.0, max(0.0, (kons-0.25)/0.75)))
-        rsi_proxy=self._rsi_proxy(gray)
+                hist,_=_np.histogram(angles,bins=18,range=(-90,90))
+                kons=hist.max()/max(1,len(angles))
+                adx_proxy=float(15+80*min(1.0,max(0.0,(kons-0.25)/0.75)))
         h,w=gray.shape[:2]; row=gray[int(h*0.5), :].astype(np.float32)+1.0
         macd=self._macd_proxy(row)
         period=min(20,len(row))
@@ -2183,14 +2177,12 @@ class PhotoAnalyzer:
         if boll_sig=="oversold": base_prob_buy+=0.05
         if boll_sig=="overbought": base_prob_buy-=0.05
         prob_buy=float(max(0.10, min(0.90, base_prob_buy)))
-        return {"symbol":"PHOTO","horizon":1,"rsi":float(rsi_proxy),"adx":float(round(adx_proxy,2)),
+        return {"symbol":"PHOTO","horizon":1,"rsi":float(self._rsi_proxy(gray)),"adx":float(round(adx_proxy,2)),
                 "macd_signal":macd["signal"],"boll_signal":boll_sig,"multi_timeframe":tf_cons,
                 "liquidity_score":liq_score,"reversal":False,"reversal_side":None,"reversal_proximity":0.0,
                 "probability_buy":prob_buy,"probability_sell":1.0-prob_buy,"price":None,"volatility":float(vol),
                 "market_regime":"normal" if vol<0.015 else ("high_volatility" if vol>0.03 else "normal"),
                 "confidence":0.55,"direction":direction}
-
-
 
 # === [PHOTO ROUTES - AUTO-ADDED] ===
 try:
@@ -2200,105 +2192,12 @@ except NameError:
     app = Flask(__name__)
     _app_ref = app
 
-try:
-    _PHOTO_SYSTEM = manager.system if 'manager' in globals() else EnhancedTradingSystem()  # type: ignore
-except Exception:
-    _PHOTO_SYSTEM = None
-
 PHOTO_ANALYZER = PhotoAnalyzer()
 
 from flask import request, jsonify, render_template_string
 
-PHOTO_HTML = r"""<!doctype html>
-<html lang="pt-br">
-  <head>
-    <meta charset="utf-8">
-    <title>Foto</title>
-    <meta name="viewport" content="width=device-width,initial-scale=1">
-    <style>
-      body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial,sans-serif;margin:24px;background:#0b0b10;color:#e9eef2}
-      .card{max-width:880px;margin:auto;background:#141621;border:1px solid #1f2333;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
-      .hd{padding:16px 20px;border-bottom:1px solid #1f2333;font-size:18px;font-weight:700;display:flex;gap:8px;align-items:center}
-      .bd{padding:20px}
-      .row{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
-      .drop{flex:1 1 360px;border:2px dashed #2d3350;border-radius:12px;padding:20px;text-align:center;background:#0f1120;min-height:160px}
-      .drop.drag{border-color:#5177ff;background:#0f1430}
-      .btn{background:#4c6fff;border:none;color:#fff;padding:10px 16px;border-radius:10px;font-weight:600;cursor:pointer}
-      .btn:disabled{opacity:.6;cursor:not-allowed}
-      .out{margin-top:16px;background:#0f1120;border:1px solid #1f2333;border-radius:12px;padding:16px;font-family:ui-monospace,Consolas,Monaco,monospace;white-space:pre-wrap}
-    </style>
-  </head>
-  <body>
-    <div class="card">
-      <div class="hd">📷 Análise por Foto <span style="color:#92a0bd;font-weight:400;margin-left:8px">arraste e solte um print do gráfico</span></div>
-      <div class="bd">
-        <div class="row">
-          <div class="drop" id="drop">
-            <p>Solte a imagem aqui, ou</p>
-            <input type="file" id="file" accept="image/*">
-            <div style="margin-top:10px">
-              <button class="btn" id="send">Analisar</button>
-            </div>
-          </div>
-          <div style="flex:1 1 360px">
-            <div id="result" class="out" style="display:none"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-<script>
-const fileInput = document.getElementById('file');
-const drop = document.getElementById('drop');
-const btn = document.getElementById('send');
-const out = document.getElementById('result');
-let blob = null;
-function setDragging(v){ drop.classList.toggle('drag', v); }
-['dragenter','dragover'].forEach(e=> drop.addEventListener(e, ev=>{ev.preventDefault(); setDragging(true);}));
-['dragleave','drop'].forEach(e=> drop.addEventListener(e, ev=>{ev.preventDefault(); setDragging(false);}));
-drop.addEventListener('drop', ev=>{
-  const f = ev.dataTransfer.files && ev.dataTransfer.files[0];
-  if(f){ fileInput.files = ev.dataTransfer.files; blob = f; }
-});
-fileInput.addEventListener('change', ev=>{ blob = ev.target.files[0] || null; });
-btn.addEventListener('click', async ()=>{
-  if(!blob){ out.style.display='block'; out.textContent='Selecione uma imagem.'; return; }
-  btn.disabled = true; out.style.display='block'; out.textContent='Enviando e analisando...';
-  try{
-    const fd = new FormData();
-    fd.append('image', blob);
-    const res = await fetch('/photo/analyze', { method:'POST', body: fd });
-    const data = await res.json();
-    if(!data.ok){ out.textContent = 'Erro: ' + (data.error || 'Falha desconhecida'); btn.disabled=false; return; }
-    const pill = data.direction==='buy' ? 'COMPRAR' : 'VENDER';
-    const conf = (data.final_confidence*100).toFixed(1) + '%';
-    const lines = [
-      'Direção: ' + pill,
-      'Confiança: ' + conf,
-      '',
-      'Métricas:',
-      JSON.stringify(data.quality_metrics || {}, null, 2),
-      '',
-      'Motivos:',
-      (data.reasoning||[]).join('\\n- ')
-    ].join('\\n');
-    out.style.display='block'; out.textContent = lines;
-  }catch(err){
-    out.textContent = 'Erro de rede: ' + err;
-  }
-  btn.disabled=false;
-});
-</script>
-  </body>
-</html>"""
-
-@_app_ref.get("/photo")
-def photo_page():
-    return render_template_string(PHOTO_HTML)
-
 @_app_ref.post("/photo/analyze")
-def photo_analyze():
-    if _PHOTO_SYSTEM is None:
-        return jsonify({"ok": False, "error": "Sistema de IA não inicializado."}), 500
+def _photo_analyze():
     image_bytes = None
     if request.files and "image" in request.files:
         image_bytes = request.files["image"].read()
@@ -2308,9 +2207,8 @@ def photo_analyze():
         if b64.startswith("data:"):
             b64 = b64.split(",", 1)[-1]
         if b64:
-            import base64 as _b64
             try:
-                image_bytes = _b64.b64decode(b64)
+                image_bytes = base64.b64decode(b64)
             except Exception:
                 return jsonify({"ok": False, "error": "Base64 inválido"}), 400
     if not image_bytes:
@@ -2319,185 +2217,19 @@ def photo_analyze():
         raw = PHOTO_ANALYZER.extract_features(image_bytes)
     except Exception as e:
         return jsonify({"ok": False, "error": f"Falha ao analisar imagem: {e}"}), 500
-    all_symbols_data = [raw]
-    try:
-        if hasattr(_PHOTO_SYSTEM, "intelligent_ai"):
-            intelligent = _PHOTO_SYSTEM.intelligent_ai.analyze_with_high_accuracy(raw, all_symbols_data)
-        elif hasattr(_PHOTO_SYSTEM, "analyze_with_high_accuracy"):
-            intelligent = _PHOTO_SYSTEM.analyze_with_high_accuracy(raw, all_symbols_data)
-        elif 'HighAccuracyTradingAI' in globals():
-            intelligent = HighAccuracyTradingAI().analyze_with_high_accuracy(raw, all_symbols_data)  # type: ignore
-        else:
-            intelligent = {"direction": "buy" if raw.get("probability_buy",0.5)>=0.5 else "sell",
-                           "final_confidence": raw.get("confidence", 0.55),
-                           "reasoning": ["Decisão direta do analisador de foto (fallback)."],
-                           "quality_metrics": {"photo_only": True}}
-    except Exception as e:
-        intelligent = {"direction": "buy" if raw.get("probability_buy",0.5)>=0.5 else "sell",
-                       "final_confidence": raw.get("confidence", 0.55),
-                       "reasoning": [f"Falha na IA principal, usando fallback. Erro: {e}"],
-                       "quality_metrics": {"photo_only": True, "error": str(e)}}
-    out = {"ok": True, "source": "PHOTO",
-           "direction": intelligent.get("direction"),
-           "final_confidence": float(intelligent.get("final_confidence", 0.55)),
-           "reasoning": intelligent.get("reasoning", []),
-           "quality_metrics": intelligent.get("quality_metrics", {}),
-           "market_context": intelligent.get("market_context", {}),
-           "pattern_analysis": intelligent.get("pattern_analysis", {}),
-           "confidence_breakdown": intelligent.get("confidence_breakdown", {}),
-           "technical_convergence": float(intelligent.get("technical_convergence", 0.5)) if isinstance(intelligent.get("technical_convergence", 0.5),(int,float)) else 0.5,
-           "market_sentiment_alignment": float(intelligent.get("market_sentiment_alignment", 1.0)) if isinstance(intelligent.get("market_sentiment_alignment", 1.0),(int,float)) else 1.0,
-           "risk_adjustment": float(intelligent.get("risk_adjustment", 1.0)) if isinstance(intelligent.get("risk_adjustment", 1.0),(int,float)) else 1.0,
-           "system_accuracy": float(intelligent.get("system_accuracy", 0.5)) if isinstance(intelligent.get("system_accuracy", 0.5),(int,float)) else 0.5,
-           "photo_features": {"rsi": raw.get("rsi"), "adx": raw.get("adx"), "macd_signal": raw.get("macd_signal"),
-                              "boll_signal": raw.get("boll_signal"), "multi_timeframe": raw.get("multi_timeframe"),
-                              "probability_buy_seed": raw.get("probability_buy"), "volatility": raw.get("volatility"),
-                              "liquidity_score": raw.get("liquidity_score")}}
+    direction = "buy" if raw.get("probability_buy",0.5)>=0.5 else "sell"
+    out = {
+        "ok": True,
+        "direction": direction,
+        "final_confidence": float(raw.get("confidence",0.55)),
+        "reasoning": [
+            f"MACD: {raw['macd_signal']} • Boll: {raw['boll_signal']} • TF: {raw['multi_timeframe']}",
+            f"RSI={raw['rsi']:.1f} ADX={raw['adx']:.2f} Vol={raw['volatility']:.3f} Liq={raw['liquidity_score']:.2f}"
+        ],
+        "quality_metrics": {
+            "rsi": raw["rsi"], "adx": raw["adx"], "boll": raw["boll_signal"], "macd": raw["macd_signal"],
+            "volatility": raw["volatility"], "liquidity_score": raw["liquidity_score"], "multi_timeframe": raw["multi_timeframe"]
+        }
+    }
     return jsonify(out), 200
 
-# In-app page with integrated upload/modal (no need to change your main UI)
-PHOTO_INAPP_HTML = r"""<!doctype html>
-<html lang="pt-br">
-<head>
-  <meta charset="utf-8">
-  <title>IA Signal Pro — Análise por Foto</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <style>
-    :root{
-      --bg:#0a0f1a; --surface:#121a2a; --surface-2:#0e1524; --border:#223152;
-      --txt:#e6edf6; --muted:#9db0d1; --primary:#4c6fff; --ok:#3ee07a; --bad:#ff8f8f;
-      --card:#0f1627;
-    }
-    html,body{background:var(--bg);color:var(--txt);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial,sans-serif;margin:0}
-    .wrap{max-width:1180px;margin:24px auto;padding:0 16px}
-    .top{display:flex;align-items:center;gap:12px;justify-content:space-between;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px 18px}
-    .title{font-weight:800;letter-spacing:.3px}
-    .btn{background:var(--primary);color:#fff;border:none;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer}
-    .btn.secondary{background:transparent;border:1px solid var(--border);color:var(--txt)}
-    .grid{display:grid;grid-template-columns:1fr;gap:16px;margin-top:16px}
-    .card{background:var(--card);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
-    .hd{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;font-weight:700}
-    .bd{padding:16px}
-    .row{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
-    .drop{flex:1 1 360px;border:2px dashed var(--border);border-radius:12px;padding:20px;text-align:center;background:var(--surface-2);min-height:160px}
-    .drop.drag{border-color:var(--primary);background:#0f1430}
-    .out{flex:1 1 360px;white-space:pre-wrap;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:16px;font-family:ui-monospace,Consolas,Monaco,monospace}
-    .modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;padding:20px}
-    .modal .box{background:var(--surface);border:1px solid var(--border);border-radius:16px;max-width:720px;width:100%;padding:16px}
-    .modal .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
-    .x{background:transparent;border:none;color:#9db0d1;font-size:22px;cursor:pointer}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="top">
-      <div class="title">IA Signal Pro — <span style="color:#9db0d1">Análise por Foto</span></div>
-      <div style="display:flex;gap:8px">
-        <button class="btn secondary" onclick="location.href='/'">Voltar</button>
-        <button class="btn" id="openPhoto">📷 Inserir Print</button>
-      </div>
-    </div>
-
-    <div class="grid">
-      <div class="card">
-        <div class="hd">📈 Resultado da Foto</div>
-        <div class="bd">
-          <div class="row">
-            <div class="drop" id="drop">
-              <p>Arraste e solte a imagem aqui<br><span style="color:#9db0d1">ou clique para escolher</span></p>
-              <input type="file" id="file" accept="image/*">
-              <div style="margin-top:10px">
-                <button class="btn" id="send">Analisar</button>
-              </div>
-            </div>
-            <div class="out" id="result" style="display:none"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="modal" id="modal">
-    <div class="box">
-      <div class="head">
-        <div><b>📷 Análise por Foto</b></div>
-        <button class="x" id="closeX">×</button>
-      </div>
-      <div class="row">
-        <div class="drop" id="drop2">
-          <p>Arraste e solte a imagem aqui<br><span style="color:#9db0d1">ou clique para escolher</span></p>
-          <input type="file" id="file2" accept="image/*">
-          <div style="margin-top:10px">
-            <button class="btn" id="send2">Analisar</button>
-          </div>
-        </div>
-        <div class="out" id="result2" style="display:none"></div>
-      </div>
-    </div>
-  </div>
-
-<script>
-function setup(dropId, fileId, btnId, outId){
-  const drop = document.getElementById(dropId);
-  const fileInput = document.getElementById(fileId);
-  const btn = document.getElementById(btnId);
-  const out = document.getElementById(outId);
-  let blob = null;
-  function setDragging(v){ drop.classList.toggle('drag', v); }
-  ['dragenter','dragover'].forEach(e=> drop.addEventListener(e, ev=>{ev.preventDefault(); setDragging(true);}));
-  ['dragleave','drop'].forEach(e=> drop.addEventListener(e, ev=>{ev.preventDefault(); setDragging(false);}));
-  drop.addEventListener('drop', ev=>{
-    const f = ev.dataTransfer.files && ev.dataTransfer.files[0];
-    if(f){ fileInput.files = ev.dataTransfer.files; blob = f; }
-  });
-  fileInput.addEventListener('change', ev=>{ blob = ev.target.files[0] || null; });
-  btn.addEventListener('click', async ()=>{
-    if(!blob){ out.style.display='block'; out.textContent='Selecione uma imagem.'; return; }
-    btn.disabled = true; out.style.display='block'; out.textContent='Enviando e analisando...';
-    try{
-      const fd = new FormData();
-      fd.append('image', blob);
-      const res = await fetch('/photo/analyze', { method:'POST', body: fd });
-      const data = await res.json();
-      if(!data.ok){ out.textContent = 'Erro: ' + (data.error || 'Falha desconhecida'); btn.disabled=false; return; }
-      const pill = data.direction==='buy' ? 'COMPRAR' : 'VENDER';
-      const conf = (data.final_confidence*100).toFixed(1) + '%';
-      let lines = 'Sinal sugerido pela Foto: ' + pill + '\\nConfiança: ' + conf + '\\n';
-      lines += '\\nMétricas:\\n' + JSON.stringify(data.quality_metrics || {}, null, 2);
-      if((data.reasoning||[]).length){ lines += '\\n\\nMotivos:\\n- ' + (data.reasoning||[]).join('\\n- '); }
-      out.style.display='block'; out.textContent = lines;
-    }catch(err){
-      out.textContent = 'Erro de rede: ' + err;
-    }
-    btn.disabled=false;
-  });
-}
-setup('drop','file','send','result');
-setup('drop2','file2','send2','result2');
-const modal = document.getElementById('modal');
-document.getElementById('openPhoto').addEventListener('click', ()=>{ modal.style.display='flex'; });
-document.getElementById('closeX').addEventListener('click', ()=>{ modal.style.display='none'; });
-modal.addEventListener('click', (e)=>{ if(e.target===modal) modal.style.display='none'; });
-</script>
-</body>
-</html>"""
-
-@_app_ref.get("/photo/inapp")
-def photo_inapp():
-    return render_template_string(PHOTO_INAPP_HTML)
-
-
-
-# In-app integration page
-from flask import render_template_string as _rts
-PHOTO_INAPP_HTML = """<!doctype html><html><head><meta charset='utf-8'><title>Foto In-App</title></head>
-<body style="background:#0b0b10;color:#e6edf2;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,'Helvetica Neue',Arial,sans-serif;">
-  <div style="max-width:960px;margin:24px auto">
-    <h2>📷 Análise por Foto (In-App)</h2>
-    <p>Use o mesmo componente de upload abaixo.</p>
-    <iframe src="/photo" style="width:100%;height:620px;border:1px solid #223152;border-radius:12px;background:#0f1120"></iframe>
-  </div>
-</body></html>"""
-@_app_ref.get("/photo/inapp")
-def photo_inapp():
-    return _rts(PHOTO_INAPP_HTML)
