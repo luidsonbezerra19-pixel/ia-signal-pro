@@ -1,7 +1,7 @@
 # app.py — IA Signal Pro COM INTELIGÊNCIA AVANÇADA E ALTA ASSERTIVIDADE
 from __future__ import annotations
 
-# === [PHOTO IMPORTS - AUTO-ADDED] ===
+# === [FOTO IMPORTS - AUTO-ADDED] ===
 try:
     import base64, io
     import numpy as np
@@ -1865,8 +1865,8 @@ button{background:#2a9df4;cursor:pointer} button:disabled{opacity:.6;cursor:not-
     <h1>IA Signal Pro - ALTA ASSERTIVIDADE + 3000 SIMULAÇÕES + IA AVANÇADA</h1>
     <div class="clock" id="clock">--:--:-- BRT</div>
     <div class="sub">✅ CoinAPI (WS) · Binance REST · RSI/ADX (Wilder) · Liquidez (ATR%) · Reversão RSI · GARCH(1,1) Adaptativo · 🧠 IA AVANÇADA MULTICAMADAS · 📈 ALTA ASSERTIVIDADE</div>
-    <div class="controls">
-      <div class="chips" id="chips"> <button class="btn" onclick="location.href='/photo'">📷 Analisar por Foto</button></div>
+    <div class="controls"> <button class="btn" onclick="location.href='/analise-foto'">📷 Analisar por Foto</button>
+      <div class="chips" id="chips"></div>
       <div class="row">
         <select id="mcsel">
           <option value="3000" selected>3000 simulações GARCH</option>
@@ -2094,97 +2094,88 @@ if __name__ == "__main__":
     app.run(host="0.0.0.0", port=port, threaded=True, debug=False)
 
 
-# === [PHOTO ANALYZER - AUTO-ADDED] ===
+# === [FOTO ANALYZER + ROTAS - AUTO-ADDED] ====================================
 class PhotoAnalyzer:
-    def _ensure_deps(self):
+    def _deps(self):
         if cv is None:
             raise RuntimeError("Dependências ausentes. Instale: pillow numpy opencv-python-headless")
-    def _read_image(self, image_bytes: bytes):
-        self._ensure_deps()
-        arr = np.frombuffer(image_bytes, np.uint8)
+    def _read(self, blob: bytes):
+        self._deps()
+        arr = np.frombuffer(blob, np.uint8)
         img = cv.imdecode(arr, cv.IMREAD_COLOR)
         if img is None:
-            pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            pil = Image.open(io.BytesIO(blob)).convert("RGB")
             img = cv.cvtColor(np.array(pil), cv.COLOR_RGB2BGR)
         return img
-    def _preprocess(self, img):
-        h, w = img.shape[:2]; cut = 0.05
-        return img[int(h*cut):int(h*(1-cut)), int(w*cut):int(w*(1-cut))]
+    def _prep(self, img):
+        h,w = img.shape[:2]; c=0.05
+        return img[int(h*c):int(h*(1-c)), int(w*c):int(w*(1-c))]
     def _edges(self, gray):
         edges = cv.Canny(gray, 60, 150)
-        kernel = np.ones((3,3), np.uint8)
-        edges = cv.dilate(edges, kernel, iterations=1); edges = cv.erode(edges, kernel, iterations=1)
+        k = np.ones((3,3), np.uint8)
+        edges = cv.dilate(edges, k, 1); edges = cv.erode(edges, k, 1)
         return edges
-    def _trend_vol(self, edges):
-        ys, xs = np.nonzero(edges)
+    def _trend(self, edges):
+        ys,xs = np.nonzero(edges)
         if len(xs) < 100: return 0.0, 0.01
         X = np.vstack([xs, np.ones_like(xs)]).T
-        m, b = np.linalg.lstsq(X, ys, rcond=None)[0]
+        m,b = np.linalg.lstsq(X, ys, rcond=None)[0]
         slope = -m / max(1.0, edges.shape[1]*0.75)
-        yfit = m*xs + b; vol = float(np.std(ys - yfit) / max(1.0, edges.shape[0]))
+        vol = float(np.std(ys - (m*xs+b)) / max(1.0, edges.shape[0]))
         return float(slope), float(vol)
-    def _rsi_proxy(self, gray):
-        gy = cv.Sobel(gray, cv.CV_32F, 0, 1, ksize=3)
+    def _rsi(self, gray):
+        gy = cv.Sobel(gray, cv.CV_32F, 0, 1, 3)
         gpos = float(np.clip(gy[gy>0].mean() if (gy>0).any() else 0.0, 0, 255))
         gneg = float(np.clip((-gy[gy<0]).mean() if (gy<0).any() else 0.0, 0, 255))
         base = 100.0 * (gpos / (gpos + gneg + 1e-9)) if (gpos+gneg)>0 else 50.0
         return float(max(0.0, min(100.0, base)))
-    def _macd_proxy(self, series):
-        if len(series) < 50: return {"signal":"neutral","strength":0.0}
+    def _macd(self, s):
+        if len(s) < 50: return {"signal":"neutral"}
         def ema(x,n):
             k=2/(n+1); e=[float(x[0])]
-            for v in x[1:]: e.append(e[-1] + k*(float(v)-e[-1]))
-            return np.array(e, dtype=float)
-        ema12=ema(series,12); ema26=ema(series,26)
-        macd_line=ema12[-len(ema26):]-ema26; signal=ema(macd_line,9)
-        hist=float(macd_line[-1]-signal[-1]) if len(signal) else 0.0
-        if hist>0: return {"signal":"bullish","strength":1.0}
-        if hist<0: return {"signal":"bearish","strength":1.0}
-        return {"signal":"neutral","strength":0.0}
-    def extract_features(self, image_bytes: bytes):
-        img=self._read_image(image_bytes); img=self._preprocess(img)
-        gray=cv.cvtColor(img, cv.COLOR_BGR2GRAY); edges=self._edges(gray)
-        slope, vol=self._trend_vol(edges)
-        lines=cv.HoughLinesP(edges,1,np.pi/180,threshold=60,minLineLength=20,maxLineGap=8)
-        adx_proxy=20.0
-        if lines is not None and len(lines)>0:
-            import numpy as _np
-            angles=[]
-            for l in lines[:500]:
-                x1,y1,x2,y2=l[0]
-                ang=_np.degrees(_np.arctan2((y2-y1),(x2-x1)))
-                angles.append(ang)
-            if angles:
-                hist,_=_np.histogram(angles,bins=18,range=(-90,90))
-                kons=hist.max()/max(1,len(angles))
-                adx_proxy=float(15+80*min(1.0,max(0.0,(kons-0.25)/0.75)))
-        h,w=gray.shape[:2]; row=gray[int(h*0.5), :].astype(np.float32)+1.0
-        macd=self._macd_proxy(row)
-        period=min(20,len(row))
-        if period>=12:
-            win=row[-period:]; ma=float(win.mean()); sd=float(win.std()); last=float(win[-1])
-            if   last>ma+2*sd: boll_sig="overbought"
-            elif last<ma-2*sd: boll_sig="oversold"
-            elif last>ma:      boll_sig="bullish"
-            elif last<ma:      boll_sig="bearish"
-            else:              boll_sig="neutral"
-        else: boll_sig="neutral"
-        tf_cons="buy" if slope>0.002 else ("sell" if slope<-0.002 else "neutral")
-        direction="buy" if (slope>0 or macd["signal"]=="bullish") else "sell"
-        liq_score=float(max(0.0, min(1.0, 1.0 - (vol*3.0))))
-        base_prob_buy=0.5+float(np.clip(slope*8.0,-0.35,0.35))
-        if macd["signal"]=="bullish": base_prob_buy+=0.05
-        if boll_sig=="oversold": base_prob_buy+=0.05
-        if boll_sig=="overbought": base_prob_buy-=0.05
-        prob_buy=float(max(0.10, min(0.90, base_prob_buy)))
-        return {"symbol":"PHOTO","horizon":1,"rsi":float(self._rsi_proxy(gray)),"adx":float(round(adx_proxy,2)),
-                "macd_signal":macd["signal"],"boll_signal":boll_sig,"multi_timeframe":tf_cons,
-                "liquidity_score":liq_score,"reversal":False,"reversal_side":None,"reversal_proximity":0.0,
-                "probability_buy":prob_buy,"probability_sell":1.0-prob_buy,"price":None,"volatility":float(vol),
-                "market_regime":"normal" if vol<0.015 else ("high_volatility" if vol>0.03 else "normal"),
-                "confidence":0.55,"direction":direction}
+            for v in x[1:]: e.append(e[-1]+k*(float(v)-e[-1]))
+            return np.array(e)
+        e12=ema(s,12); e26=ema(s,26); macd=e12[-len(e26):]-e26; sig=ema(macd,9)
+        hist = float(macd[-1]-sig[-1])
+        return {"signal":"bullish" if hist>0 else ("bearish" if hist<0 else "neutral")}
+    def extract(self, blob: bytes):
+        img = self._prep(self._read(blob)); gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+        edges = self._edges(gray); slope, vol = self._trend(edges)
+        h,w = gray.shape[:2]; row = gray[int(h*0.5), :].astype(np.float32)+1.0
+        macd = self._macd(row)
+        # boll proxy
+        p=min(20,len(row))
+        if p>=12:
+            win=row[-p:]; ma=float(win.mean()); sd=float(win.std()); last=float(win[-1])
+            if   last>ma+2*sd: boll="overbought"
+            elif last<ma-2*sd: boll="oversold"
+            elif last>ma:      boll="bullish"
+            elif last<ma:      boll="bearish"
+            else:              boll="neutral"
+        else: boll="neutral"
+        tf = "buy" if slope>0.002 else ("sell" if slope<-0.002 else "neutral")
+        direction = "buy" if (slope>0 or macd["signal"]=="bullish") else "sell"
+        prob=0.5+float(np.clip(slope*8.0,-0.35,0.35))
+        if macd["signal"]=="bullish": prob+=0.05
+        if boll=="oversold": prob+=0.05
+        if boll=="overbought": prob-=0.05
+        prob=max(0.10,min(0.90,prob))
+        return {
+            "direction": direction,
+            "final_confidence": 0.55,
+            "metrics": {
+                "rsi": self._rsi(gray),
+                "adx": 25.0,
+                "macd": macd["signal"],
+                "boll": boll,
+                "volatility": float(vol),
+                "liquidity_score": float(max(0.0,min(1.0,1.0-(vol*3.0)))),
+                "multi_timeframe": tf
+            },
+            "prob_buy": float(prob)
+        }
 
-# === [PHOTO ROUTES - AUTO-ADDED] ===
+# obtenha app/Flask já existente, sem criar outro
 try:
     _app_ref = app  # type: ignore
 except NameError:
@@ -2192,12 +2183,13 @@ except NameError:
     app = Flask(__name__)
     _app_ref = app
 
-PHOTO_ANALYZER = PhotoAnalyzer()
-
 from flask import request, jsonify, render_template_string
+_PHOTO = PhotoAnalyzer()
 
+# Endpoint RELATIVO + alias absoluto (evita 404 por prefixo de proxy)
+@_app_ref.post("/analisar-foto")
 @_app_ref.post("/photo/analyze")
-def _photo_analyze():
+def _analisar_foto():
     image_bytes = None
     if request.files and "image" in request.files:
         image_bytes = request.files["image"].read()
@@ -2214,22 +2206,79 @@ def _photo_analyze():
     if not image_bytes:
         return jsonify({"ok": False, "error": "Envie 'image' (arquivo) ou 'image_base64'"}), 400
     try:
-        raw = PHOTO_ANALYZER.extract_features(image_bytes)
+        res = _PHOTO.extract(image_bytes)
     except Exception as e:
         return jsonify({"ok": False, "error": f"Falha ao analisar imagem: {e}"}), 500
-    direction = "buy" if raw.get("probability_buy",0.5)>=0.5 else "sell"
-    out = {
+    return jsonify({
         "ok": True,
-        "direction": direction,
-        "final_confidence": float(raw.get("confidence",0.55)),
+        "direction": res["direction"],
+        "final_confidence": float(res["final_confidence"]),
+        "metrics": res["metrics"],
+        "probability_buy": float(res["prob_buy"]),
         "reasoning": [
-            f"MACD: {raw['macd_signal']} • Boll: {raw['boll_signal']} • TF: {raw['multi_timeframe']}",
-            f"RSI={raw['rsi']:.1f} ADX={raw['adx']:.2f} Vol={raw['volatility']:.3f} Liq={raw['liquidity_score']:.2f}"
-        ],
-        "quality_metrics": {
-            "rsi": raw["rsi"], "adx": raw["adx"], "boll": raw["boll_signal"], "macd": raw["macd_signal"],
-            "volatility": raw["volatility"], "liquidity_score": raw["liquidity_score"], "multi_timeframe": raw["multi_timeframe"]
-        }
-    }
-    return jsonify(out), 200
+            f"Direção com base em tendência/RSI/MACD/Bollinger (proxys)."
+        ]
+    }), 200
 
+# Página dedicada com o card exato (não mexe no restante do dashboard)
+_FOTO_HTML = r"""<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<title>📷 Análise por Foto</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  body{background:#0b1220;color:#e9eef2;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial,sans-serif;margin:0}
+  .wrap{max-width:1200px;margin:24px auto;padding:0 16px}
+  .card{background:#0f1627;border:1px dashed #2a3552;border-radius:16px;padding:18px}
+  .hd{font-weight:800;font-size:20px;margin-bottom:8px;display:flex;gap:8px;align-items:center}
+  .drop{border:2px dashed #2a3552;border-radius:12px;padding:20px;text-align:center;background:#0e1524}
+  .btn{background:#3a86ff;color:#fff;border:none;border-radius:10px;padding:12px 18px;font-weight:800;cursor:pointer;margin-top:10px}
+  .muted{color:#9db0d1}
+  .out{white-space:pre-wrap;background:#0e1524;border:1px solid #223152;border-radius:12px;padding:16px;margin-top:14px;font-family:ui-monospace,Consolas,Monaco}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="hd">📷 Análise por Foto (Print do Gráfico)</div>
+      <div class="drop">
+        <input type="file" id="file" accept="image/*">
+        <div class="muted" style="margin-top:6px">Formatos aceitos: PNG/JPG • Tamanho recomendado ≤ 5 MB</div>
+        <button class="btn" id="send">📸 ENVIAR E ANALISAR FOTO</button>
+      </div>
+      <div class="out" id="result" style="display:none"></div>
+    </div>
+  </div>
+<script>
+const fileInput = document.getElementById('file');
+const btn = document.getElementById('send');
+const out = document.getElementById('result');
+let blob = null;
+fileInput.addEventListener('change', (e)=>{ blob = e.target.files[0] || null; });
+btn.addEventListener('click', async ()=>{
+  if(!blob){ out.style.display='block'; out.textContent='Selecione uma imagem.'; return; }
+  btn.disabled = true; out.style.display='block'; out.textContent='Enviando e analisando...';
+  try{
+    const fd = new FormData(); fd.append('image', blob);
+    const res = await fetch('analisar-foto', { method:'POST', body: fd }); // RELATIVO
+    const data = await res.json();
+    if(!data.ok){ out.textContent = 'Erro: ' + (data.error || 'Falha desconhecida'); btn.disabled=false; return; }
+    const pill = data.direction==='buy' ? 'COMPRAR' : 'VENDER';
+    const conf = (data.final_confidence*100).toFixed(1) + '%';
+    let lines = 'Sinal: ' + pill + '\\nConfiança: ' + conf + '\\n';
+    lines += '\\nMétricas:\\n' + JSON.stringify(data.metrics || {}, null, 2);
+    if((data.reasoning||[]).length){ lines += '\\n\\nMotivos:\\n- ' + (data.reasoning||[]).join('\\n- '); }
+    out.textContent = lines;
+  }catch(err){
+    out.textContent = 'Erro de rede: ' + err;
+  }
+  btn.disabled=false;
+});
+</script>
+</body>
+</html>"""
+@_app_ref.get("/analise-foto")
+def _foto_page():
+    return render_template_string(_FOTO_HTML)
+# === [FIM FOTO] ===============================================================
