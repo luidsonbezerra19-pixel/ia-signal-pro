@@ -2162,7 +2162,7 @@ class PhotoAnalyzer:
                 x1,y1,x2,y2=l[0]; ang=np.degrees(np.arctan2((y2-y1),(x2-x1))); angles.append(ang)
             if angles:
                 hist,_=np.histogram(angles,bins=18,range=(-90,90))
-                kons=hist.max()/max(1,len(angles)); adx_proxy=float(15+80*min(1.0, max(0.0),(kons-0.25)/0.75))
+                kons=hist.max()/max(1,len(angles)); adx_proxy=float(15+80*min(1.0, max(0.0, (kons-0.25)/0.75)))
         rsi_proxy=self._rsi_proxy(gray)
         h,w=gray.shape[:2]; row=gray[int(h*0.5), :].astype(np.float32)+1.0
         macd=self._macd_proxy(row)
@@ -2192,7 +2192,7 @@ class PhotoAnalyzer:
 
 
 
-# === [PHOTO INTEGRATION + ROUTES - AUTO-ADDED] ===
+# === [PHOTO ROUTES - AUTO-ADDED] ===
 try:
     _app_ref = app  # type: ignore
 except NameError:
@@ -2230,7 +2230,7 @@ PHOTO_HTML = r"""<!doctype html>
   </head>
   <body>
     <div class="card">
-      <div class="hd">Análise por Foto — arraste e solte um print do gráfico</div>
+      <div class="hd">📷 Análise por Foto <span style="color:#92a0bd;font-weight:400;margin-left:8px">arraste e solte um print do gráfico</span></div>
       <div class="bd">
         <div class="row">
           <div class="drop" id="drop">
@@ -2355,3 +2355,149 @@ def photo_analyze():
                               "liquidity_score": raw.get("liquidity_score")}}
     return jsonify(out), 200
 
+# In-app page with integrated upload/modal (no need to change your main UI)
+PHOTO_INAPP_HTML = r"""<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <title>IA Signal Pro — Análise por Foto</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    :root{
+      --bg:#0a0f1a; --surface:#121a2a; --surface-2:#0e1524; --border:#223152;
+      --txt:#e6edf6; --muted:#9db0d1; --primary:#4c6fff; --ok:#3ee07a; --bad:#ff8f8f;
+      --card:#0f1627;
+    }
+    html,body{background:var(--bg);color:var(--txt);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial,sans-serif;margin:0}
+    .wrap{max-width:1180px;margin:24px auto;padding:0 16px}
+    .top{display:flex;align-items:center;gap:12px;justify-content:space-between;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px 18px}
+    .title{font-weight:800;letter-spacing:.3px}
+    .btn{background:var(--primary);color:#fff;border:none;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer}
+    .btn.secondary{background:transparent;border:1px solid var(--border);color:var(--txt)}
+    .grid{display:grid;grid-template-columns:1fr;gap:16px;margin-top:16px}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+    .hd{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;font-weight:700}
+    .bd{padding:16px}
+    .row{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
+    .drop{flex:1 1 360px;border:2px dashed var(--border);border-radius:12px;padding:20px;text-align:center;background:var(--surface-2);min-height:160px}
+    .drop.drag{border-color:var(--primary);background:#0f1430}
+    .out{flex:1 1 360px;white-space:pre-wrap;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:16px;font-family:ui-monospace,Consolas,Monaco,monospace}
+    .modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;padding:20px}
+    .modal .box{background:var(--surface);border:1px solid var(--border);border-radius:16px;max-width:720px;width:100%;padding:16px}
+    .modal .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+    .x{background:transparent;border:none;color:#9db0d1;font-size:22px;cursor:pointer}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div class="title">IA Signal Pro — <span style="color:#9db0d1">Análise por Foto</span></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn secondary" onclick="location.href='/'">Voltar</button>
+        <button class="btn" id="openPhoto">📷 Inserir Print</button>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="hd">📈 Resultado da Foto</div>
+        <div class="bd">
+          <div class="row">
+            <div class="drop" id="drop">
+              <p>Arraste e solte a imagem aqui<br><span style="color:#9db0d1">ou clique para escolher</span></p>
+              <input type="file" id="file" accept="image/*">
+              <div style="margin-top:10px">
+                <button class="btn" id="send">Analisar</button>
+              </div>
+            </div>
+            <div class="out" id="result" style="display:none"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="modal">
+    <div class="box">
+      <div class="head">
+        <div><b>📷 Análise por Foto</b></div>
+        <button class="x" id="closeX">×</button>
+      </div>
+      <div class="row">
+        <div class="drop" id="drop2">
+          <p>Arraste e solte a imagem aqui<br><span style="color:#9db0d1">ou clique para escolher</span></p>
+          <input type="file" id="file2" accept="image/*">
+          <div style="margin-top:10px">
+            <button class="btn" id="send2">Analisar</button>
+          </div>
+        </div>
+        <div class="out" id="result2" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+function setup(dropId, fileId, btnId, outId){
+  const drop = document.getElementById(dropId);
+  const fileInput = document.getElementById(fileId);
+  const btn = document.getElementById(btnId);
+  const out = document.getElementById(outId);
+  let blob = null;
+  function setDragging(v){ drop.classList.toggle('drag', v); }
+  ['dragenter','dragover'].forEach(e=> drop.addEventListener(e, ev=>{ev.preventDefault(); setDragging(true);}));
+  ['dragleave','drop'].forEach(e=> drop.addEventListener(e, ev=>{ev.preventDefault(); setDragging(false);}));
+  drop.addEventListener('drop', ev=>{
+    const f = ev.dataTransfer.files && ev.dataTransfer.files[0];
+    if(f){ fileInput.files = ev.dataTransfer.files; blob = f; }
+  });
+  fileInput.addEventListener('change', ev=>{ blob = ev.target.files[0] || null; });
+  btn.addEventListener('click', async ()=>{
+    if(!blob){ out.style.display='block'; out.textContent='Selecione uma imagem.'; return; }
+    btn.disabled = true; out.style.display='block'; out.textContent='Enviando e analisando...';
+    try{
+      const fd = new FormData();
+      fd.append('image', blob);
+      const res = await fetch('/photo/analyze', { method:'POST', body: fd });
+      const data = await res.json();
+      if(!data.ok){ out.textContent = 'Erro: ' + (data.error || 'Falha desconhecida'); btn.disabled=false; return; }
+      const pill = data.direction==='buy' ? 'COMPRAR' : 'VENDER';
+      const conf = (data.final_confidence*100).toFixed(1) + '%';
+      let lines = 'Sinal sugerido pela Foto: ' + pill + '\\nConfiança: ' + conf + '\\n';
+      lines += '\\nMétricas:\\n' + JSON.stringify(data.quality_metrics || {}, null, 2);
+      if((data.reasoning||[]).length){ lines += '\\n\\nMotivos:\\n- ' + (data.reasoning||[]).join('\\n- '); }
+      out.style.display='block'; out.textContent = lines;
+    }catch(err){
+      out.textContent = 'Erro de rede: ' + err;
+    }
+    btn.disabled=false;
+  });
+}
+setup('drop','file','send','result');
+setup('drop2','file2','send2','result2');
+const modal = document.getElementById('modal');
+document.getElementById('openPhoto').addEventListener('click', ()=>{ modal.style.display='flex'; });
+document.getElementById('closeX').addEventListener('click', ()=>{ modal.style.display='none'; });
+modal.addEventListener('click', (e)=>{ if(e.target===modal) modal.style.display='none'; });
+</script>
+</body>
+</html>"""
+
+@_app_ref.get("/photo/inapp")
+def photo_inapp():
+    return render_template_string(PHOTO_INAPP_HTML)
+
+
+
+# In-app integration page
+from flask import render_template_string as _rts
+PHOTO_INAPP_HTML = """<!doctype html><html><head><meta charset='utf-8'><title>Foto In-App</title></head>
+<body style="background:#0b0b10;color:#e6edf2;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,'Helvetica Neue',Arial,sans-serif;">
+  <div style="max-width:960px;margin:24px auto">
+    <h2>📷 Análise por Foto (In-App)</h2>
+    <p>Use o mesmo componente de upload abaixo.</p>
+    <iframe src="/photo" style="width:100%;height:620px;border:1px solid #223152;border-radius:12px;background:#0f1120"></iframe>
+  </div>
+</body></html>"""
+@_app_ref.get("/photo/inapp")
+def photo_inapp():
+    return _rts(PHOTO_INAPP_HTML)
