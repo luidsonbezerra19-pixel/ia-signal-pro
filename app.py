@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """
 IA Signal Pro — Análise Inteligente por Foto
-Versão otimizada para produção no Railway
+Versão SUPER ASSERTIVA para detectar padrões
 """
 
 import base64
@@ -21,7 +21,7 @@ except Exception:
 
 
 # =========================
-#  IA SUPER INTELIGENTE
+#  IA SUPER ASSERTIVA
 # =========================
 class SuperIntelligentAnalyzer:
     def _deps(self) -> None:
@@ -38,141 +38,219 @@ class SuperIntelligentAnalyzer:
         except:
             pass
         
-        # Fallback para PIL
         pil = Image.open(io.BytesIO(blob)).convert("RGB")
         return cv.cvtColor(np.array(pil), cv.COLOR_RGB2BGR)
 
     def _prep(self, img: "np.ndarray") -> "np.ndarray":
         h, w = img.shape[:2]
-        c = 0.05
+        # Recorta apenas a área central (remove bordas)
+        c = 0.08
         return img[int(h*c):int(h*(1-c)), int(w*c):int(w*(1-c))]
 
-    def _edges(self, gray: "np.ndarray") -> "np.ndarray":
-        edges = cv.Canny(gray, 60, 150)
-        k = np.ones((3,3), np.uint8)
-        edges = cv.dilate(edges, k, 1)
-        edges = cv.erode(edges, k, 1)
-        return edges
+    def _enhance_contrast(self, gray: "np.ndarray") -> "np.ndarray":
+        # Melhora o contraste para detectar melhor os padrões
+        clahe = cv.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+        return clahe.apply(gray)
 
-    def _trend_vol(self, edges: "np.ndarray") -> tuple[float, float]:
-        ys, xs = np.nonzero(edges)
-        if len(xs) < 100: 
-            return 0.0, 0.01
+    def _detect_candles(self, img: "np.ndarray") -> Dict[str, float]:
+        """Detecta padrões de candle mais agressivamente"""
+        gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+        enhanced = self._enhance_contrast(gray)
         
-        X = np.vstack([xs, np.ones_like(xs)]).T
-        m, b = np.linalg.lstsq(X, ys, rcond=None)[0]
-        slope = -m / max(1.0, edges.shape[1]*0.75)
-        vol = float(np.std(ys - (m*xs + b)) / max(1.0, edges.shape[0]))
-        return float(slope), float(vol)
+        # Detecta bordas com parâmetros mais sensíveis
+        edges = cv.Canny(enhanced, 30, 100)
+        
+        # Encontra linhas com HoughLines mais sensível
+        lines = cv.HoughLinesP(edges, 1, np.pi/180, threshold=30, 
+                              minLineLength=20, maxLineGap=10)
+        
+        bullish_count = 0
+        bearish_count = 0
+        
+        if lines is not None:
+            for line in lines:
+                x1, y1, x2, y2 = line[0]
+                angle = np.arctan2(y2 - y1, x2 - x1) * 180 / np.pi
+                
+                # Linhas ascendentes (bullish)
+                if -80 < angle < -10:
+                    bullish_count += 1
+                # Linhas descendentes (bearish)  
+                elif 10 < angle < 80:
+                    bearish_count += 1
+        
+        total_lines = bullish_count + bearish_count + 1e-9
+        bullish_ratio = bullish_count / total_lines
+        bearish_ratio = bearish_count / total_lines
+        
+        return {
+            "bullish_ratio": bullish_ratio,
+            "bearish_ratio": bearish_ratio,
+            "total_lines": total_lines
+        }
 
-    def _rsi_proxy(self, gray: "np.ndarray") -> float:
+    def _analyze_trend_strength(self, img: "np.ndarray") -> Dict[str, float]:
+        """Análise de tendência mais agressiva"""
+        gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+        h, w = gray.shape
+        
+        # Analisa múltiplas linhas horizontais
+        trend_scores = []
+        for i in range(5):
+            y_pos = int(h * (0.2 + i * 0.15))
+            row = gray[y_pos, :].astype(np.float32)
+            
+            # Remove ruído
+            row = cv.GaussianBlur(row, (5, 5), 0)
+            
+            # Calcula tendência
+            if len(row) > 10:
+                x = np.arange(len(row))
+                slope, intercept = np.polyfit(x, row, 1)
+                trend_scores.append(slope)
+        
+        avg_slope = np.mean(trend_scores) if trend_scores else 0
+        trend_strength = abs(avg_slope) * 1000
+        
+        return {
+            "trend_direction": -1 if avg_slope < 0 else 1,
+            "trend_strength": float(trend_strength),
+            "avg_slope": float(avg_slope)
+        }
+
+    def _calculate_rsi_aggressive(self, gray: "np.ndarray") -> float:
+        """RSI mais sensível"""
         try:
-            gy = cv.Sobel(gray, cv.CV_32F, 0, 1, 3)
-            gpos = float(np.clip(gy[gy>0].mean() if (gy>0).any() else 0.0, 0, 255))
-            gneg = float(np.clip((-gy[gy<0]).mean() if (gy<0).any() else 0.0, 0, 255))
-            base = 100.0 * (gpos / (gpos + gneg + 1e-9)) if (gpos+gneg)>0 else 50.0
-            return float(max(0.0, min(100.0, base)))
+            # Analisa gradientes verticais de forma mais agressiva
+            gy = cv.Sobel(gray, cv.CV_64F, 0, 1, ksize=5)
+            
+            gains = gy[gy > 2].mean() if np.any(gy > 2) else 0
+            losses = -gy[gy < -2].mean() if np.any(gy < -2) else 0
+            
+            if gains + losses > 0:
+                rsi = 100 * gains / (gains + losses)
+            else:
+                rsi = 50.0
+                
+            return float(np.clip(rsi, 0, 100))
         except:
             return 50.0
 
-    def _macd_proxy(self, s: "np.ndarray") -> dict:
-        if len(s) < 50: 
-            return {"signal":"neutral"}
+    def _detect_support_resistance(self, gray: "np.ndarray") -> Dict[str, float]:
+        """Detecta níveis de suporte e resistência"""
+        edges = cv.Canny(gray, 50, 150)
         
-        def ema(x, n):
-            k = 2/(n+1)
-            e = [float(x[0])]
-            for v in x[1:]: 
-                e.append(e[-1] + k*(float(v)-e[-1]))
-            return np.array(e, dtype=float)
+        # Encontra linhas horizontais (suporte/resistência)
+        lines = cv.HoughLinesP(edges, 1, np.pi/180, threshold=25,
+                              minLineLength=30, maxLineGap=5)
         
-        e12 = ema(s, 12)
-        e26 = ema(s, 26)
-        macd = e12[-len(e26):] - e26
-        sig = ema(macd, 9)
-        hist = float(macd[-1] - sig[-1])
+        horizontal_count = 0
+        if lines is not None:
+            for line in lines:
+                x1, y1, x2, y2 = line[0]
+                angle = np.arctan2(y2 - y1, x2 - x1) * 180 / np.pi
+                if -10 < angle < 10:  # Linha horizontal
+                    horizontal_count += 1
         
-        return {"signal": "bullish" if hist > 0 else ("bearish" if hist < 0 else "neutral")}
+        return {
+            "support_resistance_levels": float(horizontal_count),
+            "market_structure": min(1.0, horizontal_count / 10.0)
+        }
 
     def analyze(self, blob: bytes) -> Dict[str, Any]:
         try:
-            img = self._prep(self._read(blob))
-            gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
-            edges = self._edges(gray)
-            slope, vol = self._trend_vol(edges)
+            img = self._read(blob)
+            img_prep = self._prep(img)
+            gray = cv.cvtColor(img_prep, cv.COLOR_BGR2GRAY)
             
-            h, w = gray.shape[:2]
-            row = gray[int(h*0.5), :].astype(np.float32) + 1.0
-            macd = self._macd_proxy(row)
-
-            # Análise Bollinger
-            p = min(20, len(row))
-            if p >= 12:
-                win = row[-p:]
-                ma = float(win.mean())
-                sd = float(win.std())
-                last = float(win[-1])
-                
-                if last > ma + 2*sd: 
-                    boll = "overbought"
-                elif last < ma - 2*sd: 
-                    boll = "oversold"
-                elif last > ma: 
-                    boll = "bullish"
-                elif last < ma: 
-                    boll = "bearish"
-                else: 
-                    boll = "neutral"
-            else:
-                boll = "neutral"
-
-            # DECISÃO SUPER INTELIGENTE
-            rsi = self._rsi_proxy(gray)
+            # Análises múltiplas
+            candle_patterns = self._detect_candles(img_prep)
+            trend_analysis = self._analyze_trend_strength(img_prep)
+            support_resistance = self._detect_support_resistance(gray)
             
-            # Fatores de decisão
-            trend_factor = 1.0 if slope > 0.002 else (-1.0 if slope < -0.002 else 0)
-            macd_factor = 1.0 if macd["signal"] == "bullish" else (-1.0 if macd["signal"] == "bearish" else 0)
-            rsi_factor = 1.0 if rsi < 30 else (-1.0 if rsi > 70 else 0)
-            boll_factor = 1.0 if boll == "oversold" else (-1.0 if boll == "overbought" else 0)
+            rsi = self._calculate_rsi_aggressive(gray)
             
-            # Score final
-            total_score = trend_factor + macd_factor + rsi_factor + boll_factor
+            # ========== DECISÃO SUPER ASSERTIVA ==========
+            
+            # Fatores com pesos mais agressivos
+            factors = []
+            
+            # 1. Tendência (peso alto)
+            trend_score = trend_analysis["trend_direction"] * min(2.0, trend_analysis["trend_strength"] / 50.0)
+            factors.append(("trend", trend_score))
+            
+            # 2. Padrões de candle (peso alto)
+            candle_bias = (candle_patterns["bullish_ratio"] - candle_patterns["bearish_ratio"]) * 3.0
+            factors.append(("candles", candle_bias))
+            
+            # 3. RSI (peso médio)
+            rsi_bias = 0
+            if rsi < 35:  # Oversold
+                rsi_bias = 1.5
+            elif rsi > 65:  # Overbought
+                rsi_bias = -1.5
+            elif rsi > 55:  # Levemente sobrecomprado
+                rsi_bias = -0.5
+            elif rsi < 45:  # Levemente sobrevendido
+                rsi_bias = 0.5
+            factors.append(("rsi", rsi_bias))
+            
+            # 4. Estrutura de mercado (peso baixo)
+            structure_bias = support_resistance["market_structure"] * trend_analysis["trend_direction"]
+            factors.append(("structure", structure_bias))
+            
+            # Calcula score total
+            total_score = sum(score for _, score in factors)
             
             # Decisão assertiva
-            if total_score > 0:
+            if total_score > 1.0:
                 direction = "buy"
-                confidence = min(0.95, 0.6 + (total_score * 0.1))
-            elif total_score < 0:
-                direction = "sell" 
-                confidence = min(0.95, 0.6 + (abs(total_score) * 0.1))
+                confidence = min(0.95, 0.7 + (total_score * 0.08))
+                reasoning = "Tendência de alta detectada com força"
+            elif total_score < -1.0:
+                direction = "sell"
+                confidence = min(0.95, 0.7 + (abs(total_score) * 0.08))
+                reasoning = "Tendência de baixa detectada com força"
             else:
                 direction = "neutral"
                 confidence = 0.5
+                reasoning = "Mercado em equilíbrio - aguardar confirmação"
+            
+            # Métricas detalhadas
+            metrics = {
+                "rsi": rsi,
+                "trend_strength": trend_analysis["trend_strength"],
+                "bullish_candles_ratio": candle_patterns["bullish_ratio"],
+                "bearish_candles_ratio": candle_patterns["bearish_ratio"],
+                "support_resistance_levels": support_resistance["support_resistance_levels"],
+                "market_structure_score": support_resistance["market_structure"],
+                "analysis_score": float(total_score)
+            }
 
             return {
                 "direction": direction,
                 "final_confidence": float(confidence),
-                "entry_signal": f"{direction.upper()} para próximo candle",
-                "metrics": {
-                    "rsi": rsi,
-                    "macd": macd["signal"],
-                    "bollinger": boll,
-                    "trend_strength": float(abs(slope) * 1000),
-                    "volatility": float(vol)
-                }
+                "entry_signal": f"{direction.upper()} - {reasoning}",
+                "metrics": metrics,
+                "reasoning": reasoning
             }
+            
         except Exception as e:
+            # Fallback em caso de erro
             return {
                 "direction": "neutral",
                 "final_confidence": 0.5,
-                "entry_signal": "Erro na análise",
+                "entry_signal": "AGUARDAR - Análise em ajuste",
                 "metrics": {
                     "rsi": 50.0,
-                    "macd": "neutral",
-                    "bollinger": "neutral",
                     "trend_strength": 0.0,
-                    "volatility": 0.0
-                }
+                    "bullish_candles_ratio": 0.5,
+                    "bearish_candles_ratio": 0.5,
+                    "support_resistance_levels": 0.0,
+                    "market_structure_score": 0.0,
+                    "analysis_score": 0.0
+                },
+                "reasoning": f"Análise em processo de ajuste: {str(e)}"
             }
 
 
@@ -182,14 +260,13 @@ class SuperIntelligentAnalyzer:
 app = Flask(__name__)
 ANALYZER = SuperIntelligentAnalyzer()
 
-# Template HTML simplificado e otimizado
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="pt-br">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IA Signal Pro - Análise Inteligente</title>
+    <title>IA Signal Pro - Análise Super Assertiva</title>
     <style>
         * {
             margin: 0;
@@ -217,37 +294,45 @@ HTML_TEMPLATE = '''
         
         .title {
             text-align: center;
-            font-size: 28px;
+            font-size: 24px;
             font-weight: 800;
-            margin-bottom: 25px;
+            margin-bottom: 20px;
             background: linear-gradient(90deg, #3a86ff, #00ff88);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
         }
         
+        .subtitle {
+            text-align: center;
+            color: #9db0d1;
+            margin-bottom: 25px;
+            font-size: 14px;
+        }
+        
         .upload-area {
             border: 3px dashed #3a86ff;
             border-radius: 15px;
-            padding: 40px 20px;
+            padding: 30px 20px;
             text-align: center;
             background: rgba(14, 21, 36, 0.6);
-            margin-bottom: 25px;
+            margin-bottom: 20px;
             transition: all 0.3s ease;
         }
         
-        .upload-area:hover {
+        .upload-area.drag-over {
             border-color: #00ff88;
             background: rgba(14, 21, 36, 0.8);
         }
         
         .file-input {
-            margin: 20px 0;
+            margin: 15px 0;
             padding: 10px;
             background: rgba(42, 53, 82, 0.3);
             border: 1px solid #3a86ff;
             border-radius: 8px;
             color: white;
             width: 100%;
+            cursor: pointer;
         }
         
         .analyze-btn {
@@ -255,8 +340,8 @@ HTML_TEMPLATE = '''
             color: white;
             border: none;
             border-radius: 12px;
-            padding: 16px 32px;
-            font-size: 18px;
+            padding: 16px;
+            font-size: 16px;
             font-weight: 800;
             cursor: pointer;
             width: 100%;
@@ -279,10 +364,10 @@ HTML_TEMPLATE = '''
         }
         
         .result {
-            background: rgba(14, 21, 36, 0.8);
+            background: rgba(14, 21, 36, 0.9);
             border-radius: 15px;
             padding: 25px;
-            margin-top: 25px;
+            margin-top: 20px;
             border: 1px solid #223152;
             display: none;
         }
@@ -290,32 +375,42 @@ HTML_TEMPLATE = '''
         .signal-buy {
             color: #00ff88;
             font-weight: 800;
-            font-size: 24px;
+            font-size: 22px;
             text-align: center;
             margin-bottom: 15px;
+            text-shadow: 0 0 10px rgba(0, 255, 136, 0.3);
         }
         
         .signal-sell {
             color: #ff4444;
             font-weight: 800;
-            font-size: 24px;
+            font-size: 22px;
             text-align: center;
             margin-bottom: 15px;
+            text-shadow: 0 0 10px rgba(255, 68, 68, 0.3);
         }
         
         .signal-neutral {
             color: #ffaa00;
             font-weight: 800;
-            font-size: 24px;
+            font-size: 22px;
             text-align: center;
             margin-bottom: 15px;
+            text-shadow: 0 0 10px rgba(255, 170, 0, 0.3);
         }
         
         .confidence {
-            font-size: 18px;
+            font-size: 16px;
             text-align: center;
             margin: 15px 0;
             color: #9db0d1;
+        }
+        
+        .reasoning {
+            text-align: center;
+            margin: 10px 0;
+            color: #9db0d1;
+            font-style: italic;
         }
         
         .metrics {
@@ -331,6 +426,12 @@ HTML_TEMPLATE = '''
             margin: 8px 0;
             display: flex;
             justify-content: space-between;
+            align-items: center;
+        }
+        
+        .metric-value {
+            font-weight: 600;
+            color: #e9eef2;
         }
         
         .loading {
@@ -338,21 +439,42 @@ HTML_TEMPLATE = '''
             color: #3a86ff;
             font-size: 16px;
         }
+        
+        .progress-bar {
+            width: 100%;
+            height: 4px;
+            background: #2a3552;
+            border-radius: 2px;
+            margin: 10px 0;
+            overflow: hidden;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #3a86ff, #00ff88);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="title">📈 IA SIGNAL PRO</div>
+        <div class="title">🎯 IA SIGNAL PRO</div>
+        <div class="subtitle">Análise Super Assertiva - Padrões de Gráfico</div>
         
-        <div class="upload-area">
-            <div style="font-size: 20px; margin-bottom: 10px;">📷 COLE O PRINT DO GRÁFICO</div>
+        <div class="upload-area" id="uploadArea">
+            <div style="font-size: 18px; margin-bottom: 10px;">📸 ARRASTE OU CLIQUE PARA ENVIAR O GRÁFICO</div>
             <input type="file" id="fileInput" class="file-input" accept="image/*">
-            <button class="analyze-btn" id="analyzeBtn">🎯 ANALISAR E OBTER SINAL</button>
+            <button class="analyze-btn" id="analyzeBtn">🚀 ANALISAR E OBTER SINAL</button>
         </div>
         
         <div class="result" id="result">
             <div id="signalText" class="signal-neutral"></div>
+            <div class="reasoning" id="reasoningText"></div>
             <div class="confidence" id="confidenceText"></div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
             <div class="metrics" id="metricsText"></div>
         </div>
     </div>
@@ -360,19 +482,47 @@ HTML_TEMPLATE = '''
     <script>
         const fileInput = document.getElementById('fileInput');
         const analyzeBtn = document.getElementById('analyzeBtn');
+        const uploadArea = document.getElementById('uploadArea');
         const result = document.getElementById('result');
         const signalText = document.getElementById('signalText');
+        const reasoningText = document.getElementById('reasoningText');
         const confidenceText = document.getElementById('confidenceText');
+        const progressFill = document.getElementById('progressFill');
         const metricsText = document.getElementById('metricsText');
 
         let selectedFile = null;
 
-        fileInput.addEventListener('change', (e) => {
-            selectedFile = e.target.files[0] || null;
-            if (selectedFile) {
-                analyzeBtn.style.background = 'linear-gradient(135deg, #00ff88 0%, #00cc66 100%)';
+        // Drag and drop
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('drag-over');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('drag-over');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('drag-over');
+            if (e.dataTransfer.files.length) {
+                fileInput.files = e.dataTransfer.files;
+                selectedFile = e.dataTransfer.files[0];
+                updateButtonState();
             }
         });
+
+        fileInput.addEventListener('change', (e) => {
+            selectedFile = e.target.files[0] || null;
+            updateButtonState();
+        });
+
+        function updateButtonState() {
+            if (selectedFile) {
+                analyzeBtn.style.background = 'linear-gradient(135deg, #00ff88 0%, #00cc66 100%)';
+                analyzeBtn.textContent = '🚀 PRONTO PARA ANALISAR!';
+            }
+        }
 
         analyzeBtn.addEventListener('click', async () => {
             if (!selectedFile) {
@@ -381,21 +531,33 @@ HTML_TEMPLATE = '''
             }
 
             analyzeBtn.disabled = true;
-            analyzeBtn.textContent = '🔄 ANALISANDO...';
+            analyzeBtn.textContent = '🔄 ANALISANDO PADRÕES...';
             result.style.display = 'block';
             signalText.className = 'signal-neutral';
-            signalText.textContent = '🔍 Analisando gráfico...';
+            signalText.textContent = '🔍 Analisando padrões do gráfico...';
+            reasoningText.textContent = 'Detectando tendências e formações...';
             confidenceText.textContent = '';
-            metricsText.innerHTML = '<div class="loading">Processando imagem e calculando indicadores...</div>';
+            progressFill.style.width = '30%';
+            
+            metricsText.innerHTML = `
+                <div class="loading">
+                    <div>📊 Calculando indicadores...</div>
+                    <div style="font-size: 12px; margin-top: 5px;">IA Super Assertiva em ação</div>
+                </div>
+            `;
 
             try {
                 const formData = new FormData();
                 formData.append('image', selectedFile);
                 
+                progressFill.style.width = '60%';
+                
                 const response = await fetch('/analyze', {
                     method: 'POST',
                     body: formData
                 });
+                
+                progressFill.style.width = '90%';
                 
                 const data = await response.json();
                 
@@ -403,42 +565,75 @@ HTML_TEMPLATE = '''
                     const direction = data.direction;
                     const confidence = (data.final_confidence * 100).toFixed(1);
                     
+                    progressFill.style.width = '100%';
+                    
                     if (direction === 'buy') {
                         signalText.className = 'signal-buy';
-                        signalText.textContent = '🎯 COMPRAR - Entrada para próximo candle';
+                        signalText.textContent = '🎯 COMPRAR - Entrada Imediata!';
                     } else if (direction === 'sell') {
                         signalText.className = 'signal-sell';
-                        signalText.textContent = '🎯 VENDER - Entrada para próximo candle';
+                        signalText.textContent = '🎯 VENDER - Entrada Imediata!';
                     } else {
                         signalText.className = 'signal-neutral';
                         signalText.textContent = '⚡ AGUARDAR - Sem sinal claro';
                     }
                     
+                    reasoningText.textContent = data.reasoning || 'Análise concluída';
                     confidenceText.textContent = `Confiança: ${confidence}%`;
                     
-                    // Métricas
+                    // Métricas detalhadas
                     const metrics = data.metrics || {};
-                    let metricsHtml = '<div style="margin-bottom: 10px; font-weight: bold;">📊 Análise Técnica:</div>';
-                    metricsHtml += `<div class="metric-item"><span>RSI:</span> <span>${metrics.rsi?.toFixed(1) || 'N/A'}</span></div>`;
-                    metricsHtml += `<div class="metric-item"><span>MACD:</span> <span>${metrics.macd || 'N/A'}</span></div>`;
-                    metricsHtml += `<div class="metric-item"><span>Bollinger:</span> <span>${metrics.bollinger || 'N/A'}</span></div>`;
-                    metricsHtml += `<div class="metric-item"><span>Força da Tendência:</span> <span>${metrics.trend_strength?.toFixed(1) || 'N/A'}</span></div>`;
-                    metricsHtml += `<div class="metric-item"><span>Volatilidade:</span> <span>${metrics.volatility?.toFixed(3) || 'N/A'}</span></div>`;
+                    let metricsHtml = '<div style="margin-bottom: 10px; font-weight: bold; text-align: center;">📊 ANÁLISE DETALHADA</div>';
+                    
+                    metricsHtml += `<div class="metric-item">
+                        <span>RSI:</span>
+                        <span class="metric-value">${metrics.rsi?.toFixed(1) || 'N/A'}</span>
+                    </div>`;
+                    
+                    metricsHtml += `<div class="metric-item">
+                        <span>Força da Tendência:</span>
+                        <span class="metric-value">${metrics.trend_strength?.toFixed(1) || 'N/A'}</span>
+                    </div>`;
+                    
+                    metricsHtml += `<div class="metric-item">
+                        <span>Padrões Bullish:</span>
+                        <span class="metric-value">${(metrics.bullish_candles_ratio * 100)?.toFixed(1) || 'N/A'}%</span>
+                    </div>`;
+                    
+                    metricsHtml += `<div class="metric-item">
+                        <span>Padrões Bearish:</span>
+                        <span class="metric-value">${(metrics.bearish_candles_ratio * 100)?.toFixed(1) || 'N/A'}%</span>
+                    </div>`;
+                    
+                    metricsHtml += `<div class="metric-item">
+                        <span>Níveis S/R:</span>
+                        <span class="metric-value">${metrics.support_resistance_levels?.toFixed(0) || 'N/A'}</span>
+                    </div>`;
+                    
+                    metricsHtml += `<div class="metric-item">
+                        <span>Score da Análise:</span>
+                        <span class="metric-value">${metrics.analysis_score?.toFixed(2) || 'N/A'}</span>
+                    </div>`;
                     
                     metricsText.innerHTML = metricsHtml;
+                    
                 } else {
                     signalText.className = 'signal-neutral';
                     signalText.textContent = '❌ Erro na análise';
-                    confidenceText.textContent = data.error || 'Tente novamente com outra imagem';
+                    reasoningText.textContent = data.error || 'Tente novamente com outra imagem';
+                    confidenceText.textContent = '';
+                    progressFill.style.width = '0%';
                 }
             } catch (error) {
                 signalText.className = 'signal-neutral';
                 signalText.textContent = '❌ Erro de conexão';
-                confidenceText.textContent = 'Verifique sua internet e tente novamente';
+                reasoningText.textContent = 'Verifique sua internet e tente novamente';
+                confidenceText.textContent = '';
+                progressFill.style.width = '0%';
             }
             
             analyzeBtn.disabled = false;
-            analyzeBtn.textContent = '🎯 ANALISAR E OBTER SINAL';
+            analyzeBtn.textContent = '🚀 ANALISAR NOVAMENTE';
             analyzeBtn.style.background = 'linear-gradient(135deg, #3a86ff 0%, #2a76ef 100%)';
         });
     </script>
@@ -460,7 +655,7 @@ def analyze_photo():
         if not image_file or image_file.filename == '':
             return jsonify({'ok': False, 'error': 'Arquivo inválido'}), 400
         
-        # Verificar tamanho do arquivo (máximo 10MB)
+        # Verificar tamanho do arquivo
         image_file.seek(0, 2)
         file_size = image_file.tell()
         image_file.seek(0)
@@ -480,7 +675,8 @@ def analyze_photo():
             'direction': analysis['direction'],
             'final_confidence': analysis['final_confidence'],
             'entry_signal': analysis['entry_signal'],
-            'metrics': analysis['metrics']
+            'metrics': analysis['metrics'],
+            'reasoning': analysis.get('reasoning', 'Análise concluída')
         })
         
     except Exception as e:
@@ -488,7 +684,7 @@ def analyze_photo():
 
 @app.route('/health')
 def health_check():
-    return jsonify({'status': 'healthy', 'message': 'IA Signal Pro está funcionando!'})
+    return jsonify({'status': 'healthy', 'message': 'IA Signal Pro Super Assertiva está funcionando!'})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
