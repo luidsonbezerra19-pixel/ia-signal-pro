@@ -15,7 +15,6 @@ from typing import Any, Dict, Optional
 import numpy as np
 from flask import Flask, jsonify, render_template_string, request
 from PIL import Image, ImageFilter
-import scipy.ndimage
 
 # =========================
 #  SISTEMA DE CACHE INTELIGENTE
@@ -106,14 +105,36 @@ class IntelligentAnalyzer:
         # Converte para escala de cinza com pesos otimizados
         gray = np.dot(img_array[...,:3], [0.299, 0.587, 0.114])
         
-        # Realce de bordas para melhor detecção de tendências
-        sobel_x = scipy.ndimage.sobel(gray, axis=1)
-        sobel_y = scipy.ndimage.sobel(gray, axis=0)
+        # Realce de bordas usando numpy (sem scipy)
+        kernel_x = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]])
+        kernel_y = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]])
+        
+        # Aplica filtros Sobel manualmente
+        sobel_x = self._apply_convolution(gray, kernel_x)
+        sobel_y = self._apply_convolution(gray, kernel_y)
         gradient = np.sqrt(sobel_x**2 + sobel_y**2)
         
         # Combina informação original com gradiente
         enhanced = gray * 0.7 + gradient * 0.3
         return enhanced
+
+    def _apply_convolution(self, image: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+        """Aplica convolução manualmente sem scipy"""
+        kernel_height, kernel_width = kernel.shape
+        pad_height = kernel_height // 2
+        pad_width = kernel_width // 2
+        
+        # Adiciona padding
+        padded = np.pad(image, ((pad_height, pad_height), (pad_width, pad_width)), mode='edge')
+        
+        # Aplica convolução
+        output = np.zeros_like(image)
+        for i in range(image.shape[0]):
+            for j in range(image.shape[1]):
+                region = padded[i:i+kernel_height, j:j+kernel_width]
+                output[i, j] = np.sum(region * kernel)
+        
+        return output
 
     def _analyze_price_action(self, price_data: np.ndarray, timeframe: str) -> Dict[str, float]:
         """Análise inteligente da ação do preço"""
