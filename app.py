@@ -194,6 +194,24 @@ class NeutralAnalyzer:
             "entry_time": entry_time_str,
             "timeframe": "Próximo minuto"
         }
+def _smooth_direction(self, raw_direction: str, total_score: float) -> str:
+    """Suaviza a direção quando o score é borderline, usando histórico recente (histerese)."""
+    try:
+        if abs(float(total_score)) < 0.35 and len(LAST_DIRS) > 0:
+            return "buy" if LAST_DIRS.count("buy") >= LAST_DIRS.count("sell") else "sell"
+    except Exception:
+        pass
+    return raw_direction
+
+def _calibrate_confidence(self, total_score: float, base_conf: float) -> float:
+    """
+    Converte score bruto em probabilidade calibrada (0.55–0.92).
+    Mantém confiança honesta sem extremos artificiais.
+    """
+    prob = 1.0 / (1.0 + math.exp(-1.4 * float(total_score)))  # squash 0..1
+    mix = 0.45 * prob + 0.55 * float(base_conf)               # mistura com qualidade estrutural
+    return float(min(0.92, max(0.55, mix)))
+
 
     def analyze(self, blob: bytes) -> Dict[str, Any]:
         try:
@@ -257,91 +275,82 @@ class NeutralAnalyzer:
             weak_buy_threshold, weak_sell_threshold = 0.15, -0.15
             
             
-# ========== DECISÃO FINAL NEUTRA (com desempate por momentum) ==========
-# Defaults
-direction = "buy"
-reasoning = "📊 MERCADO EQUILIBRADO - BIAS ESTATÍSTICO"
 
-if total_score > buy_threshold:
-    direction = "buy"
-    reasoning = "🔰 ALTA FORTE (múltiplos fatores alinhados)"
-elif total_score < sell_threshold:
-    direction = "sell"
-    reasoning = "🔰 BAIXA FORTE (múltiplos fatores alinhados)"
-elif total_score > weak_buy_threshold:
-    direction = "buy"
-    reasoning = "↗️ ALTA CONFIRMADA (viés moderado)"
-elif total_score < weak_sell_threshold:
-    direction = "sell"
-    reasoning = "↘️ BAIXA CONFIRMADA (viés moderado)"
-else:
-    # Mercado lateral: desempate por (momentum + consistência de padrões)
-    bull_power = chart_patterns["bullish_confidence"]
-    bear_power = chart_patterns["bearish_confidence"]
-    mom = price_action["momentum"]  # >0 puxa alta; <0 puxa baixa
-    side_bias = (bull_power - bear_power) + (0.25 * float(np.clip(mom, -2.0, 2.0)))
-    if side_bias > 0.05:
-        direction = "buy"
-        reasoning = "⚡ LATERAL: viés de alta por padrões + momentum"
-    elif side_bias < -0.05:
-        direction = "sell"
-        reasoning = "⚡ LATERAL: viés de baixa por padrões + momentum"
-    else:
-        direction = "buy" if market_structure["market_balance"] >= 0.5 else "sell"
-        reasoning = "📊 LATERAL: decisão por estrutura de mercado"
+            # ========== DECISÃO FINAL NEUTRA (com desempate por momentum) ==========
+            # Defaults
+            direction = "buy"
+            reasoning = "📊 MERCADO EQUILIBRADO - BIAS ESTATÍSTICO"
 
-# Suaviza direção se borderline (histerese)
-direction = self._smooth_direction(direction, float(total_score))
+            if total_score > buy_threshold:
+                direction = "buy"
+                reasoning = "🔰 ALTA FORTE (múltiplos fatores alinhados)"
+            elif total_score < sell_threshold:
+                direction = "sell"
+                reasoning = "🔰 BAIXA FORTE (múltiplos fatores alinhados)"
+            elif total_score > weak_buy_threshold:
+                direction = "buy"
+                reasoning = "↗️ ALTA CONFIRMADA (viés moderado)"
+            elif total_score < weak_sell_threshold:
+                direction = "sell"
+                reasoning = "↘️ BAIXA CONFIRMADA (viés moderado)"
+            else:
+                # Mercado lateral: desempate por (momentum + consistência de padrões)
+                bull_power = chart_patterns["bullish_confidence"]
+                bear_power = chart_patterns["bearish_confidence"]
+                mom = price_action["momentum"]  # >0 puxa alta; <0 puxa baixa
+                side_bias = (bull_power - bear_power) + (0.25 * float(np.clip(mom, -2.0, 2.0)))
+                if side_bias > 0.05:
+                    direction = "buy"
+                    reasoning = "⚡ LATERAL: viés de alta por padrões + momentum"
+                elif side_bias < -0.05:
+                    direction = "sell"
+                    reasoning = "⚡ LATERAL: viés de baixa por padrões + momentum"
+                else:
+                    direction = "buy" if market_structure["market_balance"] >= 0.5 else "sell"
+                    reasoning = "📊 LATERAL: decisão por estrutura de mercado"
 
-# Confiança final calibrada
-final_conf = self._calibrate_confidence(float(total_score), float(base_confidence))
+            # Suaviza direção se borderline (histerese)
+            direction = self._smooth_direction(direction, float(total_score))
 
-# Guarda histórico para próximas decisões
-try:
-    LAST_DIRS.append(direction)
-except Exception:
-    pass
+            # Confiança final calibrada
+            final_conf = self._calibrate_confidence(float(total_score), float(base_confidence))
 
-# Rotulagem textual pela confiança final – sem bloquear
-label = "FORTE" if final_conf >= 0.80 else ("CONFIRMADO" if final_conf >= 0.68 else "LEVE")
-entry_signal = f"🎯 {direction.upper()} - {reasoning} [{label}]"
+            # Guarda histórico para próximas decisões
+            try:
+                LAST_DIRS.append(direction)
+            except Exception:
+                pass
 
-# Métricas detalhadas para transparência
-metrics = {
-    "trend_direction": price_action["trend_direction"],
-    "trend_strength": float(price_action["trend_strength"]),
-    "momentum": float(price_action["momentum"]),
-    "bullish_confidence": float(chart_patterns["bullish_confidence"]),
-    "bearish_confidence": float(chart_patterns["bearish_confidence"]),
-    "volatility": float(chart_patterns["volatility"]),
-    "market_balance": float(market_structure["market_balance"]),
-    "volume_intensity": float(volume),
-    "analysis_score": float(total_score),
-    "signal_quality": float(base_confidence),
-    "left_vs_right": f"{price_action.get('left_avg', 0.0):.1f} vs {price_action.get('right_avg', 0.0):.1f}"
-}
+            # Rotulagem textual pela confiança final – sem bloquear
+            label = "FORTE" if final_conf >= 0.80 else ("CONFIRMADO" if final_conf >= 0.68 else "LEVE")
+            entry_signal = f"🎯 {direction.upper()} - {reasoning} [{label}]"
 
-return {
-    "direction": direction,
-    "final_confidence": float(final_conf),
-    "entry_signal": entry_signal,
-    "entry_time": time_info["entry_time"],
-    "timeframe": time_info["timeframe"],
-    "analysis_time": time_info["current_time"],
-    "metrics": metrics,
-    "reasoning": reasoning
-}
-        return {
+            # Métricas detalhadas para transparência
+            metrics = {
+                "trend_direction": price_action["trend_direction"],
+                "trend_strength": float(price_action["trend_strength"]),
+                "momentum": float(price_action["momentum"]),
+                "bullish_confidence": float(chart_patterns["bullish_confidence"]),
+                "bearish_confidence": float(chart_patterns["bearish_confidence"]),
+                "volatility": float(chart_patterns["volatility"]),
+                "market_balance": float(market_structure["market_balance"]),
+                "volume_intensity": float(volume),
+                "analysis_score": float(total_score),
+                "signal_quality": float(base_confidence),
+                "left_vs_right": f"{price_action.get('left_avg', 0.0):.1f} vs {price_action.get('right_avg', 0.0):.1f}"
+            }
+
+            return {
                 "direction": direction,
-                "final_confidence": float(confidence),
-                "entry_signal": f"🎯 {direction.upper()} - {reasoning}",
+                "final_confidence": float(final_conf),
+                "entry_signal": entry_signal,
                 "entry_time": time_info["entry_time"],
                 "timeframe": time_info["timeframe"],
                 "analysis_time": time_info["current_time"],
                 "metrics": metrics,
                 "reasoning": reasoning
             }
-            
+
         except Exception as e:
             # Fallback completamente NEUTRO
             now = datetime.datetime.now()
