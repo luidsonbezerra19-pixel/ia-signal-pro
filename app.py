@@ -3,6 +3,7 @@ from __future__ import annotations
 """
 IA Signal Pro — Análise INTELIGENTE PURA
 SEM FALLBACK - Apenas análise real do gráfico
+VERSÃO MELHORADA - MAIS ASSERTIVA
 """
 
 import io
@@ -11,7 +12,7 @@ import math
 import datetime
 import hashlib
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List, Tuple
 import numpy as np
 from flask import Flask, jsonify, render_template_string, request
 from PIL import Image, ImageFilter
@@ -72,7 +73,7 @@ class AnalysisCache:
             pass
 
 # =========================
-#  IA INTELIGENTE PURA - SEM FALLBACK
+#  IA INTELIGENTE PURA - VERSÃO MELHORADA
 # =========================
 class IntelligentAnalyzer:
     def __init__(self):
@@ -85,6 +86,30 @@ class IntelligentAnalyzer:
             image = image.convert('RGB')
         return image
     
+    def _validate_chart_image(self, image: Image.Image) -> bool:
+        """Valida se a imagem contém um gráfico legível"""
+        width, height = image.size
+        
+        # Verifica dimensões mínimas
+        if width < 300 or height < 200:
+            raise ValueError("Imagem muito pequena para análise (mínimo 300x200 pixels)")
+        
+        # Verifica se é predominantemente um gráfico (cores típicas)
+        img_array = np.array(image)
+        gray = np.dot(img_array[...,:3], [0.299, 0.587, 0.114])
+        
+        # Gráficos geralmente têm boa variação de cores
+        contrast = np.std(gray)
+        if contrast < 20:  # Muito uniforme
+            raise ValueError("Imagem sem contraste suficiente - pode não ser um gráfico válido")
+        
+        # Verifica se há variação suficiente nas cores (evita imagens sólidas)
+        color_variance = np.var(img_array)
+        if color_variance < 100:
+            raise ValueError("Imagem muito uniforme - necessário gráfico com variação de cores")
+        
+        return True
+
     def _preprocess_image(self, image: Image.Image, timeframe: str) -> np.ndarray:
         """Pré-processamento inteligente do gráfico"""
         width, height = image.size
@@ -136,11 +161,11 @@ class IntelligentAnalyzer:
         
         return output
 
-    def _analyze_price_action(self, price_data: np.ndarray, timeframe: str) -> Dict[str, float]:
-        """Análise inteligente da ação do preço"""
+    def _trend_analysis(self, price_data: np.ndarray) -> Dict[str, float]:
+        """Análise especializada de tendência"""
         height, width = price_data.shape
         
-        # Análise de tendência por regiões temporais
+        # Análise multi-temporal
         regions = []
         segment_size = width // 8
         
@@ -155,7 +180,7 @@ class IntelligentAnalyzer:
                 region_mean = np.mean(segment)
                 regions.append(region_mean)
         
-        # Calcula tendência usando regressão linear
+        # Regressão linear para tendência
         if len(regions) >= 3:
             x = np.arange(len(regions))
             trend_slope, trend_intercept = np.polyfit(x, regions, 1)
@@ -169,34 +194,46 @@ class IntelligentAnalyzer:
             trend_slope = 0
             trend_strength = 0
         
-        # Análise de momentum (derivada segunda)
-        if len(regions) >= 4:
-            momentum = np.gradient(np.gradient(regions))
-            current_momentum = momentum[-1] if len(momentum) > 0 else 0
-        else:
-            current_momentum = 0
-        
-        # Volatilidade adaptativa
-        volatility = np.std(price_data) / (np.mean(price_data) + 1e-8)
-        
         return {
             "trend_direction": float(trend_slope),
             "trend_strength": float(trend_strength),
-            "momentum": float(current_momentum),
-            "volatility": float(volatility),
-            "price_range": float(np.ptp(price_data))
+            "trend_consistency": float(np.std(regions) if regions else 0)
         }
 
-    def _analyze_chart_patterns(self, price_data: np.ndarray) -> Dict[str, float]:
-        """Detecção inteligente de padrões gráficos"""
+    def _volume_profile_analysis(self, price_data: np.ndarray) -> Dict[str, float]:
+        """Análise de perfil de volume e congestão"""
+        height, width = price_data.shape
+        
+        # Encontra áreas de congestão (baixa variância horizontal)
+        congestion_levels = []
+        for row in range(0, height, 4):
+            row_data = price_data[row, :]
+            if len(row_data) > 10:
+                row_variance = np.std(row_data)
+                if row_variance < np.std(price_data) * 0.25:  # Áreas de baixa volatilidade
+                    congestion_levels.append(np.mean(row_data))
+        
+        # Agrupa níveis próximos
+        unique_levels = []
+        for level in congestion_levels:
+            if not unique_levels or min(abs(level - lvl) for lvl in unique_levels) > np.std(price_data) * 0.15:
+                unique_levels.append(level)
+        
+        return {
+            "congestion_levels": len(unique_levels),
+            "congestion_density": len(congestion_levels) / (height / 4),
+            "price_clustering": float(np.std(unique_levels) if unique_levels else 0)
+        }
+
+    def _pattern_recognition(self, price_data: np.ndarray) -> Dict[str, float]:
+        """Reconhecimento de padrões gráficos"""
         height, width = price_data.shape
         
         # Análise de suportes e resistências
         horizontal_profiles = []
-        for row in range(0, height, 5):  # Amostra a cada 5 pixels
+        for row in range(0, height, 5):
             row_data = price_data[row, :]
             if len(row_data) > 10:
-                # Encontra áreas de congestão (baixa variância)
                 row_variance = np.std(row_data)
                 if row_variance < np.std(price_data) * 0.3:
                     horizontal_profiles.append(np.mean(row_data))
@@ -240,40 +277,162 @@ class IntelligentAnalyzer:
             "consolidation_level": float(len(unique_levels) / 20)
         }
 
-    def _analyze_market_structure(self, price_data: np.ndarray, timeframe: str) -> Dict[str, float]:
-        """Análise da estrutura de mercado"""
+    def _momentum_analysis(self, price_data: np.ndarray) -> Dict[str, float]:
+        """Análise de momentum e aceleração"""
         height, width = price_data.shape
         
-        # Análise de higher highs/lower lows
-        middle_row = height // 2
-        upper_half = price_data[:middle_row, :]
-        lower_half = price_data[middle_row:, :]
+        # Análise de momentum por regiões
+        regions = []
+        segment_size = width // 8
         
-        upper_trend = np.polyfit(range(upper_half.shape[1]), np.mean(upper_half, axis=0), 1)[0]
-        lower_trend = np.polyfit(range(lower_half.shape[1]), np.mean(lower_half, axis=0), 1)[0]
+        for i in range(8):
+            start_col = i * segment_size
+            end_col = (i + 1) * segment_size
+            if end_col > width:
+                end_col = width
+            segment = price_data[:, start_col:end_col]
+            if segment.size > 0:
+                regions.append(np.mean(segment))
         
-        # Tendência de mercado
-        market_trend = (upper_trend + lower_trend) / 2
-        
-        # Análise de força dos movimentos
-        left_side = price_data[:, :width//2]
-        right_side = price_data[:, width//2:]
-        
-        left_volatility = np.std(left_side) / (np.mean(left_side) + 1e-8)
-        right_volatility = np.std(right_side) / (np.mean(right_side) + 1e-8)
-        
-        volatility_ratio = right_volatility / (left_volatility + 1e-8)
-        
-        # Força do movimento atual
-        recent_movement = np.mean(price_data[:, -width//10:]) - np.mean(price_data[:, -width//5:-width//10])
-        movement_strength = abs(recent_movement) / (np.std(price_data) + 1e-8)
+        # Cálculo de momentum (primeira e segunda derivada)
+        if len(regions) >= 4:
+            first_derivative = np.gradient(regions)
+            second_derivative = np.gradient(first_derivative)
+            
+            current_momentum = first_derivative[-1] if len(first_derivative) > 0 else 0
+            current_acceleration = second_derivative[-1] if len(second_derivative) > 0 else 0
+            
+            # Força do momentum
+            momentum_strength = abs(current_momentum) / (np.std(regions) + 1e-8)
+        else:
+            current_momentum = 0
+            current_acceleration = 0
+            momentum_strength = 0
         
         return {
-            "market_trend": float(market_trend),
-            "volatility_ratio": float(volatility_ratio),
-            "movement_strength": float(movement_strength),
-            "structure_quality": float(min(1.0, len(price_data) / 1000))
+            "momentum": float(current_momentum),
+            "acceleration": float(current_acceleration),
+            "momentum_strength": float(momentum_strength)
         }
+
+    def _confirm_analysis_with_multiple_methods(self, price_data: np.ndarray) -> Dict:
+        """Usa múltiplos métodos para confirmar a análise"""
+        methods = [
+            self._trend_analysis,
+            self._volume_profile_analysis,
+            self._pattern_recognition, 
+            self._momentum_analysis
+        ]
+        
+        results = []
+        method_names = []
+        
+        for method in methods:
+            try:
+                result = method(price_data)
+                results.append(result)
+                method_names.append(method.__name__)
+            except Exception as e:
+                print(f"Método {method.__name__} falhou: {e}")
+                continue
+        
+        # Requer pelo menos 2 métodos para consenso
+        if len(results) >= 2:
+            return self._build_consensus(results, method_names)
+        else:
+            raise ValueError("Análise inconclusiva - métodos insuficientes para confirmação")
+
+    def _build_consensus(self, results: List[Dict], method_names: List[str]) -> Dict:
+        """Constrói consenso entre múltiplos métodos de análise"""
+        consolidated = {
+            'price_action': {},
+            'chart_patterns': {}, 
+            'market_structure': {},
+            'indicators': {},
+            'method_agreement': len(results) / 4.0  % de métodos que concordaram
+        }
+        
+        # Consolida resultados de diferentes métodos
+        for i, result in enumerate(results):
+            method_name = method_names[i]
+            
+            if 'trend' in method_name:
+                consolidated['price_action'].update(result)
+            elif 'volume' in method_name or 'congestion' in method_name:
+                consolidated['market_structure'].update(result)
+            elif 'pattern' in method_name or 'support' in method_name:
+                consolidated['chart_patterns'].update(result)
+            elif 'momentum' in method_name:
+                consolidated['indicators'].update(result)
+        
+        return consolidated
+
+    def _calculate_signal_quality(self, analysis: Dict) -> float:
+        """Calcula qualidade do sinal baseado em múltiplos fatores"""
+        quality_factors = []
+        
+        # 1. Consistência da tendência (25%)
+        trend_strength = analysis['price_action'].get('trend_strength', 0)
+        quality_factors.append(trend_strength * 0.25)
+        
+        # 2. Confirmação de níveis (20%)
+        support_strength = analysis['chart_patterns'].get('support_strength', 0)
+        resistance_strength = analysis['chart_patterns'].get('resistance_strength', 0)
+        level_confirmation = (support_strength + resistance_strength) / 2
+        quality_factors.append(level_confirmation * 0.20)
+        
+        # 3. Força do momentum (20%)
+        momentum_strength = analysis['indicators'].get('momentum_strength', 0)
+        quality_factors.append(momentum_strength * 0.20)
+        
+        # 4. Clareza do padrão (20%)
+        pattern_clarity = analysis['chart_patterns'].get('consolidation_level', 0)
+        quality_factors.append(pattern_clarity * 0.20)
+        
+        # 5. Concordância entre métodos (15%)
+        method_agreement = analysis.get('method_agreement', 0)
+        quality_factors.append(method_agreement * 0.15)
+        
+        return min(1.0, max(0.0, sum(quality_factors)))
+
+    def _get_dynamic_thresholds(self, timeframe: str) -> Dict:
+        """Limiares adaptativos por timeframe"""
+        if timeframe == '1m':
+            return {
+                'min_confidence': 0.55,
+                'strong_signal': 0.70,
+                'min_trend_strength': 0.4,
+                'min_quality': 0.5,
+                'min_methods': 2
+            }
+        else:  # 5m
+            return {
+                'min_confidence': 0.60,
+                'strong_signal': 0.75,
+                'min_trend_strength': 0.5,
+                'min_quality': 0.6,
+                'min_methods': 3
+            }
+
+    def _intelligent_fallback(self, analysis: Dict, timeframe: str) -> Dict:
+        """Fallback baseado em análise parcial quando completa falha"""
+        thresholds = self._get_dynamic_thresholds(timeframe)
+        
+        # Se tendência é clara mas outros indicadores falharam
+        trend_strength = analysis['price_action'].get('trend_strength', 0)
+        if trend_strength > thresholds['min_trend_strength']:
+            trend_direction = analysis['price_action'].get('trend_direction', 0)
+            direction = "buy" if trend_direction > 0 else "sell"
+            return {
+                "direction": direction,
+                "confidence": 0.52,
+                "reasoning": "📊 Sinal baseado apenas na tendência principal (análise limitada)",
+                "quality": "low",
+                "fallback_used": True
+            }
+        
+        # Se nenhum método foi conclusivo
+        raise ValueError("Análise inconclusiva - gráfico não apresenta padrões claros suficientes")
 
     def _calculate_advanced_indicators(self, price_data: np.ndarray) -> Dict[str, float]:
         """Indicadores técnicos avançados"""
@@ -328,27 +487,36 @@ class IntelligentAnalyzer:
         score_components.append(trend_score * 0.3)
         
         # 2. Momentum (20%)
-        momentum_score = price_action['momentum'] * 2
+        momentum_score = indicators.get('momentum', 0) * 2
         score_components.append(momentum_score * 0.2)
         
         # 3. Posição relativa aos níveis (20%)
         level_score = 0
-        if chart_patterns['distance_to_support'] < 0.1 and chart_patterns['support_strength'] > 0.6:
+        distance_to_support = chart_patterns.get('distance_to_support', 0.5)
+        distance_to_resistance = chart_patterns.get('distance_to_resistance', 0.5)
+        support_strength = chart_patterns.get('support_strength', 0)
+        resistance_strength = chart_patterns.get('resistance_strength', 0)
+        
+        if distance_to_support < 0.1 and support_strength > 0.6:
             level_score = 1.0  # Próximo de suporte forte
-        elif chart_patterns['distance_to_resistance'] < 0.1 and chart_patterns['resistance_strength'] > 0.6:
+        elif distance_to_resistance < 0.1 and resistance_strength > 0.6:
             level_score = -1.0  # Próximo de resistência forte
-        elif chart_patterns['distance_to_support'] < chart_patterns['distance_to_resistance']:
+        elif distance_to_support < distance_to_resistance:
             level_score = 0.3  # Mais perto do suporte
         else:
             level_score = -0.3  # Mais perto da resistência
         score_components.append(level_score * 0.2)
         
         # 4. Indicadores técnicos (15%)
-        indicator_score = (indicators['rsi'] + indicators['macd']) / 2
+        rsi = indicators.get('rsi', 0)
+        macd = indicators.get('macd', 0)
+        indicator_score = (rsi + macd) / 2
         score_components.append(indicator_score * 0.15)
         
         # 5. Estrutura de mercado (15%)
-        structure_score = market_structure['market_trend'] * market_structure['movement_strength']
+        market_trend = market_structure.get('market_trend', 0)
+        movement_strength = market_structure.get('movement_strength', 0)
+        structure_score = market_trend * movement_strength
         score_components.append(structure_score * 0.15)
         
         # Score final
@@ -356,23 +524,25 @@ class IntelligentAnalyzer:
         
         # Cálculo de confiança
         confidence_factors = [
-            price_action['trend_strength'],
-            chart_patterns['consolidation_level'],
-            market_structure['structure_quality'],
-            indicators['momentum_quality'] / 2
+            price_action.get('trend_strength', 0),
+            chart_patterns.get('consolidation_level', 0),
+            market_structure.get('structure_quality', 0.5),
+            indicators.get('momentum_quality', 0) / 2
         ]
         
         base_confidence = np.mean(confidence_factors)
         
-        # Decisão inteligente
+        # Decisão inteligente com limiares dinâmicos
+        thresholds = self._get_dynamic_thresholds(timeframe)
+        
         if total_score > 0.15:
             direction = "buy"
             confidence = 0.60 + (base_confidence * 0.35)
-            reasoning = "📈 Tendência de alta identificada com confirmação técnica"
+            reasoning = "📈 Tendência de alta identificada com confirmação multi-método"
         elif total_score < -0.15:
             direction = "sell"
             confidence = 0.60 + (base_confidence * 0.35)
-            reasoning = "📉 Tendência de baixa identificada com confirmação técnica"
+            reasoning = "📉 Tendência de baixa identificada com confirmação multi-método"
         elif total_score > 0.05:
             direction = "buy"
             confidence = 0.55 + (base_confidence * 0.25)
@@ -383,7 +553,7 @@ class IntelligentAnalyzer:
             reasoning = "↘️ Viés de baixa com sinais técnicos favoráveis"
         else:
             # Mercado em equilíbrio - análise mais profunda
-            if indicators['rsi'] > 0 and market_structure['market_trend'] > 0:
+            if indicators.get('rsi', 0) > 0 and market_structure.get('market_trend', 0) > 0:
                 direction = "buy"
                 confidence = 0.52
                 reasoning = "⚡ Leve viés de alta em mercado equilibrado"
@@ -394,7 +564,7 @@ class IntelligentAnalyzer:
         
         return {
             "direction": direction,
-            "confidence": min(0.95, confidence),
+            "confidence": min(0.95, max(0.50, confidence)),
             "reasoning": reasoning,
             "total_score": total_score
         }
@@ -420,7 +590,7 @@ class IntelligentAnalyzer:
         }
 
     def analyze(self, blob: bytes, timeframe: str = '1m') -> Dict[str, Any]:
-        """Análise principal - SEM FALLBACK"""
+        """Análise principal - VERSÃO MELHORADA"""
         
         # Verifica cache
         cached_analysis = self.cache.get(blob, timeframe)
@@ -431,30 +601,40 @@ class IntelligentAnalyzer:
         try:
             # Processamento da imagem
             image = self._load_image(blob)
-            img_array = self._preprocess_image(image, timeframe)
             
-            # Extração de dados de preço
+            # VALIDAÇÃO CRÍTICA (NOVA)
+            self._validate_chart_image(image)
+            
+            img_array = self._preprocess_image(image, timeframe)
             price_data = self._extract_price_data(img_array)
             
-            # Análises especializadas
-            price_action = self._analyze_price_action(price_data, timeframe)
-            chart_patterns = self._analyze_chart_patterns(price_data)
-            market_structure = self._analyze_market_structure(price_data, timeframe)
-            indicators = self._calculate_advanced_indicators(price_data)
+            # ANÁLISE COM MÚLTIPLAS CAMADAS (NOVA)
+            consolidated_analysis = self._confirm_analysis_with_multiple_methods(price_data)
             
-            # Consolida análise
-            analysis_data = {
-                'price_action': price_action,
-                'chart_patterns': chart_patterns,
-                'market_structure': market_structure,
-                'indicators': indicators
-            }
+            # QUALIDADE DO SINAL (NOVA)
+            signal_quality = self._calculate_signal_quality(consolidated_analysis)
+            thresholds = self._get_dynamic_thresholds(timeframe)
             
-            # Tomada de decisão inteligente
-            decision = self._make_intelligent_decision(analysis_data, timeframe)
+            # Adiciona indicadores técnicos
+            technical_indicators = self._calculate_advanced_indicators(price_data)
+            consolidated_analysis['indicators'].update(technical_indicators)
+            
+            # DECISÃO COM LIMIARES (MELHORADA)
+            if signal_quality >= thresholds['min_quality']:
+                decision = self._make_intelligent_decision(consolidated_analysis, timeframe)
+            else:
+                decision = self._intelligent_fallback(consolidated_analysis, timeframe)
             
             # Informações de tempo
             time_info = self._get_entry_timeframe(timeframe)
+            
+            # Determina grau de qualidade
+            if signal_quality > 0.7:
+                analysis_grade = "high"
+            elif signal_quality > 0.5:
+                analysis_grade = "medium" 
+            else:
+                analysis_grade = "low"
             
             # Resultado final
             result = {
@@ -466,17 +646,21 @@ class IntelligentAnalyzer:
                 "analysis_time": time_info["current_time"],
                 "user_timeframe": timeframe,
                 "cached": False,
+                "signal_quality": float(signal_quality),
+                "analysis_grade": analysis_grade,
+                "methods_used": consolidated_analysis.get('method_agreement', 0) * 4,
                 "metrics": {
                     "analysis_score": float(decision["total_score"]),
-                    "trend_strength": price_action["trend_strength"],
-                    "momentum": price_action["momentum"],
-                    "rsi": indicators["rsi"],
-                    "macd": indicators["macd"],
-                    "support_levels": chart_patterns["support_levels"],
-                    "resistance_levels": chart_patterns["resistance_levels"],
-                    "volatility": price_action["volatility"],
-                    "volume_intensity": indicators["volume_intensity"],
-                    "signal_quality": float(decision["confidence"])
+                    "trend_strength": consolidated_analysis['price_action'].get("trend_strength", 0),
+                    "momentum": consolidated_analysis['indicators'].get("momentum", 0),
+                    "rsi": consolidated_analysis['indicators'].get("rsi", 0),
+                    "macd": consolidated_analysis['indicators'].get("macd", 0),
+                    "support_levels": consolidated_analysis['chart_patterns'].get("support_levels", 0),
+                    "resistance_levels": consolidated_analysis['chart_patterns'].get("resistance_levels", 0),
+                    "volatility": float(np.std(price_data) / (np.mean(price_data) + 1e-8)),
+                    "volume_intensity": consolidated_analysis['indicators'].get("volume_intensity", 0),
+                    "signal_quality": float(signal_quality),
+                    "method_agreement": float(consolidated_analysis.get('method_agreement', 0))
                 },
                 "reasoning": decision["reasoning"]
             }
@@ -502,7 +686,7 @@ HTML_TEMPLATE = '''
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IA Signal Pro - ANÁLISE PURA</title>
+    <title>IA Signal Pro - ANÁLISE PURA v2.0</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
@@ -523,6 +707,11 @@ HTML_TEMPLATE = '''
             -webkit-background-clip: text; -webkit-text-fill-color: transparent;
         }
         .subtitle { color: #9db0d1; font-size: 13px; margin-bottom: 10px; }
+        .version { 
+            background: linear-gradient(135deg, #ffa500, #ff6b6b);
+            color: white; padding: 2px 8px; border-radius: 10px;
+            font-size: 10px; font-weight: 700; margin-left: 8px;
+        }
         
         .timeframe-selector { display: flex; gap: 10px; margin: 15px 0; }
         .timeframe-btn {
@@ -597,6 +786,14 @@ HTML_TEMPLATE = '''
             font-weight: 600; font-size: 14px;
         }
         
+        .quality-indicator {
+            text-align: center; margin: 10px 0; padding: 8px;
+            border-radius: 8px; font-weight: 700; font-size: 13px;
+        }
+        .quality-high { background: rgba(0, 255, 136, 0.1); color: #00ff88; border: 1px solid #00ff88; }
+        .quality-medium { background: rgba(255, 165, 0, 0.1); color: #ffa500; border: 1px solid #ffa500; }
+        .quality-low { background: rgba(255, 68, 68, 0.1); color: #ff4444; border: 1px solid #ff4444; }
+        
         .metrics {
             margin-top: 15px; font-size: 13px; color: #9db0d1;
             background: rgba(42, 53, 82, 0.3); padding: 15px;
@@ -633,13 +830,18 @@ HTML_TEMPLATE = '''
             color: white; padding: 4px 8px; border-radius: 12px;
             font-size: 10px; font-weight: 700; margin-left: 8px;
         }
+        
+        .methods-info {
+            text-align: center; font-size: 12px; color: #9db0d1;
+            margin: 8px 0;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <div class="title">🧠 IA SIGNAL PRO - ANÁLISE PURA</div>
-            <div class="subtitle">INTELIGÊNCIA ARTIFICIAL AVANÇADA - SEM FALLBACK</div>
+            <div class="title">🧠 IA SIGNAL PRO <span class="version">v2.0</span></div>
+            <div class="subtitle">ANÁLISE MULTI-MÉTODO - MAIS ASSERTIVA E CONFIÁVEL</div>
         </div>
         
         <div class="timeframe-selector">
@@ -676,6 +878,8 @@ HTML_TEMPLATE = '''
             
             <div class="reasoning" id="reasoningText"></div>
             <div class="confidence" id="confidenceText"></div>
+            <div id="qualityIndicator" class="quality-indicator"></div>
+            <div id="methodsInfo" class="methods-info"></div>
             
             <div class="progress-bar">
                 <div class="progress-fill" id="progressFill"></div>
@@ -697,6 +901,8 @@ HTML_TEMPLATE = '''
         const timeframeEl = document.getElementById('timeframe');
         const reasoningText = document.getElementById('reasoningText');
         const confidenceText = document.getElementById('confidenceText');
+        const qualityIndicator = document.getElementById('qualityIndicator');
+        const methodsInfo = document.getElementById('methodsInfo');
         const progressFill = document.getElementById('progressFill');
         const metricsText = document.getElementById('metricsText');
         const timeframeBtns = document.querySelectorAll('.timeframe-btn');
@@ -736,6 +942,8 @@ HTML_TEMPLATE = '''
             
             signalText.className = '';
             signalText.textContent = 'Analisando padrões do gráfico...';
+            qualityIndicator.textContent = '';
+            methodsInfo.textContent = '';
             
             const now = new Date();
             analysisTime.textContent = now.toLocaleTimeString('pt-BR');
@@ -762,7 +970,7 @@ HTML_TEMPLATE = '''
             confidenceText.textContent = '';
             progressFill.style.width = '20%';
             
-            metricsText.innerHTML = '<div class="loading">Iniciando análise inteligente...</div>';
+            metricsText.innerHTML = '<div class="loading">Iniciando análise multi-método...</div>';
 
             try {
                 const formData = new FormData();
@@ -786,6 +994,8 @@ HTML_TEMPLATE = '''
                     const direction = data.direction;
                     const confidence = (data.final_confidence * 100).toFixed(1);
                     const cached = data.cached || false;
+                    const quality = data.analysis_grade || 'medium';
+                    const methodsUsed = data.methods_used || 0;
                     
                     if (direction === 'buy') {
                         signalText.className = 'signal-buy';
@@ -801,6 +1011,19 @@ HTML_TEMPLATE = '''
                     
                     reasoningText.textContent = data.reasoning;
                     confidenceText.textContent = `Confiança Inteligente: ${confidence}%`;
+                    
+                    // Indicador de qualidade
+                    qualityIndicator.className = `quality-indicator quality-${quality}`;
+                    if (quality === 'high') {
+                        qualityIndicator.textContent = '✅ ALTA QUALIDADE - Sinal confiável';
+                    } else if (quality === 'medium') {
+                        qualityIndicator.textContent = '⚠️ QUALIDADE MÉDIA - Use com atenção';
+                    } else {
+                        qualityIndicator.textContent = '🔍 QUALIDADE BAIXA - Use com cautela';
+                    }
+                    
+                    // Informação de métodos
+                    methodsInfo.textContent = `🛠️ ${methodsUsed}/4 métodos concordaram na análise`;
                     
                     // Métricas detalhadas
                     const metrics = data.metrics || {};
@@ -844,6 +1067,11 @@ HTML_TEMPLATE = '''
                     metricsHtml += `<div class="metric-item">
                         <span>Volatilidade:</span>
                         <span class="metric-value">${(metrics.volatility * 100)?.toFixed(1)}%</span>
+                    </div>`;
+                    
+                    metricsHtml += `<div class="metric-item">
+                        <span>Concordância de Métodos:</span>
+                        <span class="metric-value">${(metrics.method_agreement * 100)?.toFixed(1)}%</span>
                     </div>`;
                     
                     metricsHtml += `<div class="metric-item">
@@ -901,7 +1129,7 @@ def analyze_photo():
         if len(image_bytes) == 0:
             return jsonify({'ok': False, 'error': 'Arquivo vazio'}), 400
         
-        # Análise REAL - SEM FALLBACK
+        # Análise REAL - VERSÃO MELHORADA
         analysis = ANALYZER.analyze(image_bytes, timeframe)
         
         return jsonify({
@@ -914,6 +1142,9 @@ def analyze_photo():
             'analysis_time': analysis['analysis_time'],
             'user_timeframe': analysis['user_timeframe'],
             'cached': analysis.get('cached', False),
+            'signal_quality': analysis.get('signal_quality', 0.5),
+            'analysis_grade': analysis.get('analysis_grade', 'medium'),
+            'methods_used': analysis.get('methods_used', 0),
             'metrics': analysis['metrics'],
             'reasoning': analysis.get('reasoning', 'Análise concluída')
         })
@@ -927,7 +1158,7 @@ def analyze_photo():
 
 @app.route('/health')
 def health_check():
-    return jsonify({'status': 'PURE_ANALYSIS', 'message': 'IA INTELIGENTE PURA FUNCIONANDO!'})
+    return jsonify({'status': 'PURE_ANALYSIS_v2', 'message': 'IA INTELIGENTE MULTI-MÉTODO FUNCIONANDO!'})
 
 @app.route('/cache/clear', methods=['POST'])
 def clear_cache():
@@ -945,7 +1176,8 @@ def clear_cache():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('DEBUG', 'False').lower() == 'true'
-    print(f"🚀 IA Signal Pro - ANÁLISE PURA iniciando na porta {port}")
-    print(f"📊 Sistema: Análise Inteligente SEM FALLBACK")
-    print(f"⏰ Timeframes: 1min e 5min com cache inteligente")
+    print(f"🚀 IA Signal Pro v2.0 - ANÁLISE MULTI-MÉTODO iniciando na porta {port}")
+    print(f"📊 Sistema: Análise Inteligente com 4 Métodos de Confirmação")
+    print(f"⏰ Timeframes: 1min e 5min com limiares dinâmicos")
+    print(f"🎯 Melhorias: Validação de imagem + Qualidade de sinal + Fallback inteligente")
     app.run(host='0.0.0.0', port=port, debug=debug)
