@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 """
-IA Signal Pro — Análise INTELIGENTE PURA - VERSÃO MAIS ASSERTIVA
-Sistema otimizado para maior precisão sem perder sensibilidade
+IA Signal Pro — Análise INTELIGENTE PURA - VERSÃO ESTÁVEL
+Sistema otimizado para deploy em produção
 """
 
 import io
@@ -13,8 +13,13 @@ import hashlib
 import json
 from typing import Any, Dict, Optional, List, Tuple
 import numpy as np
-from flask import Flask, jsonify, render_template_string, request
+from flask import Flask, jsonify, render_template_string, request, Response
 from PIL import Image, ImageFilter
+import logging
+
+# Configurar logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # =========================
 #  SISTEMA DE CACHE INTELIGENTE
@@ -36,11 +41,11 @@ class AnalysisCache:
         return os.path.join(self.cache_dir, f"{key}.json")
     
     def get(self, image_bytes: bytes, timeframe: str) -> Optional[Dict]:
-        key = self._get_cache_key(image_bytes, timeframe)
-        cache_file = self._get_cache_file(key)
-        
-        if os.path.exists(cache_file):
-            try:
+        try:
+            key = self._get_cache_key(image_bytes, timeframe)
+            cache_file = self._get_cache_file(key)
+            
+            if os.path.exists(cache_file):
                 with open(cache_file, 'r') as f:
                     cache_data = json.load(f)
                 
@@ -50,16 +55,16 @@ class AnalysisCache:
                 
                 if age_seconds < self.cache_duration.get(timeframe, 60):
                     return cache_data['analysis']
-            except Exception:
-                pass
+        except Exception as e:
+            logger.warning(f"Erro no cache: {e}")
         
         return None
     
     def set(self, image_bytes: bytes, timeframe: str, analysis: Dict):
-        key = self._get_cache_key(image_bytes, timeframe)
-        cache_file = self._get_cache_file(key)
-        
         try:
+            key = self._get_cache_key(image_bytes, timeframe)
+            cache_file = self._get_cache_file(key)
+            
             cache_data = {
                 'timestamp': datetime.datetime.now().isoformat(),
                 'timeframe': timeframe,
@@ -68,16 +73,16 @@ class AnalysisCache:
             
             with open(cache_file, 'w') as f:
                 json.dump(cache_data, f, indent=2)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Erro ao salvar cache: {e}")
 
 # =========================
-#  IA INTELIGENTE PURA - VERSÃO MAIS ASSERTIVA
+#  IA INTELIGENTE PURA - VERSÃO ESTÁVEL
 # =========================
 class IntelligentAnalyzer:
     def __init__(self):
         self.cache = AnalysisCache()
-        self.min_confidence_threshold = 0.58  # Aumentado para maior assertividade
+        self.min_confidence_threshold = 0.58
     
     def _load_image(self, blob: bytes) -> Image.Image:
         """Carrega e prepara a imagem para análise"""
@@ -90,669 +95,393 @@ class IntelligentAnalyzer:
             raise ValueError(f"Erro ao carregar imagem: {str(e)}")
     
     def _validate_chart_image(self, image: Image.Image) -> bool:
-        """Validação mais rigorosa do gráfico"""
+        """Validação básica do gráfico"""
         width, height = image.size
         
-        # Verifica dimensões mínimas aumentadas
-        if width < 250 or height < 180:
-            raise ValueError("Imagem muito pequena para análise (mínimo 250x180 pixels)")
+        if width < 100 or height < 100:
+            raise ValueError("Imagem muito pequena (mínimo 100x100 pixels)")
         
-        # Verificação de contraste mais rigorosa
         try:
             img_array = np.array(image)
             gray = np.dot(img_array[...,:3], [0.299, 0.587, 0.114])
-            
             contrast = np.std(gray)
-            if contrast < 20:  # Aumentado o limite mínimo de contraste
-                raise ValueError("Contraste insuficiente - gráfico não legível")
             
-            # Verifica se há variação suficiente nas cores
-            color_variance = np.var(img_array)
-            if color_variance < 500:
-                raise ValueError("Pouca variação de cores - imagem pode não ser um gráfico")
+            if contrast < 10:
+                raise ValueError("Contraste insuficiente para análise")
             
             return True
         except Exception as e:
-            raise ValueError(f"Erro na validação da imagem: {str(e)}")
+            raise ValueError(f"Erro na validação: {str(e)}")
 
     def _preprocess_image(self, image: Image.Image, timeframe: str) -> np.ndarray:
-        """Pré-processamento otimizado para melhor análise"""
+        """Pré-processamento otimizado"""
         width, height = image.size
         
-        # Redimensionamento baseado na qualidade
-        base_size = min(width, height)
-        if base_size < 400:
-            target_size = (600, 450)
-        else:
-            target_size = (800, 600)
-            
+        # Redimensionamento adequado
+        target_size = (400, 300)  # Tamanho fixo para estabilidade
         image = image.resize(target_size, Image.LANCZOS)
-        
-        # Aplica filtros para realce de características
-        image = image.filter(ImageFilter.SMOOTH_MORE)
-        image = image.filter(ImageFilter.SHARPEN)
         
         return np.array(image)
 
     def _extract_price_data(self, img_array: np.ndarray) -> np.ndarray:
-        """Extrai dados de preço com melhor precisão"""
+        """Extrai dados de preço de forma estável"""
         try:
-            # Converte para escala de cinza com pesos otimizados
+            # Converte para escala de cinza
             gray = np.dot(img_array[...,:3], [0.299, 0.587, 0.114])
             
-            # Realce de bordas melhorado
-            kernel_x = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]])
-            kernel_y = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]])
+            # Filtro simples para realce
+            kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+            enhanced = self._apply_simple_convolution(gray, kernel)
             
-            sobel_x = self._apply_convolution(gray, kernel_x)
-            sobel_y = self._apply_convolution(gray, kernel_y)
-            gradient = np.sqrt(sobel_x**2 + sobel_y**2)
-            
-            # Combinação otimizada para melhor detecção
-            enhanced = gray * 0.6 + gradient * 0.4
             return enhanced
         except Exception as e:
-            raise ValueError(f"Erro na extração de dados: {str(e)}")
+            logger.warning(f"Erro na extração: {e}")
+            return np.dot(img_array[...,:3], [0.299, 0.587, 0.114])  # Fallback
 
-    def _apply_convolution(self, image: np.ndarray, kernel: np.ndarray) -> np.ndarray:
-        """Aplica convolução manualmente sem scipy"""
+    def _apply_simple_convolution(self, image: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+        """Aplica convolução de forma simples e estável"""
         try:
             kernel_height, kernel_width = kernel.shape
             pad_height = kernel_height // 2
             pad_width = kernel_width // 2
             
             padded = np.pad(image, ((pad_height, pad_height), (pad_width, pad_width)), mode='edge')
-            
             output = np.zeros_like(image)
+            
             for i in range(image.shape[0]):
                 for j in range(image.shape[1]):
                     region = padded[i:i+kernel_height, j:j+kernel_width]
                     output[i, j] = np.sum(region * kernel)
             
-            return output
-        except Exception as e:
-            raise ValueError(f"Erro na convolução: {str(e)}")
+            return np.clip(output, 0, 255)  # Garante valores válidos
+        except Exception:
+            return image  # Fallback
 
     def _analyze_price_action(self, price_data: np.ndarray, timeframe: str) -> Dict[str, float]:
-        """Análise de price action mais assertiva"""
+        """Análise de price action estável"""
         try:
             height, width = price_data.shape
             
-            # Análise multi-temporal
-            regions = []
-            segment_size = max(2, width // 6)  # Menos regiões para mais consistência
+            # Análise simples por segmentos
+            segments = 4
+            segment_size = max(1, width // segments)
+            region_means = []
             
-            for i in range(6):
+            for i in range(segments):
                 start_col = i * segment_size
                 end_col = min((i + 1) * segment_size, width)
-                    
                 segment = price_data[:, start_col:end_col]
+                
                 if segment.size > 0:
-                    # Usa mediana para reduzir ruído
-                    region_median = np.median(segment)
-                    regions.append(region_median)
+                    region_means.append(np.mean(segment))
             
-            # Análise de tendência com validação
-            if len(regions) >= 3:
-                x = np.arange(len(regions))
-                trend_slope, trend_intercept = np.polyfit(x, regions, 1)
+            # Tendência básica
+            if len(region_means) >= 2:
+                x = np.arange(len(region_means))
+                slope, _ = np.polyfit(x, region_means, 1)
                 
-                # Calcula R² para validar tendência
-                y_pred = trend_slope * x + trend_intercept
-                ss_res = np.sum((regions - y_pred) ** 2)
-                ss_tot = np.sum((regions - np.mean(regions)) ** 2)
-                
-                if ss_tot > 0:
-                    trend_strength = 1 - (ss_res / ss_tot)
-                else:
-                    trend_strength = 0
-                    
-                # Filtro de tendência: só considera se R² > 0.3
-                if abs(trend_slope) > 0.1 and trend_strength > 0.3:
-                    validated_trend_slope = trend_slope
-                    validated_trend_strength = trend_strength
-                else:
-                    validated_trend_slope = 0
-                    validated_trend_strength = 0
+                # Força da tendência (simplificado)
+                y_pred = slope * x + np.mean(region_means)
+                ss_res = np.sum((region_means - y_pred) ** 2)
+                ss_tot = np.sum((region_means - np.mean(region_means)) ** 2)
+                trend_strength = 1 - (ss_res / (ss_tot + 1e-8)) if ss_tot > 0 else 0
             else:
-                validated_trend_slope = 0
-                validated_trend_strength = 0
+                slope = 0
+                trend_strength = 0
             
-            # Momentum com suavização
-            if len(regions) >= 4:
-                # Suaviza as regiões antes do cálculo
-                smoothed_regions = np.convolve(regions, [0.25, 0.5, 0.25], mode='valid')
-                if len(smoothed_regions) >= 2:
-                    momentum = np.gradient(smoothed_regions)
-                    current_momentum = momentum[-1] if len(momentum) > 0 else 0
-                else:
-                    current_momentum = 0
-            else:
-                current_momentum = 0
-            
-            # Volatilidade normalizada
-            price_mean = np.mean(price_data)
-            volatility = np.std(price_data) / (price_mean + 1e-8) if price_mean > 0 else 0
+            # Métricas básicas
+            volatility = np.std(price_data) / (np.mean(price_data) + 1e-8)
+            price_range = np.ptp(price_data)
             
             return {
-                "trend_direction": float(validated_trend_slope),
-                "trend_strength": float(min(1.0, max(0.0, validated_trend_strength))),
-                "momentum": float(current_momentum),
+                "trend_direction": float(slope),
+                "trend_strength": float(min(1.0, max(0.0, trend_strength))),
+                "momentum": float(slope * 0.5),  # Simplificado
                 "volatility": float(volatility),
-                "price_range": float(np.ptp(price_data)),
-                "price_stability": float(1.0 - min(1.0, volatility * 2))  # Nova métrica
+                "price_range": float(price_range)
             }
         except Exception as e:
+            logger.warning(f"Erro na análise de price action: {e}")
             return {
                 "trend_direction": 0.0,
                 "trend_strength": 0.0,
                 "momentum": 0.0,
                 "volatility": 0.0,
-                "price_range": 0.0,
-                "price_stability": 0.0
+                "price_range": 0.0
             }
 
     def _analyze_chart_patterns(self, price_data: np.ndarray) -> Dict[str, float]:
-        """Detecção de padrões mais confiável"""
+        """Análise de padrões simplificada"""
         try:
             height, width = price_data.shape
             
-            # Análise de níveis com tolerância adaptativa
-            horizontal_profiles = []
-            step = max(2, height // 40)  # Menos pontos, mais significativos
-            
-            price_std = np.std(price_data)
-            congestion_threshold = price_std * 0.25  # Mais seletivo
+            # Análise de níveis horizontais básica
+            levels = []
+            step = max(1, height // 20)
             
             for row in range(0, height, step):
                 row_data = price_data[row, :]
-                if len(row_data) > 8:
-                    row_variance = np.std(row_data)
-                    if row_variance < congestion_threshold:
-                        horizontal_profiles.append(np.median(row_data))
+                if len(row_data) > 5:
+                    row_std = np.std(row_data)
+                    if row_std < np.std(price_data) * 0.4:
+                        levels.append(np.mean(row_data))
             
-            # Agrupamento mais inteligente
+            # Agrupa níveis próximos
             unique_levels = []
-            threshold = price_std * 0.15  # Mais rigoroso
+            threshold = np.std(price_data) * 0.2 if np.std(price_data) > 0 else 1.0
             
-            for level in sorted(horizontal_profiles):
-                if not unique_levels:
+            for level in sorted(levels):
+                if not unique_levels or min(abs(level - lvl) for lvl in unique_levels) > threshold:
                     unique_levels.append(level)
-                else:
-                    # Só adiciona se for significativamente diferente
-                    min_distance = min(abs(level - lvl) for lvl in unique_levels)
-                    if min_distance > threshold:
-                        unique_levels.append(level)
             
-            # Preço atual (média das últimas colunas)
-            current_window = min(15, width)
-            current_price = np.median(price_data[:, -current_window:])
+            # Preço atual
+            current_price = np.mean(price_data[:, -min(5, width):])
             
-            # Classificação de níveis com validação
-            supports = []
-            resistances = []
+            # Classifica suportes e resistências
+            supports = [lvl for lvl in unique_levels if lvl < current_price]
+            resistances = [lvl for lvl in unique_levels if lvl > current_price]
             
-            for level in unique_levels:
-                distance_pct = abs(level - current_price) / (current_price + 1e-8)
-                
-                # Só considera níveis próximos (até 5%)
-                if distance_pct <= 0.05:
-                    if level < current_price:
-                        supports.append(level)
-                    else:
-                        resistances.append(level)
-            
-            # Força dos níveis baseada na proximidade e quantidade
-            support_strength = len(supports) / 10.0  # Normalizado
+            support_strength = len(supports) / 10.0
             resistance_strength = len(resistances) / 10.0
-            
-            # Distância aos níveis mais próximos
-            if supports:
-                nearest_support = max(supports)
-                distance_to_support = abs(current_price - nearest_support) / (current_price + 1e-8)
-            else:
-                distance_to_support = 1.0
-                
-            if resistances:
-                nearest_resistance = min(resistances)
-                distance_to_resistance = abs(nearest_resistance - current_price) / (current_price + 1e-8)
-            else:
-                distance_to_resistance = 1.0
-            
-            # Nível de consolidação baseado na qualidade dos níveis
-            consolidation_quality = min(1.0, len(unique_levels) / 8.0)
             
             return {
                 "support_levels": len(supports),
                 "resistance_levels": len(resistances),
                 "support_strength": float(min(1.0, support_strength)),
                 "resistance_strength": float(min(1.0, resistance_strength)),
-                "distance_to_support": float(min(1.0, distance_to_support * 10)),  # Escalado
-                "distance_to_resistance": float(min(1.0, distance_to_resistance * 10)),
-                "consolidation_level": float(consolidation_quality),
-                "levels_quality": float(min(1.0, len(unique_levels) / 12.0))  # Nova métrica
+                "distance_to_support": 0.5,  # Simplificado
+                "distance_to_resistance": 0.5,
+                "consolidation_level": float(min(1.0, len(unique_levels) / 15.0))
             }
         except Exception as e:
+            logger.warning(f"Erro na análise de padrões: {e}")
             return {
                 "support_levels": 0,
                 "resistance_levels": 0,
                 "support_strength": 0.0,
                 "resistance_strength": 0.0,
-                "distance_to_support": 1.0,
-                "distance_to_resistance": 1.0,
-                "consolidation_level": 0.0,
-                "levels_quality": 0.0
+                "distance_to_support": 0.5,
+                "distance_to_resistance": 0.5,
+                "consolidation_level": 0.0
             }
 
     def _analyze_market_structure(self, price_data: np.ndarray, timeframe: str) -> Dict[str, float]:
-        """Análise de estrutura de mercado mais robusta"""
+        """Análise de estrutura de mercado simplificada"""
         try:
             height, width = price_data.shape
             
-            if height < 3 or width < 3:
+            if height < 2 or width < 2:
                 return {
                     "market_trend": 0.0,
                     "volatility_ratio": 1.0,
                     "movement_strength": 0.0,
-                    "structure_quality": 0.0,
-                    "trend_consistency": 0.0
+                    "structure_quality": 0.0
                 }
             
-            # Análise de múltiplas timeframe internas
-            segments = 4
-            segment_width = max(1, width // segments)
-            segment_trends = []
+            # Tendência geral
+            overall_trend = np.polyfit(range(width), np.mean(price_data, axis=0), 1)[0] if width > 1 else 0
             
-            for i in range(segments):
-                start_col = i * segment_width
-                end_col = min((i + 1) * segment_width, width)
-                segment = price_data[:, start_col:end_col]
-                
-                if segment.size > 0:
-                    # Tendência do segmento
-                    segment_flat = np.mean(segment, axis=0)
-                    if len(segment_flat) > 1:
-                        seg_trend = np.polyfit(range(len(segment_flat)), segment_flat, 1)[0]
-                        segment_trends.append(seg_trend)
-            
-            # Consistência da tendência
-            if segment_trends:
-                trend_consistency = np.std(segment_trends)
-                # Inverte: menor desvio = maior consistência
-                trend_consistency = 1.0 / (1.0 + trend_consistency * 10)
-                market_trend = np.mean(segment_trends)
+            # Força do movimento
+            if width > 10:
+                recent = np.mean(price_data[:, -5:])
+                older = np.mean(price_data[:, -10:-5])
+                movement = (recent - older) / (np.std(price_data) + 1e-8)
             else:
-                trend_consistency = 0.0
-                market_trend = 0.0
-            
-            # Análise de força com validação temporal
-            recent_segment = max(1, width // 6)
-            older_segment = max(1, width // 3)
-            
-            if width > older_segment:
-                recent_data = price_data[:, -recent_segment:]
-                older_data = price_data[:, -older_segment:-recent_segment]
-                
-                if recent_data.size > 0 and older_data.size > 0:
-                    recent_mean = np.mean(recent_data)
-                    older_mean = np.mean(older_data)
-                    movement = recent_mean - older_mean
-                    movement_strength = abs(movement) / (np.std(price_data) + 1e-8)
-                else:
-                    movement_strength = 0.0
-            else:
-                movement_strength = 0.0
-            
-            # Qualidade da estrutura baseada em múltiplos fatores
-            structure_quality = min(1.0, (
-                trend_consistency * 0.4 +
-                (height * width) / 200000.0 * 0.3 +
-                min(1.0, movement_strength) * 0.3
-            ))
+                movement = 0
             
             return {
-                "market_trend": float(market_trend),
-                "volatility_ratio": 1.0,  # Simplificado para focar no essencial
-                "movement_strength": float(min(3.0, movement_strength)),
-                "structure_quality": float(structure_quality),
-                "trend_consistency": float(trend_consistency)
+                "market_trend": float(overall_trend),
+                "volatility_ratio": 1.0,
+                "movement_strength": float(min(2.0, abs(movement))),
+                "structure_quality": float(min(1.0, (height * width) / 100000.0))
             }
         except Exception as e:
+            logger.warning(f"Erro na análise de estrutura: {e}")
             return {
                 "market_trend": 0.0,
                 "volatility_ratio": 1.0,
                 "movement_strength": 0.0,
-                "structure_quality": 0.0,
-                "trend_consistency": 0.0
+                "structure_quality": 0.0
             }
 
     def _calculate_advanced_indicators(self, price_data: np.ndarray) -> Dict[str, float]:
-        """Indicadores técnicos mais confiáveis"""
+        """Indicadores técnicos simplificados"""
         try:
             height, width = price_data.shape
             
-            if width < 12:
+            if width < 5:
                 return {
                     "rsi": 0.0,
                     "macd": 0.0,
                     "volume_intensity": 0.0,
-                    "momentum_quality": 0.0,
-                    "trend_quality": 0.0
+                    "momentum_quality": 0.0
                 }
             
-            # RSI com períodos otimizados
-            fast_period = max(3, width // 6)
-            slow_period = max(6, width // 3)
-            
-            if width > slow_period:
-                recent_avg = np.median(price_data[:, -fast_period:])
-                older_avg = np.median(price_data[:, -slow_period:-fast_period])
+            # RSI simplificado
+            if width > 10:
+                recent = np.mean(price_data[:, -5:])
+                older = np.mean(price_data[:, -10:-5])
+                change = recent - older
                 
-                gain = max(0, recent_avg - older_avg)
-                loss = max(0, older_avg - recent_avg)
-                
-                if loss == 0:
-                    rsi = 70 if gain > 0 else 50
+                if change > 0:
+                    rsi = 60
+                elif change < 0:
+                    rsi = 40
                 else:
-                    rs = gain / loss
-                    rsi = 100 - (100 / (1 + rs))
+                    rsi = 50
                 
-                # Normaliza para -1 a 1
-                rsi_normalized = (rsi - 50) / 30  # Mais sensível
-                rsi_normalized = max(-1.0, min(1.0, rsi_normalized))
+                rsi_normalized = (rsi - 50) / 50
             else:
                 rsi_normalized = 0.0
             
-            # MACD com suavização
-            fast_len = max(2, width // 8)
-            slow_len = max(4, width // 4)
-            signal_len = max(2, width // 10)
-            
-            if width >= slow_len + signal_len:
-                # EMAs simplificadas
-                fast_ema = np.mean(price_data[:, -fast_len:])
-                slow_ema = np.mean(price_data[:, -slow_len:])
-                macd_line = fast_ema - slow_ema
-                
-                # Sinal (EMA do MACD)
-                macd_values = []
-                for i in range(signal_len):
-                    start = -slow_len - i
-                    end = -i if i > 0 else None
-                    fast_val = np.mean(price_data[:, start:end][:, :fast_len])
-                    slow_val = np.mean(price_data[:, start:end])
-                    macd_values.append(fast_val - slow_val)
-                
-                signal_line = np.mean(macd_values) if macd_values else 0
-                macd_histogram = macd_line - signal_line
-                
-                price_std = np.std(price_data) if np.std(price_data) > 0 else 1.0
-                macd_normalized = macd_histogram / price_std
+            # MACD simplificado
+            if width > 8:
+                fast = np.mean(price_data[:, -3:])
+                slow = np.mean(price_data[:, -8:])
+                macd_normalized = (fast - slow) / (np.std(price_data) + 1e-8)
             else:
                 macd_normalized = 0.0
             
-            # Qualidade do trend baseada em múltiplos timeframes
-            trend_quality = min(1.0, (abs(rsi_normalized) + min(1.0, abs(macd_normalized))) / 2)
-            
             return {
-                "rsi": float(rsi_normalized),
-                "macd": float(max(-1.5, min(1.5, macd_normalized))),
-                "volume_intensity": float(min(1.0, np.var(price_data) / 800.0)),
-                "momentum_quality": float(min(1.0, abs(rsi_normalized) + abs(macd_normalized))),
-                "trend_quality": float(trend_quality)
+                "rsi": float(max(-1.0, min(1.0, rsi_normalized))),
+                "macd": float(max(-1.0, min(1.0, macd_normalized))),
+                "volume_intensity": float(min(1.0, np.var(price_data) / 1000.0)),
+                "momentum_quality": float(min(1.0, (abs(rsi_normalized) + abs(macd_normalized)) / 2))
             }
         except Exception as e:
+            logger.warning(f"Erro nos indicadores: {e}")
             return {
                 "rsi": 0.0,
                 "macd": 0.0,
                 "volume_intensity": 0.0,
-                "momentum_quality": 0.0,
-                "trend_quality": 0.0
+                "momentum_quality": 0.0
             }
 
     def _calculate_signal_quality(self, analysis: Dict) -> float:
-        """Cálculo de qualidade mais rigoroso"""
+        """Cálculo de qualidade simplificado"""
         try:
-            quality_factors = []
+            factors = [
+                analysis['price_action'].get('trend_strength', 0) * 0.4,
+                analysis['chart_patterns'].get('consolidation_level', 0) * 0.3,
+                analysis['market_structure'].get('structure_quality', 0) * 0.3
+            ]
             
-            # 1. Força e consistência da tendência (30%)
-            trend_strength = analysis['price_action'].get('trend_strength', 0)
-            trend_consistency = analysis['market_structure'].get('trend_consistency', 0)
-            trend_quality = trend_strength * trend_consistency
-            quality_factors.append(trend_quality * 0.30)
-            
-            # 2. Qualidade dos níveis de suporte/resistência (25%)
-            support_strength = analysis['chart_patterns'].get('support_strength', 0)
-            resistance_strength = analysis['chart_patterns'].get('resistance_strength', 0)
-            levels_quality = analysis['chart_patterns'].get('levels_quality', 0)
-            level_quality = (support_strength + resistance_strength + levels_quality) / 3
-            quality_factors.append(level_quality * 0.25)
-            
-            # 3. Momentum e qualidade do trend (20%)
-            momentum_quality = analysis['indicators'].get('momentum_quality', 0)
-            trend_quality_ind = analysis['indicators'].get('trend_quality', 0)
-            momentum_score = (momentum_quality + trend_quality_ind) / 2
-            quality_factors.append(momentum_score * 0.20)
-            
-            # 4. Estabilidade do preço (15%)
-            price_stability = analysis['price_action'].get('price_stability', 0)
-            structure_quality = analysis['market_structure'].get('structure_quality', 0)
-            stability_score = (price_stability + structure_quality) / 2
-            quality_factors.append(stability_score * 0.15)
-            
-            # 5. Clareza do padrão (10%)
-            pattern_clarity = analysis['chart_patterns'].get('consolidation_level', 0)
-            quality_factors.append(pattern_clarity * 0.10)
-            
-            final_quality = sum(quality_factors)
-            
-            # Aplica filtro de qualidade mínima
-            if final_quality < 0.3:
-                final_quality *= 0.7  # Penaliza sinais de muito baixa qualidade
-            
-            return min(1.0, max(0.0, final_quality))
-            
+            return min(1.0, max(0.0, sum(factors)))
         except Exception:
-            return 0.4  # Qualidade baixa em caso de erro
+            return 0.5
 
     def _make_intelligent_decision(self, analysis: Dict, timeframe: str) -> Dict[str, Any]:
-        """Tomada de decisão mais assertiva e conservadora"""
+        """Tomada de decisão estável e conservadora"""
         try:
             price_action = analysis['price_action']
             chart_patterns = analysis['chart_patterns']
             market_structure = analysis['market_structure']
             indicators = analysis['indicators']
             
-            # Sistema de pontuação mais conservador
+            # Sistema de pontuação simples
             score_components = []
-            weight_explanations = []
             
-            # 1. Tendência principal (25% - reduzido para dar mais peso a confirmações)
-            trend_direction = price_action['trend_direction']
-            trend_strength = price_action['trend_strength']
-            trend_score = trend_direction * trend_strength
-            score_components.append(trend_score * 0.25)
-            weight_explanations.append(f"Trend: {trend_score:.2f}")
+            # 1. Tendência (40%)
+            trend_score = price_action['trend_direction'] * price_action['trend_strength']
+            score_components.append(trend_score * 0.4)
             
-            # 2. Confirmação de momentum (20%)
-            momentum = price_action['momentum']
-            rsi = indicators['rsi']
-            macd = indicators['macd']
+            # 2. Momentum (30%)
+            momentum_score = price_action['momentum'] + indicators['rsi'] * 0.5
+            score_components.append(momentum_score * 0.3)
             
-            # Só considera momentum se confirmado por indicadores
-            momentum_confirmation = 0
-            if abs(momentum) > 0.05:  # Momentum significativo
-                if (momentum > 0 and rsi > 0) or (momentum < 0 and rsi < 0):
-                    momentum_confirmation = momentum * 2
-                elif (momentum > 0 and macd > 0) or (momentum < 0 and macd < 0):
-                    momentum_confirmation = momentum * 1.5
+            # 3. Estrutura (30%)
+            structure_score = market_structure['market_trend'] * market_structure['movement_strength']
+            score_components.append(structure_score * 0.3)
             
-            score_components.append(momentum_confirmation * 0.20)
-            weight_explanations.append(f"Momentum: {momentum_confirmation:.2f}")
-            
-            # 3. Análise de níveis críticos (25% - aumentado)
-            distance_to_support = chart_patterns['distance_to_support']
-            distance_to_resistance = chart_patterns['distance_to_resistance']
-            support_strength = chart_patterns['support_strength']
-            resistance_strength = chart_patterns['resistance_strength']
-            
-            level_score = 0
-            if distance_to_support < 0.3 and support_strength > 0.4:  # Mais conservador
-                level_score = 0.8  # Forte sinal de compra perto de suporte
-                if distance_to_support < 0.15 and support_strength > 0.6:
-                    level_score = 1.2  # Sinal muito forte
-            elif distance_to_resistance < 0.3 and resistance_strength > 0.4:
-                level_score = -0.8  # Forte sinal de venda perto de resistência
-                if distance_to_resistance < 0.15 and resistance_strength > 0.6:
-                    level_score = -1.2  # Sinal muito forte
-            elif distance_to_support < distance_to_resistance:
-                level_score = 0.3  # Viés de compra
-            else:
-                level_score = -0.3  # Viés de venda
-                
-            score_components.append(level_score * 0.25)
-            weight_explanations.append(f"Levels: {level_score:.2f}")
-            
-            # 4. Estrutura de mercado (20%)
-            market_trend = market_structure['market_trend']
-            movement_strength = market_structure['movement_strength']
-            structure_score = market_trend * min(1.0, movement_strength)
-            score_components.append(structure_score * 0.20)
-            weight_explanations.append(f"Structure: {structure_score:.2f}")
-            
-            # 5. Indicadores de sobrecompra/sobrevenda (10%)
-            overbought_oversold = 0
-            if rsi > 0.3:  # Sobrecompra
-                overbought_oversold = -0.5
-            elif rsi < -0.3:  # Sobrevendido
-                overbought_oversold = 0.5
-            score_components.append(overbought_oversold * 0.10)
-            weight_explanations.append(f"RSI Extreme: {overbought_oversold:.2f}")
-            
-            # Score final
             total_score = sum(score_components)
             
-            # Cálculo de confiança mais rigoroso
-            confidence_factors = [
-                price_action['trend_strength'],
-                chart_patterns['levels_quality'],
-                market_structure['structure_quality'],
-                indicators['trend_quality'],
-                price_action['price_stability']
-            ]
+            # Confiança base
+            base_confidence = (
+                price_action['trend_strength'] * 0.4 +
+                chart_patterns['consolidation_level'] * 0.3 +
+                market_structure['structure_quality'] * 0.3
+            )
             
-            base_confidence = np.mean([cf for cf in confidence_factors if cf is not None])
-            
-            # Ajusta confiança base baseado no score
-            if abs(total_score) > 0.3:
-                confidence_boost = min(0.3, abs(total_score) * 0.5)
-            else:
-                confidence_boost = 0
-            
-            base_confidence = min(0.8, base_confidence + confidence_boost)
-            
-            # DECISÃO MAIS ASSERTIVA - Limiares aumentados
-            if total_score > 0.25:  # Aumentado de 0.15
+            # Decisão conservadora
+            if total_score > 0.2:
                 direction = "buy"
-                confidence = 0.65 + (base_confidence * 0.30)  # Confiança base maior
-                reasoning = "📈 ALTA CONFIRMADA - Tendência forte com múltiplas confirmações"
-                
-            elif total_score < -0.25:  # Aumentado de -0.15
-                direction = "sell" 
-                confidence = 0.65 + (base_confidence * 0.30)
-                reasoning = "📉 BAIXA CONFIRMADA - Tendência forte com múltiplas confirmações"
-                
-            elif total_score > 0.12:  # Aumentado de 0.05
-                direction = "buy"
-                confidence = 0.58 + (base_confidence * 0.25)
-                reasoning = "↗️ VIES DE ALTA - Sinais técnicos favoráveis"
-                
-            elif total_score < -0.12:  # Aumentado de -0.05
+                confidence = 0.65 + (base_confidence * 0.3)
+                reasoning = "📈 Tendência de alta identificada"
+            elif total_score < -0.2:
                 direction = "sell"
-                confidence = 0.58 + (base_confidence * 0.25)
-                reasoning = "↘️ VIES DE BAIXA - Sinais técnicos favoráveis"
-                
+                confidence = 0.65 + (base_confidence * 0.3)
+                reasoning = "📉 Tendência de baixa identificada"
+            elif total_score > 0.05:
+                direction = "buy"
+                confidence = 0.58 + (base_confidence * 0.2)
+                reasoning = "↗️ Viés de alta detectado"
+            elif total_score < -0.05:
+                direction = "sell"
+                confidence = 0.58 + (base_confidence * 0.2)
+                reasoning = "↘️ Viés de baixa detectado"
             else:
-                # Mercado em equilíbrio - análise mais conservadora
-                if indicators['rsi'] > 0.1 and market_trend > 0:
-                    direction = "buy"
-                    confidence = 0.55
-                    reasoning = "⚡ LEVE ALTA - Mercado equilibrado com viés positivo"
-                elif indicators['rsi'] < -0.1 and market_trend < 0:
-                    direction = "sell"
-                    confidence = 0.55
-                    reasoning = "⚡ LEVE BAIXA - Mercado equilibrado com viés negativo"
-                else:
-                    direction = "hold"
-                    confidence = 0.52
-                    reasoning = "⏸️ AGUARDAR - Mercado sem direção clara"
-
-            # Garante confiança mínima
-            confidence = max(self.min_confidence_threshold, confidence)
+                direction = "hold"
+                confidence = 0.55
+                reasoning = "⚡ Mercado em equilíbrio"
             
             return {
                 "direction": direction,
-                "confidence": min(0.92, confidence),  # Limite máximo conservador
+                "confidence": min(0.90, max(self.min_confidence_threshold, confidence)),
                 "reasoning": reasoning,
-                "total_score": total_score,
-                "score_breakdown": " | ".join(weight_explanations)
+                "total_score": total_score
             }
-            
         except Exception as e:
+            logger.warning(f"Erro na decisão: {e}")
             return {
                 "direction": "hold",
-                "confidence": 0.51,
-                "reasoning": "🔄 AGUARDANDO - Análise conservativa em andamento",
-                "total_score": 0.0,
-                "score_breakdown": "Erro na análise"
+                "confidence": 0.55,
+                "reasoning": "🔄 Análise em andamento",
+                "total_score": 0.0
             }
 
     def _get_entry_timeframe(self, user_timeframe: str) -> Dict[str, str]:
-        """Calcula horário de entrada baseado no timeframe"""
+        """Calcula horário de entrada"""
         now = datetime.datetime.now()
         
         if user_timeframe == '1m':
-            entry_time = now.replace(second=0, microsecond=0) + datetime.timedelta(minutes=1)
+            entry_time = (now + datetime.timedelta(minutes=1)).strftime("%H:%M")
             timeframe_str = "Próximo minuto"
         else:
             minutes_to_add = 5 - (now.minute % 5)
             if minutes_to_add == 0:
                 minutes_to_add = 5
-            entry_time = now.replace(second=0, microsecond=0) + datetime.timedelta(minutes=minutes_to_add)
-            timeframe_str = f"Próximo candle de 5min"
+            entry_time = (now + datetime.timedelta(minutes=minutes_to_add)).strftime("%H:%M")
+            timeframe_str = "Próximo candle de 5min"
         
         return {
             "current_time": now.strftime("%H:%M:%S"),
-            "entry_time": entry_time.strftime("%H:%M"),
+            "entry_time": entry_time,
             "timeframe": timeframe_str
         }
 
     def analyze(self, blob: bytes, timeframe: str = '1m') -> Dict[str, Any]:
-        """Análise principal - VERSÃO MAIS ASSERTIVA"""
+        """Análise principal - VERSÃO ESTÁVEL"""
         
-        # Verifica cache
+        # Verifica cache primeiro
         cached_analysis = self.cache.get(blob, timeframe)
         if cached_analysis:
             cached_analysis['cached'] = True
             return cached_analysis
         
         try:
-            # Processamento da imagem
+            # Processamento básico
             image = self._load_image(blob)
-            
-            # VALIDAÇÃO MAIS RIGOROSA
             self._validate_chart_image(image)
             
             img_array = self._preprocess_image(image, timeframe)
             price_data = self._extract_price_data(img_array)
             
-            # Análises especializadas
+            # Análises
             price_action = self._analyze_price_action(price_data, timeframe)
             chart_patterns = self._analyze_chart_patterns(price_data)
             market_structure = self._analyze_market_structure(price_data, timeframe)
             indicators = self._calculate_advanced_indicators(price_data)
             
-            # Consolida análise
             analysis_data = {
                 'price_action': price_action,
                 'chart_patterns': chart_patterns,
@@ -760,19 +489,14 @@ class IntelligentAnalyzer:
                 'indicators': indicators
             }
             
-            # Qualidade do sinal
             signal_quality = self._calculate_signal_quality(analysis_data)
-            
-            # Tomada de decisão inteligente
             decision = self._make_intelligent_decision(analysis_data, timeframe)
-            
-            # Informações de tempo
             time_info = self._get_entry_timeframe(timeframe)
             
-            # Determina grau de qualidade com critérios mais rigorosos
-            if signal_quality > 0.75:
+            # Determina qualidade
+            if signal_quality > 0.7:
                 analysis_grade = "high"
-            elif signal_quality > 0.55:
+            elif signal_quality > 0.5:
                 analysis_grade = "medium" 
             else:
                 analysis_grade = "low"
@@ -793,401 +517,648 @@ class IntelligentAnalyzer:
                     "analysis_score": float(decision["total_score"]),
                     "trend_strength": price_action["trend_strength"],
                     "momentum": price_action["momentum"],
-                    "levels_quality": chart_patterns["levels_quality"],
-                    "structure_quality": market_structure["structure_quality"],
-                    "trend_quality": indicators["trend_quality"]
+                    "rsi": indicators["rsi"],
+                    "macd": indicators["macd"],
+                    "support_levels": chart_patterns["support_levels"],
+                    "resistance_levels": chart_patterns["resistance_levels"],
+                    "volatility": price_action["volatility"]
                 },
-                "score_breakdown": decision["score_breakdown"]
+                "reasoning": decision["reasoning"]
             }
             
-            # Cache do resultado
+            # Salva no cache
             self.cache.set(blob, timeframe, result)
             
             return result
             
         except Exception as e:
+            logger.error(f"Erro na análise: {e}")
+            # Retorna resultado de fallback em vez de levantar exceção
             return {
                 "direction": "hold",
-                "final_confidence": 0.51,
-                "entry_signal": f"⚠️ ANÁLISE EM AJUSTE - {str(e)}",
+                "final_confidence": 0.55,
+                "entry_signal": f"⚠️ Análise Básica - {str(e)}",
                 "entry_time": "Aguardando",
                 "timeframe": "Indefinido",
                 "analysis_time": datetime.datetime.now().strftime("%H:%M:%S"),
                 "user_timeframe": timeframe,
                 "cached": False,
-                "signal_quality": 0.1,
+                "signal_quality": 0.3,
                 "analysis_grade": "low",
                 "metrics": {
                     "analysis_score": 0.0,
                     "trend_strength": 0.0,
                     "momentum": 0.0,
-                    "levels_quality": 0.0,
-                    "structure_quality": 0.0,
-                    "trend_quality": 0.0
+                    "rsi": 0.0,
+                    "macd": 0.0,
+                    "support_levels": 0,
+                    "resistance_levels": 0,
+                    "volatility": 0.0
                 },
-                "score_breakdown": "Erro na análise"
+                "reasoning": "Análise básica devido a erro no processamento"
             }
 
 # =========================
-#  SISTEMA WEB FLASK
+#  APLICAÇÃO FLASK ESTÁVEL
 # =========================
 app = Flask(__name__)
 analyzer = IntelligentAnalyzer()
 
-HTML_TEMPLATE = """
+# Configurações para produção
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max
+app.config['JSON_SORT_KEYS'] = False
+
+HTML_TEMPLATE = '''
 <!DOCTYPE html>
-<html>
+<html lang="pt-br">
 <head>
-    <title>IA Signal Pro - Análise Inteligente</title>
-    <meta charset="utf-8">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IA Signal Pro - ANÁLISE ESTÁVEL</title>
     <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
-            font-family: 'Segoe UI', Arial, sans-serif; 
-            max-width: 800px; 
-            margin: 0 auto; 
-            padding: 20px; 
-            background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 100%);
-            color: #e0e0ff;
-            min-height: 100vh;
+            background: linear-gradient(135deg, #0b1220 0%, #1a1f38 100%); 
+            color: #e9eef2; 
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            min-height: 100vh; 
+            padding: 20px;
         }
-        .container { 
-            background: rgba(30, 30, 60, 0.95); 
-            padding: 30px; 
-            border-radius: 15px; 
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-            border: 1px solid #404080;
-            backdrop-filter: blur(10px);
+        .container {
+            max-width: 500px; 
+            margin: 0 auto;
+            background: rgba(15, 22, 39, 0.95); 
+            border-radius: 20px;
+            padding: 25px; 
+            border: 2px solid #3a86ff;
+            box-shadow: 0 10px 30px rgba(58, 134, 255, 0.2);
         }
-        h1 { 
-            color: #7ce0ff; 
+        .header { 
             text-align: center; 
-            margin-bottom: 10px;
-            font-size: 2.2em;
-            text-shadow: 0 0 20px rgba(124, 224, 255, 0.5);
+            margin-bottom: 20px; 
         }
-        .subtitle {
-            text-align: center; 
-            color: #a0a0ff; 
-            margin-bottom: 30px;
-            font-size: 1.1em;
+        .title {
+            font-size: 24px; 
+            font-weight: 800; 
+            margin-bottom: 5px;
+            background: linear-gradient(90deg, #3a86ff, #00ff88);
+            -webkit-background-clip: text; 
+            -webkit-text-fill-color: transparent;
         }
+        .subtitle { 
+            color: #9db0d1; 
+            font-size: 13px; 
+            margin-bottom: 10px; 
+        }
+        
         .upload-area {
-            border: 2px dashed #404080; 
-            padding: 40px; 
-            text-align: center; 
-            border-radius: 10px; 
-            margin: 20px 0; 
-            background: rgba(40, 40, 80, 0.3);
-            transition: all 0.3s ease;
+            border: 2px dashed #3a86ff; 
+            border-radius: 15px;
+            padding: 30px 15px; 
+            text-align: center;
+            background: rgba(58, 134, 255, 0.05); 
+            margin-bottom: 20px;
             cursor: pointer;
+            transition: all 0.3s ease;
         }
         .upload-area:hover {
-            border-color: #7ce0ff;
-            background: rgba(40, 40, 80, 0.5);
+            border-color: #00ff88;
+            background: rgba(0, 255, 136, 0.05);
         }
-        input[type="file"], select, button {
-            padding: 12px 20px; 
-            margin: 10px 5px; 
-            border: none; 
+        .file-input {
+            margin: 15px 0; 
+            padding: 12px;
+            background: rgba(42, 53, 82, 0.3); 
+            border: 1px solid #3a86ff;
             border-radius: 8px; 
-            font-size: 16px;
+            color: white; 
+            width: 100%; 
+            cursor: pointer;
+        }
+        
+        .timeframe-selector { 
+            display: flex; 
+            gap: 10px; 
+            margin: 15px 0; 
+        }
+        .timeframe-btn {
+            flex: 1; 
+            padding: 12px; 
+            border: 2px solid #3a86ff;
+            background: rgba(58, 134, 255, 0.1); 
+            color: #9db0d1;
+            border-radius: 10px; 
+            cursor: pointer; 
+            text-align: center;
+            font-weight: 600; 
             transition: all 0.3s ease;
         }
-        input[type="file"] {
-            background: rgba(60, 60, 100, 0.8);
-            color: #e0e0ff;
+        .timeframe-btn.active {
+            background: linear-gradient(135deg, #3a86ff 0%, #2a76ef 100%);
+            color: white; 
+            border-color: #2a76ef;
+        }
+        
+        .analyze-btn {
+            background: linear-gradient(135deg, #3a86ff 0%, #2a76ef 100%);
+            color: white; 
+            border: none; 
+            border-radius: 10px; 
+            padding: 16px;
+            font-size: 16px; 
+            font-weight: 700; 
+            cursor: pointer; 
             width: 100%;
-            box-sizing: border-box;
+            transition: all 0.3s ease;
         }
-        select {
-            background: rgba(60, 60, 100, 0.8);
-            color: #e0e0ff;
-            cursor: pointer;
-        }
-        button {
-            background: linear-gradient(135deg, #7ce0ff 0%, #4a90e2 100%);
-            color: #0f0f23;
-            font-weight: bold;
-            cursor: pointer;
-            box-shadow: 0 4px 15px rgba(124, 224, 255, 0.3);
-        }
-        button:hover {
+        .analyze-btn:hover { 
+            background: linear-gradient(135deg, #2a76ef 0%, #1a66df 100%);
             transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(124, 224, 255, 0.4);
         }
+        .analyze-btn:disabled { 
+            background: #2a3552; 
+            transform: none; 
+            cursor: not-allowed;
+        }
+        
         .result { 
-            margin-top: 30px; 
-            padding: 25px; 
-            border-radius: 12px; 
-            background: rgba(40, 40, 80, 0.4);
-            border-left: 5px solid #7ce0ff;
+            display: none; 
+            background: rgba(14, 21, 36, 0.9);
+            border-radius: 15px; 
+            padding: 20px; 
+            margin-top: 20px;
+            border: 1px solid #223152;
             animation: fadeIn 0.5s ease-in;
         }
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(10px); }
             to { opacity: 1; transform: translateY(0); }
         }
-        .signal-buy { border-left-color: #00ff88 !important; background: rgba(0, 255, 136, 0.1) !important; }
-        .signal-sell { border-left-color: #ff4444 !important; background: rgba(255, 68, 68, 0.1) !important; }
-        .signal-hold { border-left-color: #ffaa00 !important; background: rgba(255, 170, 0, 0.1) !important; }
-        .confidence-high { color: #00ff88; font-weight: bold; }
-        .confidence-medium { color: #ffaa00; font-weight: bold; }
-        .confidence-low { color: #ff4444; font-weight: bold; }
-        .metric-bar {
-            height: 8px; 
-            background: rgba(60, 60, 100, 0.8); 
-            border-radius: 4px; 
-            margin: 5px 0 15px 0;
+        
+        .signal-buy { color: #00ff88; }
+        .signal-sell { color: #ff4444; }
+        .signal-hold { color: #ffaa00; }
+        
+        .signal-text {
+            font-weight: 800; 
+            font-size: 22px; 
+            text-align: center; 
+            margin-bottom: 10px;
+        }
+        
+        .time-info {
+            background: rgba(42, 53, 82, 0.5); 
+            border-radius: 8px;
+            padding: 12px; 
+            margin: 10px 0; 
+            text-align: center;
+        }
+        .time-item {
+            margin: 5px 0; 
+            display: flex; 
+            justify-content: space-between;
+            align-items: center;
+        }
+        .time-label { color: #9db0d1; font-size: 13px; }
+        .time-value { color: #00ff88; font-weight: 600; font-size: 14px; }
+        
+        .confidence {
+            font-size: 16px; 
+            text-align: center; 
+            margin: 10px 0;
+            color: #9db0d1;
+        }
+        .reasoning {
+            text-align: center; 
+            margin: 12px 0; 
+            color: #3a86ff;
+            font-weight: 600; 
+            font-size: 14px;
+        }
+        
+        .quality-indicator {
+            text-align: center; 
+            margin: 10px 0; 
+            padding: 8px;
+            border-radius: 8px; 
+            font-weight: 700; 
+            font-size: 13px;
+        }
+        .quality-high { background: rgba(0, 255, 136, 0.1); color: #00ff88; border: 1px solid #00ff88; }
+        .quality-medium { background: rgba(255, 165, 0, 0.1); color: #ffa500; border: 1px solid #ffa500; }
+        .quality-low { background: rgba(255, 68, 68, 0.1); color: #ff4444; border: 1px solid #ff4444; }
+        
+        .metrics {
+            margin-top: 15px; 
+            font-size: 13px; 
+            color: #9db0d1;
+            background: rgba(42, 53, 82, 0.3); 
+            padding: 15px;
+            border-radius: 8px;
+        }
+        .metric-item {
+            margin: 6px 0; 
+            display: flex; 
+            justify-content: space-between;
+            align-items: center;
+        }
+        .metric-value {
+            font-weight: 600; 
+            color: #e9eef2;
+        }
+        
+        .error-message {
+            background: rgba(255, 68, 68, 0.1); 
+            border: 1px solid #ff4444;
+            border-radius: 10px; 
+            padding: 15px; 
+            margin: 10px 0;
+            color: #ff8888; 
+            text-align: center;
+        }
+        
+        .loading {
+            text-align: center; 
+            color: #3a86ff; 
+            font-size: 14px;
+        }
+        
+        .cache-badge {
+            background: linear-gradient(135deg, #ffa500, #ff6b6b);
+            color: white; 
+            padding: 4px 8px; 
+            border-radius: 12px;
+            font-size: 10px; 
+            font-weight: 700; 
+            margin-left: 8px;
+        }
+        
+        .progress-bar {
+            width: 100%; 
+            height: 4px; 
+            background: #2a3552;
+            border-radius: 2px; 
+            margin: 12px 0; 
             overflow: hidden;
         }
-        .metric-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #7ce0ff, #4a90e2);
-            border-radius: 4px;
-            transition: width 0.5s ease;
-        }
-        .metrics-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-top: 20px;
-        }
-        .metric-card {
-            background: rgba(50, 50, 90, 0.6);
-            padding: 15px;
-            border-radius: 8px;
-            border: 1px solid #404080;
-        }
-        .loading {
-            text-align: center;
-            color: #7ce0ff;
-            font-size: 1.1em;
-        }
-        .pulse {
-            animation: pulse 1.5s infinite;
-        }
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.5; }
-            100% { opacity: 1; }
-        }
-        .quality-badge {
-            display: inline-block;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.9em;
-            font-weight: bold;
-            margin-left: 10px;
-        }
-        .quality-high { background: #00ff88; color: #003322; }
-        .quality-medium { background: #ffaa00; color: #332200; }
-        .quality-low { background: #ff4444; color: #330000; }
-        .time-info {
-            background: rgba(30, 30, 60, 0.8);
-            padding: 15px;
-            border-radius: 8px;
-            margin: 15px 0;
-            border: 1px solid #404080;
+        .progress-fill {
+            height: 100%; 
+            background: linear-gradient(90deg, #3a86ff, #00ff88);
+            width: 0%; 
+            transition: width 0.3s ease;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🎯 IA SIGNAL PRO</h1>
-        <div class="subtitle">Sistema Inteligente de Análise Técnica - VERSÃO MAIS ASSERTIVA</div>
-        
-        <form id="uploadForm" enctype="multipart/form-data">
-            <div class="upload-area" onclick="document.getElementById('fileInput').click()">
-                <h3>📤 CLIQUE PARA ENVIAR O GRÁFICO</h3>
-                <p>Arraste ou clique para selecionar a imagem do gráfico</p>
-                <input type="file" id="fileInput" name="file" accept="image/*" required style="display: none;" onchange="previewImage(this)">
-            </div>
-            
-            <div style="text-align: center; margin: 20px 0;">
-                <select name="timeframe" required>
-                    <option value="1m">⏱️ Timeframe 1 Minuto</option>
-                    <option value="5m" selected>⏱️ Timeframe 5 Minutos</option>
-                </select>
-                
-                <button type="submit">🎯 ANALISAR GRÁFICO INTELIGENTE</button>
-            </div>
-        </form>
-        
-        <div id="imagePreview" style="text-align: center; margin: 20px 0; display: none;">
-            <img id="preview" style="max-width: 100%; max-height: 300px; border-radius: 8px; border: 2px solid #404080;">
+        <div class="header">
+            <div class="title">🧠 IA SIGNAL PRO - ESTÁVEL</div>
+            <div class="subtitle">SISTEMA INTELIGENTE DE ANÁLISE TÉCNICA</div>
         </div>
         
-        <div id="result"></div>
-        <div id="loading" class="loading" style="display: none;">
-            <div class="pulse">🔍 ANALISANDO PADRÕES E SINAIS...</div>
+        <div class="timeframe-selector">
+            <button class="timeframe-btn active" data-timeframe="1m">⏱️ 1 MINUTO</button>
+            <button class="timeframe-btn" data-timeframe="5m">⏱️ 5 MINUTOS</button>
+        </div>
+        
+        <div class="upload-area" id="uploadArea">
+            <div style="font-size: 15px; margin-bottom: 8px;">
+                📊 CLIQUE OU ARRASTE A IMAGEM DO GRÁFICO
+            </div>
+            <input type="file" id="fileInput" class="file-input" accept="image/*">
+        </div>
+        
+        <button class="analyze-btn" id="analyzeBtn">🔍 ANALISAR GRÁFICO</button>
+        
+        <div class="result" id="result">
+            <div id="signalText" class="signal-text"></div>
+            <div id="errorMessage" class="error-message" style="display: none;"></div>
+            
+            <div class="time-info">
+                <div class="time-item">
+                    <span class="time-label">⏰ Horário da Análise:</span>
+                    <span class="time-value" id="analysisTime">--:--:--</span>
+                </div>
+                <div class="time-item">
+                    <span class="time-label">🎯 Entrada Recomendada:</span>
+                    <span class="time-value" id="entryTime">--:--</span>
+                </div>
+                <div class="time-item">
+                    <span class="time-label">⏱️ Timeframe:</span>
+                    <span class="time-value" id="timeframe">Próximo minuto</span>
+                </div>
+            </div>
+            
+            <div class="reasoning" id="reasoningText"></div>
+            <div class="confidence" id="confidenceText"></div>
+            <div id="qualityIndicator" class="quality-indicator"></div>
+            
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            
+            <div class="metrics" id="metricsText"></div>
         </div>
     </div>
 
     <script>
-        function previewImage(input) {
-            const preview = document.getElementById('preview');
-            const previewContainer = document.getElementById('imagePreview');
-            
-            if (input.files && input.files[0]) {
-                const reader = new FileReader();
+        document.addEventListener('DOMContentLoaded', function() {
+            const fileInput = document.getElementById('fileInput');
+            const analyzeBtn = document.getElementById('analyzeBtn');
+            const uploadArea = document.getElementById('uploadArea');
+            const result = document.getElementById('result');
+            const signalText = document.getElementById('signalText');
+            const errorMessage = document.getElementById('errorMessage');
+            const analysisTime = document.getElementById('analysisTime');
+            const entryTime = document.getElementById('entryTime');
+            const timeframeEl = document.getElementById('timeframe');
+            const reasoningText = document.getElementById('reasoningText');
+            const confidenceText = document.getElementById('confidenceText');
+            const qualityIndicator = document.getElementById('qualityIndicator');
+            const progressFill = document.getElementById('progressFill');
+            const metricsText = document.getElementById('metricsText');
+            const timeframeBtns = document.querySelectorAll('.timeframe-btn');
+
+            let currentTimeframe = '1m';
+            let selectedFile = null;
+
+            // Seleção de timeframe
+            timeframeBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    timeframeBtns.forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    currentTimeframe = btn.dataset.timeframe;
+                });
+            });
+
+            // Upload de arquivo
+            uploadArea.addEventListener('click', () => fileInput.click());
+            uploadArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                uploadArea.style.borderColor = '#00ff88';
+            });
+            uploadArea.addEventListener('dragleave', () => {
+                uploadArea.style.borderColor = '#3a86ff';
+            });
+            uploadArea.addEventListener('drop', (e) => {
+                e.preventDefault();
+                uploadArea.style.borderColor = '#3a86ff';
+                if (e.dataTransfer.files.length) {
+                    fileInput.files = e.dataTransfer.files;
+                    handleFileSelect();
+                }
+            });
+
+            fileInput.addEventListener('change', handleFileSelect);
+
+            function handleFileSelect() {
+                selectedFile = fileInput.files[0];
+                if (selectedFile) {
+                    analyzeBtn.textContent = `✅ PRONTO PARA ANÁLISE ${currentTimeframe.toUpperCase()}`;
+                    analyzeBtn.disabled = false;
+                }
+            }
+
+            analyzeBtn.addEventListener('click', async () => {
+                if (!selectedFile) {
+                    alert('📸 Selecione uma imagem do gráfico primeiro!');
+                    return;
+                }
+
+                analyzeBtn.disabled = true;
+                analyzeBtn.textContent = `🧠 ANALISANDO ${currentTimeframe.toUpperCase()}...`;
+                result.style.display = 'block';
+                errorMessage.style.display = 'none';
                 
-                reader.onload = function(e) {
-                    preview.src = e.target.result;
-                    previewContainer.style.display = 'block';
+                signalText.className = 'signal-text';
+                signalText.textContent = 'Analisando padrões do gráfico...';
+                qualityIndicator.textContent = '';
+                
+                const now = new Date();
+                analysisTime.textContent = now.toLocaleTimeString('pt-BR');
+                
+                // Calcula horário de entrada
+                let entryTimeValue;
+                if (currentTimeframe === '1m') {
+                    const nextMinute = new Date(now);
+                    nextMinute.setMinutes(nextMinute.getMinutes() + 1);
+                    nextMinute.setSeconds(0);
+                    entryTimeValue = nextMinute.toLocaleTimeString('pt-BR').slice(0, 5);
+                    timeframeEl.textContent = 'Próximo minuto';
+                } else {
+                    const minutesToAdd = 5 - (now.getMinutes() % 5);
+                    const next5min = new Date(now);
+                    next5min.setMinutes(next5min.getMinutes() + minutesToAdd);
+                    next5min.setSeconds(0);
+                    entryTimeValue = next5min.toLocaleTimeString('pt-BR').slice(0, 5);
+                    timeframeEl.textContent = `Próximo candle de 5min`;
                 }
                 
-                reader.readAsDataURL(input.files[0]);
-            }
-        }
-        
-        document.getElementById('uploadForm').onsubmit = async function(e) {
-            e.preventDefault();
-            
-            const formData = new FormData(this);
-            const resultDiv = document.getElementById('result');
-            const loadingDiv = document.getElementById('loading');
-            
-            loadingDiv.style.display = 'block';
-            resultDiv.innerHTML = '';
-            
-            try {
-                const response = await fetch('/analyze', {
-                    method: 'POST',
-                    body: formData
+                entryTime.textContent = entryTimeValue;
+                reasoningText.textContent = 'Processando análise técnica...';
+                confidenceText.textContent = '';
+                progressFill.style.width = '20%';
+                
+                metricsText.innerHTML = '<div class="loading">Iniciando análise...</div>';
+
+                try {
+                    const formData = new FormData();
+                    formData.append('image', selectedFile);
+                    formData.append('timeframe', currentTimeframe);
+                    
+                    progressFill.style.width = '40%';
+                    
+                    const response = await fetch('/analyze', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    progressFill.style.width = '80%';
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    
+                    const data = await response.json();
+                    
+                    progressFill.style.width = '100%';
+                    
+                    if (data.error) {
+                        throw new Error(data.error);
+                    }
+                    
+                    displayResults(data);
+                    
+                } catch (error) {
+                    console.error('Erro:', error);
+                    errorMessage.style.display = 'block';
+                    errorMessage.textContent = `❌ Erro na análise: ${error.message}`;
+                    signalText.textContent = '❌ Análise Falhou';
+                    metricsText.innerHTML = '<div class="loading">Erro no processamento</div>';
+                } finally {
+                    analyzeBtn.disabled = false;
+                    analyzeBtn.textContent = `🔍 ANALISAR ${currentTimeframe.toUpperCase()} NOVAMENTE`;
+                }
+            });
+
+            function displayResults(data) {
+                const direction = data.direction;
+                const confidence = (data.final_confidence * 100).toFixed(1);
+                const cached = data.cached || false;
+                const quality = data.analysis_grade || 'medium';
+                
+                // Define classe e texto do sinal
+                signalText.className = `signal-text signal-${direction}`;
+                let directionText = '';
+                switch(direction) {
+                    case 'buy': directionText = '🎯 COMPRAR'; break;
+                    case 'sell': directionText = '🎯 VENDER'; break;
+                    default: directionText = '⏸️ AGUARDAR';
+                }
+                signalText.innerHTML = `${directionText} ${cached ? '<span class="cache-badge">CACHE</span>' : ''}`;
+                
+                // Atualiza informações
+                analysisTime.textContent = data.analysis_time || '--:--:--';
+                entryTime.textContent = data.entry_time || '--:--';
+                timeframeEl.textContent = data.timeframe || 'Próximo minuto';
+                
+                reasoningText.textContent = data.reasoning;
+                confidenceText.textContent = `Confiança: ${confidence}%`;
+                
+                // Indicador de qualidade
+                qualityIndicator.className = `quality-indicator quality-${quality}`;
+                if (quality === 'high') {
+                    qualityIndicator.textContent = '✅ ALTA QUALIDADE - Sinal confiável';
+                } else if (quality === 'medium') {
+                    qualityIndicator.textContent = '⚠️ QUALIDADE MÉDIA - Use com atenção';
+                } else {
+                    qualityIndicator.textContent = '🔍 QUALIDADE BAIXA - Use com cautela';
+                }
+                
+                // Métricas detalhadas
+                const metrics = data.metrics || {};
+                let metricsHtml = '<div style="margin-bottom: 10px; text-align: center; font-weight: 600;">📊 ANÁLISE DETALHADA</div>';
+                
+                const metricItems = [
+                    ['Score da Análise', metrics.analysis_score?.toFixed(3)],
+                    ['Força da Tendência', (metrics.trend_strength * 100)?.toFixed(1) + '%'],
+                    ['Momentum', metrics.momentum?.toFixed(3)],
+                    ['RSI', metrics.rsi?.toFixed(3)],
+                    ['MACD', metrics.macd?.toFixed(3)],
+                    ['Suportes', metrics.support_levels || 0],
+                    ['Resistências', metrics.resistance_levels || 0],
+                    ['Volatilidade', (metrics.volatility * 100)?.toFixed(1) + '%']
+                ];
+                
+                metricItems.forEach(([label, value]) => {
+                    metricsHtml += `
+                        <div class="metric-item">
+                            <span>${label}:</span>
+                            <span class="metric-value">${value}</span>
+                        </div>
+                    `;
                 });
                 
-                const data = await response.json();
-                
-                let signalClass = 'signal-hold';
-                if (data.direction === 'buy') signalClass = 'signal-buy';
-                else if (data.direction === 'sell') signalClass = 'signal-sell';
-                
-                let confidenceClass = 'confidence-low';
-                if (data.final_confidence > 0.7) confidenceClass = 'confidence-high';
-                else if (data.final_confidence > 0.6) confidenceClass = 'confidence-medium';
-                
-                let qualityBadge = '';
-                if (data.analysis_grade === 'high') {
-                    qualityBadge = '<span class="quality-badge quality-high">ALTA QUALIDADE</span>';
-                } else if (data.analysis_grade === 'medium') {
-                    qualityBadge = '<span class="quality-badge quality-medium">QUALIDADE MÉDIA</span>';
-                } else {
-                    qualityBadge = '<span class="quality-badge quality-low">QUALIDADE BAIXA</span>';
-                }
-                
-                resultDiv.innerHTML = `
-                    <div class="result ${signalClass}">
-                        <h2 style="margin-top: 0;">${data.entry_signal}</h2>
-                        
-                        <div class="time-info">
-                            <strong>⏰ Horário de Entrada:</strong> ${data.entry_time}<br>
-                            <strong>📊 Timeframe:</strong> ${data.timeframe}<br>
-                            <strong>🕒 Análise Gerada:</strong> ${data.analysis_time}
-                        </div>
-                        
-                        <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <div>
-                                <strong>Confiança do Sinal:</strong> 
-                                <span class="${confidenceClass}">${(data.final_confidence * 100).toFixed(1)}%</span>
-                            </div>
-                            ${qualityBadge}
-                        </div>
-                        
-                        <div class="metric-bar">
-                            <div class="metric-fill" style="width: ${data.final_confidence * 100}%"></div>
-                        </div>
-                        
-                        <div><strong>🔍 Qualidade da Análise:</strong> ${(data.signal_quality * 100).toFixed(1)}%</div>
-                        <div class="metric-bar">
-                            <div class="metric-fill" style="width: ${data.signal_quality * 100}%"></div>
-                        </div>
-                        
-                        <div><strong>📈 Score Técnico:</strong> ${data.metrics.analysis_score.toFixed(3)}</div>
-                        <div><strong>🧠 Composição do Score:</strong> ${data.score_breakdown}</div>
-                        
-                        ${data.cached ? '<div style="color: #ffaa00; margin-top: 10px;">⚡ Resultado em cache (análise recente)</div>' : ''}
-                        
-                        <div class="metrics-grid">
-                            <div class="metric-card">
-                                <strong>📊 Força da Tendência</strong>
-                                <div class="metric-bar">
-                                    <div class="metric-fill" style="width: ${data.metrics.trend_strength * 100}%"></div>
-                                </div>
-                                ${(data.metrics.trend_strength * 100).toFixed(1)}%
-                            </div>
-                            
-                            <div class="metric-card">
-                                <strong>⚡ Momentum</strong>
-                                <div class="metric-bar">
-                                    <div class="metric-fill" style="width: ${(Math.abs(data.metrics.momentum) * 50 + 50)}%"></div>
-                                </div>
-                                ${data.metrics.momentum.toFixed(3)}
-                            </div>
-                            
-                            <div class="metric-card">
-                                <strong>🎯 Qualidade dos Níveis</strong>
-                                <div class="metric-bar">
-                                    <div class="metric-fill" style="width: ${data.metrics.levels_quality * 100}%"></div>
-                                </div>
-                                ${(data.metrics.levels_quality * 100).toFixed(1)}%
-                            </div>
-                            
-                            <div class="metric-card">
-                                <strong>🏛️ Estrutura do Mercado</strong>
-                                <div class="metric-bar">
-                                    <div class="metric-fill" style="width: ${data.metrics.structure_quality * 100}%"></div>
-                                </div>
-                                ${(data.metrics.structure_quality * 100).toFixed(1)}%
-                            </div>
-                        </div>
-                    </div>
-                `;
-                
-            } catch (error) {
-                resultDiv.innerHTML = `
-                    <div class="result signal-hold">
-                        <h3 style="color: #ff4444;">❌ Erro na Análise</h3>
-                        <p>Erro: ${error.message}</p>
-                    </div>
-                `;
-            } finally {
-                loadingDiv.style.display = 'none';
+                metricsText.innerHTML = metricsHtml;
             }
-        };
+        });
     </script>
 </body>
 </html>
-"""
+'''
 
 @app.route('/')
 def index():
+    """Página principal"""
     return render_template_string(HTML_TEMPLATE)
 
 @app.route('/analyze', methods=['POST'])
-def analyze_image():
+def analyze_photo():
+    """Endpoint de análise de imagem"""
     try:
-        if 'file' not in request.files:
-            return jsonify({'error': 'Nenhum arquivo enviado'}), 400
+        logger.info("Recebendo requisição de análise")
         
-        file = request.files['file']
-        if file.filename == '':
-            return jsonify({'error': 'Nenhum arquivo selecionado'}), 400
+        if 'image' not in request.files:
+            return jsonify({'ok': False, 'error': 'Nenhuma imagem enviada'}), 400
         
-        timeframe = request.form.get('timeframe', '5m')
+        image_file = request.files['image']
+        if not image_file or image_file.filename == '':
+            return jsonify({'ok': False, 'error': 'Arquivo inválido'}), 400
         
-        # Analisa a imagem
-        blob = file.read()
-        result = analyzer.analyze(blob, timeframe)
+        timeframe = request.form.get('timeframe', '1m')
+        if timeframe not in ['1m', '5m']:
+            timeframe = '1m'
         
-        return jsonify(result)
+        # Verificação básica do arquivo
+        image_file.seek(0, 2)
+        file_size = image_file.tell()
+        image_file.seek(0)
+        
+        if file_size > 10 * 1024 * 1024:  # 10MB
+            return jsonify({'ok': False, 'error': 'Imagem muito grande (máximo 10MB)'}), 400
+        
+        image_bytes = image_file.read()
+        if len(image_bytes) == 0:
+            return jsonify({'ok': False, 'error': 'Arquivo vazio'}), 400
+        
+        # Análise
+        logger.info(f"Iniciando análise para timeframe: {timeframe}")
+        analysis = analyzer.analyze(image_bytes, timeframe)
+        
+        return jsonify(analysis)
         
     except Exception as e:
+        logger.error(f"Erro no endpoint /analyze: {e}")
         return jsonify({
-            'error': f'Erro no processamento: {str(e)}',
-            'direction': 'hold',
-            'final_confidence': 0.51,
-            'entry_signal': f'⚠️ ERRO: {str(e)}'
+            'ok': False,
+            'error': f'Erro interno: {str(e)}'
         }), 500
 
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check para monitoramento"""
+    return jsonify({
+        'status': 'healthy', 
+        'service': 'IA Signal Pro',
+        'timestamp': datetime.datetime.now().isoformat(),
+        'version': '2.0.0-stable'
+    })
+
+@app.route('/cache/clear', methods=['POST'])
+def clear_cache():
+    """Limpa o cache de análises"""
+    try:
+        cache_dir = "analysis_cache"
+        if os.path.exists(cache_dir):
+            for file in os.listdir(cache_dir):
+                os.remove(os.path.join(cache_dir, file))
+            return jsonify({'ok': True, 'message': 'Cache limpo com sucesso!'})
+        return jsonify({'ok': True, 'message': 'Cache já está vazio!'})
+    except Exception as e:
+        logger.error(f"Erro ao limpar cache: {e}")
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+# Handler de erro global
+@app.errorhandler(500)
+def internal_error(error):
+    return jsonify({'error': 'Erro interno do servidor'}), 500
+
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({'error': 'Endpoint não encontrado'}), 404
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    port = int(os.environ.get('PORT', 5000))
+    debug = os.environ.get('DEBUG', 'False').lower() == 'true'
+    
+    logger.info(f"🚀 IA Signal Pro - VERSÃO ESTÁVEL iniciando na porta {port}")
+    logger.info(f"📊 Sistema: Análise Inteligente com Tratamento de Erros")
+    logger.info(f"⏰ Timeframes: 1min e 5min com cache inteligente")
+    logger.info(f"🛡️ Status: ESTÁVEL E FUNCIONAL")
+    
+    # Use waitress para produção em vez do servidor de desenvolvimento do Flask
+    if os.environ.get('PRODUCTION', 'False').lower() == 'true':
+        from waitress import serve
+        serve(app, host='0.0.0.0', port=port)
+    else:
+        app.run(host='0.0.0.0', port=port, debug=debug)
