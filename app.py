@@ -3,6 +3,7 @@ from __future__ import annotations
 """
 IA SIGNAL PRO - SUPER INTELIGENTE 🧠
 Análise microscópica + inteligência contextual = 70%+ assertividade
+VERSÃO CORRIGIDA - FORÇA DA TENDÊNCIA
 """
 
 import io
@@ -176,7 +177,7 @@ class SuperIntelligentAnalyzer:
                         segment_mean = np.mean(segment)
                         # CORREÇÃO SIMPLIFICADA - evita np.polyfit problemático
                         if segment.shape[1] > 1:
-                            # Calcula tendência simples sem np.polyfit
+                            # Calcula tendência simples
                             x_vals = np.arange(min(3, segment.shape[1]))
                             y_vals = np.mean(segment[:, -min(3, segment.shape[1]):], axis=0)
                             if len(y_vals) > 1:
@@ -349,11 +350,11 @@ class SuperIntelligentAnalyzer:
             return 0.5
 
     # =========================
-    #  ANÁLISE TRADICIONAL (BASE)
+    #  ANÁLISE TRADICIONAL (BASE) - CORRIGIDA
     # =========================
     
     def _analyze_price_action(self, price_data: np.ndarray, timeframe: str) -> Dict[str, float]:
-        """Análise tradicional de price action"""
+        """Análise tradicional de price action - CORRIGIDA"""
         try:
             height, width = price_data.shape
             segments = 6
@@ -374,24 +375,29 @@ class SuperIntelligentAnalyzer:
                 else:
                     slope = 0
                     
-                # Calcula força da tendência de forma simples
-                mean_region = np.mean(regions)
-                variance = np.mean([(r - mean_region) ** 2 for r in regions])
-                total_variance = np.var(regions) if len(regions) > 1 else 0
-                trend_strength = 1 - (variance / (total_variance + 1e-8)) if total_variance > 0 else 0
+                # CORREÇÃO: Cálculo mais robusto da força da tendência
+                if len(regions) > 1:
+                    changes = [regions[i] - regions[i-1] for i in range(1, len(regions))]
+                    avg_change = np.mean(np.abs(changes))
+                    if avg_change > 0:
+                        trend_strength = min(1.0, abs(slope) / (avg_change + 1e-8))
+                    else:
+                        trend_strength = min(1.0, abs(slope) * 10)  # Ajuste para valores pequenos
+                else:
+                    trend_strength = 0
             else:
                 slope = 0
-                trend_strength = 0
+                trend_strength = 0.5  # Valor padrão mais realista
             
             return {
                 "trend_direction": float(slope),
-                "trend_strength": float(min(1.0, trend_strength)),
+                "trend_strength": float(trend_strength),
                 "momentum": float(slope * 0.7),
                 "volatility": float(np.std(price_data) / (np.mean(price_data) + 1e-8)),
                 "price_range": float(np.ptp(price_data))
             }
         except Exception:
-            return {"trend_direction": 0.0, "trend_strength": 0.0, "momentum": 0.0, "volatility": 0.0, "price_range": 0.0}
+            return {"trend_direction": 0.0, "trend_strength": 0.5, "momentum": 0.0, "volatility": 0.0, "price_range": 0.0}
 
     def _analyze_chart_patterns(self, price_data: np.ndarray) -> Dict[str, float]:
         """Análise tradicional de padrões"""
@@ -510,7 +516,7 @@ class SuperIntelligentAnalyzer:
                 nano_trend['multi_resolution_agreement'] * 0.2,
                 micro_structure['structural_integrity'] * 0.2,
                 flow_dynamics['overall_flow_quality'] * 0.2,
-                traditional['price_action']['trend_strength'] * 0.2,
+                traditional['price_action']['trend_strength'] * 0.2,  # AGORA FUNCIONA CORRETAMENTE
                 traditional['market_structure']['structure_quality'] * 0.2
             ]
             
@@ -632,7 +638,7 @@ class SuperIntelligentAnalyzer:
                 analyses['nano_analysis']['convergence_strength'] * 0.3,
                 analyses['micro_structure']['structural_integrity'] * 0.3,
                 analyses['flow_dynamics']['overall_flow_quality'] * 0.2,
-                analyses['traditional']['price_action']['trend_strength'] * 0.2
+                analyses['traditional']['price_action']['trend_strength'] * 0.2  # AGORA FUNCIONA
             ]
             return float(np.clip(np.mean(factors), 0, 1))
         except Exception:
@@ -714,7 +720,7 @@ class SuperIntelligentAnalyzer:
                     "structural_integrity": analyses['micro_structure']['structural_integrity'],
                     "flow_quality": analyses['flow_dynamics']['overall_flow_quality'],
                     "multi_resolution_agreement": analyses['nano_analysis']['multi_resolution_agreement'],
-                    "trend_strength": analyses['traditional']['price_action']['trend_strength'],
+                    "trend_strength": analyses['traditional']['price_action']['trend_strength'],  # AGORA CORRETO
                     "momentum": analyses['traditional']['price_action']['momentum'],
                     "rsi": analyses['traditional']['indicators']['rsi'],
                     "macd": analyses['traditional']['indicators']['macd']
@@ -746,7 +752,7 @@ class SuperIntelligentAnalyzer:
                     "structural_integrity": 0.5,
                     "flow_quality": 0.5,
                     "multi_resolution_agreement": 0.0,
-                    "trend_strength": 0.0,
+                    "trend_strength": 0.5,  # VALOR PADRÃO CORRIGIDO
                     "momentum": 0.0,
                     "rsi": 0.0,
                     "macd": 0.0
@@ -763,9 +769,6 @@ analyzer = SuperIntelligentAnalyzer()
 # Configurações para produção
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.config['JSON_SORT_KEYS'] = False
-
-# [O RESTANTE DO CÓDIGO FLASK PERMANECE EXATAMENTE IGUAL...]
-# [INCLUINDO HTML_TEMPLATE, ROTAS, ETC.]
 
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
@@ -1027,6 +1030,15 @@ HTML_TEMPLATE = '''
             margin: 10px 0;
             border: 1px solid #7ce0ff;
         }
+        
+        .image-preview {
+            max-width: 100%;
+            max-height: 200px;
+            border-radius: 8px;
+            margin: 10px 0;
+            border: 2px solid #7ce0ff;
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -1048,7 +1060,9 @@ HTML_TEMPLATE = '''
             <input type="file" id="fileInput" class="file-input" accept="image/*">
         </div>
         
-        <button class="analyze-btn" id="analyzeBtn">🧠 ANALISAR COM IA SUPER-INTELIGENTE</button>
+        <img id="imagePreview" class="image-preview" alt="Prévia da imagem">
+        
+        <button class="analyze-btn" id="analyzeBtn" disabled>🧠 SELECIONE UMA IMAGEM PRIMEIRO</button>
         
         <div class="result" id="result">
             <div id="signalText" class="signal-text"></div>
@@ -1095,6 +1109,7 @@ HTML_TEMPLATE = '''
             const fileInput = document.getElementById('fileInput');
             const analyzeBtn = document.getElementById('analyzeBtn');
             const uploadArea = document.getElementById('uploadArea');
+            const imagePreview = document.getElementById('imagePreview');
             const result = document.getElementById('result');
             const signalText = document.getElementById('signalText');
             const errorMessage = document.getElementById('errorMessage');
@@ -1120,36 +1135,56 @@ HTML_TEMPLATE = '''
                     timeframeBtns.forEach(b => b.classList.remove('active'));
                     btn.classList.add('active');
                     currentTimeframe = btn.dataset.timeframe;
+                    if (selectedFile) {
+                        analyzeBtn.textContent = `✅ PRONTO PARA ANÁLISE ${currentTimeframe.toUpperCase()}`;
+                    }
                 });
             });
 
-            // Upload de arquivo
+            // Upload de arquivo - CORREÇÃO AQUI
             uploadArea.addEventListener('click', () => fileInput.click());
+            
             uploadArea.addEventListener('dragover', (e) => {
                 e.preventDefault();
                 uploadArea.style.borderColor = '#00ff88';
             });
+            
             uploadArea.addEventListener('dragleave', () => {
                 uploadArea.style.borderColor = '#7ce0ff';
             });
+            
             uploadArea.addEventListener('drop', (e) => {
                 e.preventDefault();
                 uploadArea.style.borderColor = '#7ce0ff';
                 if (e.dataTransfer.files.length) {
                     fileInput.files = e.dataTransfer.files;
-                    handleFileSelect();
+                    handleFileSelect(e);
                 }
             });
 
-            fileInput.addEventListener('change', handleFileSelect);
-
-            function handleFileSelect() {
-                selectedFile = fileInput.files[0];
-                if (selectedFile) {
-                    analyzeBtn.textContent = `✅ PRONTO PARA ANÁLISE ${currentTimeframe.toUpperCase()}`;
+            // CORREÇÃO CRÍTICA - função corrigida
+            function handleFileSelect(event) {
+                const files = event.target.files;
+                if (files && files.length > 0) {
+                    selectedFile = files[0];
                     analyzeBtn.disabled = false;
+                    analyzeBtn.textContent = `✅ PRONTO PARA ANÁLISE ${currentTimeframe.toUpperCase()}`;
+                    
+                    // Mostrar prévia da imagem
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        imagePreview.src = e.target.result;
+                        imagePreview.style.display = 'block';
+                    };
+                    reader.readAsDataURL(selectedFile);
+                } else {
+                    analyzeBtn.disabled = true;
+                    analyzeBtn.textContent = '🧠 SELECIONE UMA IMAGEM PRIMEIRO';
+                    imagePreview.style.display = 'none';
                 }
             }
+
+            fileInput.addEventListener('change', handleFileSelect);
 
             analyzeBtn.addEventListener('click', async () => {
                 if (!selectedFile) {
@@ -1231,7 +1266,7 @@ HTML_TEMPLATE = '''
                     metricsText.innerHTML = '<div class="loading">Erro no processamento</div>';
                 } finally {
                     analyzeBtn.disabled = false;
-                    analyzeBtn.textContent = `🧠 ANALISAR ${currentTimeframe.toUpperCase()} NOVAMENTE`;
+                    analyzeBtn.textContent = `🔁 ANALISAR ${currentTimeframe.toUpperCase()} NOVAMENTE`;
                 }
             });
 
@@ -1424,5 +1459,6 @@ if __name__ == '__main__':
     print(f"🧠 Sistema: Análise Microscópica + Inteligência Contextual")
     print(f"🎯 Assertividade: 70%+ com fluxo constante de sinais")
     print(f"⚡ Status: SUPER INTELIGENTE E ESTÁVEL")
+    print(f"🔧 Correção: Força da Tendência Corrigida")
     
     app.run(host='0.0.0.0', port=port, debug=debug)
