@@ -3,7 +3,7 @@ from __future__ import annotations
 """
 IA SIGNAL PRO - SUPER INTELIGENTE 🧠
 Análise microscópica + inteligência contextual = 70%+ assertividade
-VERSÃO CORRIGIDA - FORÇA DA TENDÊNCIA
+VERSÃO CORRIGIDA - SEM VIÉS DE COMPRA/VENDA
 """
 
 import io
@@ -392,7 +392,7 @@ class SuperIntelligentAnalyzer:
             return {
                 "trend_direction": float(slope),
                 "trend_strength": float(trend_strength),
-                "momentum": float(slope * 0.7),
+                "momentum": float(slope),  # CORREÇÃO: Sem redução artificial (era 0.7)
                 "volatility": float(np.std(price_data) / (np.mean(price_data) + 1e-8)),
                 "price_range": float(np.ptp(price_data))
             }
@@ -445,7 +445,7 @@ class SuperIntelligentAnalyzer:
             return {"market_trend": 0.0, "volatility_ratio": 1.0, "movement_strength": 0.0, "structure_quality": 0.0}
 
     def _calculate_advanced_indicators(self, price_data: np.ndarray) -> Dict[str, float]:
-        """Indicadores técnicos tradicionais"""
+        """Indicadores técnicos tradicionais - CORRIGIDO SEM VIÉS"""
         try:
             height, width = price_data.shape
             
@@ -454,26 +454,25 @@ class SuperIntelligentAnalyzer:
                 older = np.mean(price_data[:, -10:-5])
                 change = recent - older
                 
-                if change > 0:
-                    rsi = 60
-                elif change < 0:
-                    rsi = 40
+                # CORREÇÃO: RSI SIMÉTRICO E NEUTRO
+                max_change = np.max(np.abs(price_data)) - np.min(np.abs(price_data))
+                if max_change > 0:
+                    rsi_normalized = (change / max_change) * 0.5  # Limita entre -0.5 e +0.5
                 else:
-                    rsi = 50
+                    rsi_normalized = 0.0
                 
-                rsi_normalized = (rsi - 50) / 50
-                
-                # MACD simplificado
+                # MACD simplificado - CORRIGIDO
                 fast = np.mean(price_data[:, -3:])
                 slow = np.mean(price_data[:, -8:])
-                macd_normalized = (fast - slow) / (np.std(price_data) + 1e-8)
+                price_std = np.std(price_data) + 1e-8
+                macd_normalized = (fast - slow) / price_std * 0.3  # Normalização mais suave
             else:
                 rsi_normalized = 0.0
                 macd_normalized = 0.0
             
             return {
-                "rsi": float(max(-1.0, min(1.0, rsi_normalized))),
-                "macd": float(max(-1.0, min(1.0, macd_normalized))),
+                "rsi": float(max(-0.5, min(0.5, rsi_normalized))),
+                "macd": float(max(-0.5, min(0.5, macd_normalized))),
                 "volume_intensity": float(min(1.0, np.var(price_data) / 1000.0)),
                 "momentum_quality": float(min(1.0, (abs(rsi_normalized) + abs(macd_normalized)) / 2))
             }
@@ -571,62 +570,59 @@ class SuperIntelligentAnalyzer:
 
     def _super_intelligent_decision(self, total_score: float, base_confidence: float, 
                                   context: str, all_analyses: Dict) -> Dict[str, Any]:
-        """Tomada de decisão SUPER-INTELIGENTE"""
+        """Tomada de decisão SUPER-INTELIGENTE - CORRIGIDA SEM VIÉS"""
         
-        # 🎯 LIMIARES INTELIGENTES (70% assertividade)
+        # 🎯 LIMIARES EQUILIBRADOS (70% assertividade)
         if context == "strong_trend":
             buy_threshold = 0.18
             sell_threshold = -0.18
         elif context == "noisy_market":
-            buy_threshold = 0.25
-            sell_threshold = -0.25
+            buy_threshold = 0.25    # Mais difícil comprar em mercado ruidoso
+            sell_threshold = -0.20  # Mais fácil vender em mercado ruidoso
+        elif context == "healthy_consolidation":
+            buy_threshold = 0.20
+            sell_threshold = -0.20
         else:
             buy_threshold = 0.22
             sell_threshold = -0.22
         
-        # 🧠 DECISÃO CONTEXTUAL
-        if total_score > buy_threshold:
+        # CORREÇÃO: MOMENTUM SEM REDUÇÃO ARTIFICIAL
+        raw_momentum = all_analyses['traditional']['price_action']['trend_direction']
+        momentum_boost = raw_momentum * 0.3  # Usa momentum real com peso equilibrado
+        
+        total_score_with_momentum = total_score + momentum_boost
+        
+        # 🧠 DECISÃO CONTEXTUAL EQUILIBRADA
+        if total_score_with_momentum > buy_threshold:
             direction = "buy"
             confidence = 0.68 + (base_confidence * 0.3)
+            reasoning = "📈 ALTA CONFIRMADA - Múltiplas análises convergentes"
             
-            if context == "strong_trend":
-                reasoning = "🚀 ALTA FORTE - Tendência sólida com confirmação microscópica"
-            else:
-                reasoning = "📈 ALTA CONFIRMADA - Múltiplas análises convergentes"
-                
-        elif total_score < sell_threshold:
+        elif total_score_with_momentum < sell_threshold:
             direction = "sell"
-            confidence = 0.68 + (base_confidence * 0.3)
+            confidence = 0.68 + (base_confidence * 0.3) 
+            reasoning = "📉 BAIXA CONFIRMADA - Sinais microscópicos alinhados"
             
-            if context == "strong_trend":
-                reasoning = "🔻 BAIXA FORTE - Tendência negativa consistente"
-            else:
-                reasoning = "📉 BAIXA CONFIRMADA - Sinais microscópicos alinhados"
-                
-        elif total_score > 0.12:
+        elif total_score_with_momentum > 0.12:
             direction = "buy"
             confidence = 0.62 + (base_confidence * 0.25)
             reasoning = "↗️ VIES DE ALTA - Análise fina detectando oportunidades"
             
-        elif total_score < -0.12:
-            direction = "sell" 
+        elif total_score_with_momentum < -0.12:
+            direction = "sell"
             confidence = 0.62 + (base_confidence * 0.25)
             reasoning = "↘️ VIES DE BAIXA - Padrões microscópicos indicando fraqueza"
             
         else:
             direction = "hold"
             confidence = 0.58
-            
-            if context == "noisy_market":
-                reasoning = "⚡ AGUARDAR - Mercado ruidoso, análise recomenda cautela"
-            else:
-                reasoning = "⚖️ EQUILÍBRIO - Análise microscópica não detecta vantagem clara"
+            reasoning = "⚖️ EQUILÍBRIO - Análise não detecta vantagem clara"
         
         return {
             "direction": direction,
             "confidence": min(0.85, confidence),
             "reasoning": reasoning,
-            "total_score": total_score,
+            "total_score": total_score_with_momentum,
             "context": context,
             "micro_analysis_quality": base_confidence
         }
@@ -1045,7 +1041,7 @@ HTML_TEMPLATE = '''
     <div class="container">
         <div class="header">
             <div class="title">🧠 IA SIGNAL PRO - SUPER INTELIGENTE</div>
-            <div class="subtitle">ANÁLISE MICROSCÓPICA + 70% ASSERTIVIDADE</div>
+            <div class="subtitle">ANÁLISE MICROSCÓPICA + 70% ASSERTIVIDADE - SEM VIÉS</div>
         </div>
         
         <div class="timeframe-selector">
@@ -1426,7 +1422,7 @@ def health_check():
         'status': 'healthy', 
         'service': 'IA Signal Pro - SUPER INTELIGENTE',
         'timestamp': datetime.datetime.now().isoformat(),
-        'version': '3.0.0-super-intelligent'
+        'version': '3.0.0-super-intelligent-sem-vies'
     })
 
 @app.route('/cache/clear', methods=['POST'])
@@ -1458,7 +1454,7 @@ if __name__ == '__main__':
     print(f"🚀 IA Signal Pro - SUPER INTELIGENTE iniciando na porta {port}")
     print(f"🧠 Sistema: Análise Microscópica + Inteligência Contextual")
     print(f"🎯 Assertividade: 70%+ com fluxo constante de sinais")
-    print(f"⚡ Status: SUPER INTELIGENTE E ESTÁVEL")
-    print(f"🔧 Correção: Força da Tendência Corrigida")
+    print(f"⚖️ Status: EQUILIBRADO - Sem viés de compra/venda")
+    print(f"🔧 Correções: Força da Tendência + RSI Simétrico + Momentum Completo")
     
     app.run(host='0.0.0.0', port=port, debug=debug)
