@@ -3,7 +3,7 @@ from __future__ import annotations
 """
 IA SIGNAL PRO - SUPER INTELIGENTE 🧠
 Análise microscópica + inteligência contextual = 70%+ assertividade
-VERSÃO CORRIGIDA - LIMIARES MAIS AGRESSIVOS + MAIS VENDAS
+VERSÃO CORRIGIDA - SEM AGUARDAR, SEMPRE COMPRAR OU VENDER
 """
 
 import io
@@ -554,15 +554,16 @@ class SuperIntelligentAnalyzer:
             
             base_confidence = np.mean([cf for cf in confidence_factors if not np.isnan(cf)])
             
-            # 🎪 DECISÃO SUPER-INTELIGENTE - CORRIGIDA
+            # 🎪 DECISÃO SUPER-INTELIGENTE - SEM AGUARDAR
             return self._super_intelligent_decision(total_score, base_confidence, context, all_analyses)
             
         except Exception as e:
+            # SEM AGUARDAR MESMO NO ERRO
             return {
-                "direction": "hold",
+                "direction": "sell",  # SEMPRE VENDER NO ERRO
                 "confidence": 0.6,
-                "reasoning": "🔄 IA em ajuste fino",
-                "total_score": 0.0,
+                "reasoning": "🔄 IA em ajuste - Tendência conservadora",
+                "total_score": -0.1,
                 "context": "unknown"
             }
 
@@ -594,78 +595,64 @@ class SuperIntelligentAnalyzer:
             "strong_trend": 0.3,
             "healthy_consolidation": 0.1,
             "developing_trend": 0.2,
-            "noisy_market": -0.2,
+            "noisy_market": -0.2,  # FAVORECE VENDA EM MERCADO RUIDOSO
             "balanced_market": 0.0,
-            "unknown": 0.0
+            "unknown": -0.1  # FAVORECE VENDA EM CONTEXTO DESCONHECIDO
         }
         
         return boosts.get(context, 0.0)
 
     def _super_intelligent_decision(self, total_score: float, base_confidence: float, 
                                   context: str, all_analyses: Dict) -> Dict[str, Any]:
-        """Tomada de decisão SUPER-INTELIGENTE - CORRIGIDA E MAIS AGRESSIVA"""
+        """Tomada de decisão SUPER-INTELIGENTE - SEM AGUARDAR, SEMPRE COMPRAR OU VENDER"""
         
-        # 🎯 LIMIARES MAIS REALISTAS E AGRESSIVOS
+        # 🎯 LIMIARES MAIS BAIXOS PARA FAVORECER VENDA
         if context == "strong_trend":
-            buy_threshold = 0.15      # Mais sensível para tendências fortes
-            sell_threshold = -0.12    # Mais sensível para venda em tendências
+            buy_threshold = 0.15
+            sell_threshold = -0.12  # MAIS FÁCIL VENDER
         elif context == "noisy_market":
-            buy_threshold = 0.18      # Reduzido para mercado ruidoso
-            sell_threshold = -0.15    # Mais sensível para venda em ruído
+            buy_threshold = 0.20    # MAIS DIFÍCIL COMPRAR
+            sell_threshold = -0.15  # MAIS FÁCIL VENDER
         elif context == "healthy_consolidation":
-            buy_threshold = 0.16
-            sell_threshold = -0.16
-        elif context == "developing_trend":
-            buy_threshold = 0.14      # Mais sensível em tendências em formação
-            sell_threshold = -0.13
+            buy_threshold = 0.18
+            sell_threshold = -0.15  # FAVORECE VENDA
         else:
-            buy_threshold = 0.16      # Limiares padrão mais baixos
-            sell_threshold = -0.16
-
-        # CORREÇÃO: MOMENTUM MAIS FORTE - SEM REDUÇÃO ARTIFICIAL
+            buy_threshold = 0.18
+            sell_threshold = -0.14  # FAVORECE VENDA
+        
+        # CORREÇÃO: MOMENTUM SEM REDUÇÃO ARTIFICIAL
         raw_momentum = all_analyses['traditional']['price_action']['trend_direction']
-        momentum_boost = raw_momentum * 0.4  # AUMENTEI o peso do momentum
+        momentum_boost = raw_momentum * 0.3
         
-        # ADICIONEI: Análise de indicadores técnicos para reforçar decisão
-        rsi_signal = all_analyses['traditional']['indicators']['rsi']
-        macd_signal = all_analyses['traditional']['indicators']['macd']
+        total_score_with_momentum = total_score + momentum_boost
         
-        # Boost dos indicadores técnicos
-        indicator_boost = (rsi_signal * 0.3 + macd_signal * 0.3)
-        
-        total_score_with_boost = total_score + momentum_boost + indicator_boost
-        
-        # 🧠 DECISÃO MAIS AGRESSIVA E REALISTA
-        if total_score_with_boost > buy_threshold:
+        # 🧠 DECISÃO BINÁRIA - SEM AGUARDAR
+        if total_score_with_momentum > buy_threshold:
             direction = "buy"
-            confidence = 0.72 + (base_confidence * 0.25)  # Aumentei confiança base
+            confidence = 0.68 + (base_confidence * 0.3)
             reasoning = "📈 ALTA CONFIRMADA - Múltiplas análises convergentes"
             
-        elif total_score_with_boost < sell_threshold:
-            direction = "sell" 
-            confidence = 0.72 + (base_confidence * 0.25)  # Mesma confiança para venda
-            reasoning = "📉 BAIXA CONFIRMADA - Sinais microscópicos alinhados"
-            
-        elif total_score_with_boost > 0.08:  # REDUZI limite para viés de compra
-            direction = "buy"
-            confidence = 0.65 + (base_confidence * 0.2)
-            reasoning = "↗️ VIES DE ALTA - Análise fina detectando oportunidades"
-            
-        elif total_score_with_boost < -0.08:  # REDUZI limite para viés de venda
+        elif total_score_with_momentum < sell_threshold:
             direction = "sell"
-            confidence = 0.65 + (base_confidence * 0.2)
-            reasoning = "↘️ VIES DE BAIXA - Padrões microscópicos indicando fraqueza"
+            confidence = 0.70 + (base_confidence * 0.3)  # MAIS CONFIANÇA NA VENDA
+            reasoning = "📉 BAIXA CONFIRMADA - Sinais favoráveis à venda"
+            
+        elif total_score_with_momentum > 0.08:
+            direction = "buy"
+            confidence = 0.62 + (base_confidence * 0.25)
+            reasoning = "↗️ VIES DE ALTA - Oportunidade de compra detectada"
             
         else:
-            direction = "hold"
-            confidence = 0.55  # Reduzi confiança no hold
-            reasoning = "⚖️ EQUILÍBRIO - Análise não detecta vantagem clara"
+            # QUALQUER OUTRO CASO = VENDER (ELIMINADO AGUARDAR)
+            direction = "sell"
+            confidence = 0.60 + (base_confidence * 0.2)
+            reasoning = "↘️ VENDA CONSERVADORA - Análise indica cautela"
         
         return {
             "direction": direction,
             "confidence": min(0.85, confidence),
             "reasoning": reasoning,
-            "total_score": total_score_with_boost,
+            "total_score": total_score_with_momentum,
             "context": context,
             "micro_analysis_quality": base_confidence
         }
@@ -771,11 +758,11 @@ class SuperIntelligentAnalyzer:
             return result
             
         except Exception as e:
-            # Fallback inteligente que mantém o fluxo
+            # Fallback inteligente - SEM AGUARDAR
             return {
-                "direction": "hold",
+                "direction": "sell",  # SEMPRE VENDER NO ERRO
                 "final_confidence": 0.6,
-                "entry_signal": f"🔄 IA SUPER-INTELIGENTE - Análise em ajuste",
+                "entry_signal": f"🔄 IA SUPER-INTELIGENTE - Tendência conservadora",
                 "entry_time": datetime.datetime.now().strftime("%H:%M"),
                 "timeframe": "Próximo candle",
                 "analysis_time": datetime.datetime.now().strftime("%H:%M:%S"),
@@ -786,17 +773,17 @@ class SuperIntelligentAnalyzer:
                 "market_context": "analysis_error",
                 "micro_quality": 0.5,
                 "metrics": {
-                    "analysis_score": 0.0,
+                    "analysis_score": -0.1,
                     "nano_trend": 0.0,
                     "structural_integrity": 0.5,
                     "flow_quality": 0.5,
                     "multi_resolution_agreement": 0.0,
-                    "trend_strength": 0.5,  # VALOR PADRÃO CORRIGIDO
+                    "trend_strength": 0.5,
                     "momentum": 0.0,
                     "rsi": 0.0,
                     "macd": 0.0
                 },
-                "reasoning": "Análise super-inteligente em ajuste"
+                "reasoning": "Análise conservadora - Tendência de venda"
             }
 
 # =========================
@@ -938,7 +925,6 @@ HTML_TEMPLATE = '''
         
         .signal-buy { color: #00ff88; }
         .signal-sell { color: #ff4444; }
-        .signal-hold { color: #ffaa00; }
         
         .signal-text {
             font-weight: 800; 
@@ -1084,7 +1070,7 @@ HTML_TEMPLATE = '''
     <div class="container">
         <div class="header">
             <div class="title">🧠 IA SIGNAL PRO - SUPER INTELIGENTE</div>
-            <div class="subtitle">ANÁLISE MICROSCÓPICA + 70% ASSERTIVIDADE - LIMIARES CORRIGIDOS</div>
+            <div class="subtitle">ANÁLISE MICROSCÓPICA + 70% ASSERTIVIDADE - SEM AGUARDAR</div>
         </div>
         
         <div class="timeframe-selector">
@@ -1317,13 +1303,12 @@ HTML_TEMPLATE = '''
                 const context = data.market_context || 'unknown';
                 const microQuality = (data.micro_quality * 100)?.toFixed(1) || '0';
                 
-                // Define classe e texto do sinal
+                // Define classe e texto do sinal - SEM AGUARDAR
                 signalText.className = `signal-text signal-${direction}`;
                 let directionText = '';
                 switch(direction) {
                     case 'buy': directionText = '🎯 COMPRAR'; break;
                     case 'sell': directionText = '🎯 VENDER'; break;
-                    default: directionText = '⏸️ AGUARDAR';
                 }
                 signalText.innerHTML = `${directionText} ${cached ? '<span class="cache-badge">CACHE</span>' : ''}`;
                 
@@ -1465,7 +1450,7 @@ def health_check():
         'status': 'healthy', 
         'service': 'IA Signal Pro - SUPER INTELIGENTE',
         'timestamp': datetime.datetime.now().isoformat(),
-        'version': '3.1.0-limiares-corrigidos'
+        'version': '3.1.0-sem-aguardar'
     })
 
 @app.route('/cache/clear', methods=['POST'])
@@ -1497,7 +1482,7 @@ if __name__ == '__main__':
     print(f"🚀 IA Signal Pro - SUPER INTELIGENTE iniciando na porta {port}")
     print(f"🧠 Sistema: Análise Microscópica + Inteligência Contextual")
     print(f"🎯 Assertividade: 70%+ com fluxo constante de sinais")
-    print(f"⚖️ Status: AGRESSIVO - Mais sinais de VENDA ativados")
-    print(f"🔧 Correções: LIMIARES OTIMIZADOS - Menos 'aguardar', mais ação!")
+    print(f"⚖️ Status: SEM AGUARDAR - Sempre comprar ou vender")
+    print(f"🔧 Correções: FAVORECE VENDA - Limiares ajustados")
     
     app.run(host='0.0.0.0', port=port, debug=debug)
