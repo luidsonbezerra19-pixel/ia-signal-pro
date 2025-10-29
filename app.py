@@ -174,12 +174,15 @@ class SuperIntelligentAnalyzer:
                     
                     if segment.size > 0:
                         segment_mean = np.mean(segment)
-                        # CORREÇÃO AQUI - linha fechada corretamente
+                        # CORREÇÃO SIMPLIFICADA - evita np.polyfit problemático
                         if segment.shape[1] > 1:
-                            segment_trend = np.polyfit(
-                                range(min(3, segment.shape[1])), 
-                                np.mean(segment[:, -min(3, segment.shape[1]):], 1
-                            )[0]
+                            # Calcula tendência simples sem np.polyfit
+                            x_vals = np.arange(min(3, segment.shape[1]))
+                            y_vals = np.mean(segment[:, -min(3, segment.shape[1]):], axis=0)
+                            if len(y_vals) > 1:
+                                segment_trend = (y_vals[-1] - y_vals[0]) / (len(y_vals) - 1)
+                            else:
+                                segment_trend = 0
                         else:
                             segment_trend = 0
                         segments.append((segment_mean, segment_trend))
@@ -188,8 +191,13 @@ class SuperIntelligentAnalyzer:
                     means = [s[0] for s in segments]
                     trends = [s[1] for s in segments]
                     
-                    overall_trend = np.polyfit(range(len(means)), means, 1)[0]
-                    trend_agreement = np.std(trends)
+                    # Tendência geral usando método simples
+                    if len(means) > 1:
+                        overall_trend = (means[-1] - means[0]) / (len(means) - 1)
+                    else:
+                        overall_trend = 0
+                    
+                    trend_agreement = np.std(trends) if trends else 0
                     convergence_strength = 1.0 / (1.0 + trend_agreement * 10)
                     
                     trend_signals.append((overall_trend, convergence_strength))
@@ -360,12 +368,17 @@ class SuperIntelligentAnalyzer:
                     regions.append(np.mean(segment))
             
             if len(regions) >= 3:
-                x = np.arange(len(regions))
-                slope, _ = np.polyfit(x, regions, 1)
-                y_pred = slope * x + np.mean(regions)
-                ss_res = np.sum((regions - y_pred) ** 2)
-                ss_tot = np.sum((regions - np.mean(regions)) ** 2)
-                trend_strength = 1 - (ss_res / (ss_tot + 1e-8)) if ss_tot > 0 else 0
+                # Método SIMPLES sem np.polyfit problemático
+                if len(regions) > 1:
+                    slope = (regions[-1] - regions[0]) / (len(regions) - 1)
+                else:
+                    slope = 0
+                    
+                # Calcula força da tendência de forma simples
+                mean_region = np.mean(regions)
+                variance = np.mean([(r - mean_region) ** 2 for r in regions])
+                total_variance = np.var(regions) if len(regions) > 1 else 0
+                trend_strength = 1 - (variance / (total_variance + 1e-8)) if total_variance > 0 else 0
             else:
                 slope = 0
                 trend_strength = 0
@@ -750,6 +763,9 @@ analyzer = SuperIntelligentAnalyzer()
 # Configurações para produção
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.config['JSON_SORT_KEYS'] = False
+
+# [O RESTANTE DO CÓDIGO FLASK PERMANECE EXATAMENTE IGUAL...]
+# [INCLUINDO HTML_TEMPLATE, ROTAS, ETC.]
 
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
