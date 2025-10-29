@@ -3,7 +3,7 @@ from __future__ import annotations
 """
 IA SIGNAL PRO - SUPER INTELIGENTE 🧠
 Análise microscópica + inteligência contextual = 70%+ assertividade
-VERSÃO CORRIGIDA - RSI E MACD FUNCIONAIS
+VERSÃO CORRIGIDA - LIMIARES MAIS AGRESSIVOS + MAIS VENDAS
 """
 
 import io
@@ -513,7 +513,7 @@ class SuperIntelligentAnalyzer:
             return {"rsi": 0.0, "macd": 0.0, "volume_intensity": 0.0, "momentum_quality": 0.0}
 
     # =========================
-    #  MOTOR DE INTELIGÊNCIA CONTEXTUAL
+    #  MOTOR DE INTELIGÊNCIA CONTEXTUAL - CORRIGIDO
     # =========================
     
     def _contextual_intelligence_engine(self, all_analyses: Dict, timeframe: str) -> Dict[str, Any]:
@@ -554,7 +554,7 @@ class SuperIntelligentAnalyzer:
             
             base_confidence = np.mean([cf for cf in confidence_factors if not np.isnan(cf)])
             
-            # 🎪 DECISÃO SUPER-INTELIGENTE
+            # 🎪 DECISÃO SUPER-INTELIGENTE - CORRIGIDA
             return self._super_intelligent_decision(total_score, base_confidence, context, all_analyses)
             
         except Exception as e:
@@ -603,59 +603,69 @@ class SuperIntelligentAnalyzer:
 
     def _super_intelligent_decision(self, total_score: float, base_confidence: float, 
                                   context: str, all_analyses: Dict) -> Dict[str, Any]:
-        """Tomada de decisão SUPER-INTELIGENTE - CORRIGIDA SEM VIÉS"""
+        """Tomada de decisão SUPER-INTELIGENTE - CORRIGIDA E MAIS AGRESSIVA"""
         
-        # 🎯 LIMIARES EQUILIBRADOS (70% assertividade)
+        # 🎯 LIMIARES MAIS REALISTAS E AGRESSIVOS
         if context == "strong_trend":
-            buy_threshold = 0.18
-            sell_threshold = -0.18
+            buy_threshold = 0.15      # Mais sensível para tendências fortes
+            sell_threshold = -0.12    # Mais sensível para venda em tendências
         elif context == "noisy_market":
-            buy_threshold = 0.25    # Mais difícil comprar em mercado ruidoso
-            sell_threshold = -0.20  # Mais fácil vender em mercado ruidoso
+            buy_threshold = 0.18      # Reduzido para mercado ruidoso
+            sell_threshold = -0.15    # Mais sensível para venda em ruído
         elif context == "healthy_consolidation":
-            buy_threshold = 0.20
-            sell_threshold = -0.20
+            buy_threshold = 0.16
+            sell_threshold = -0.16
+        elif context == "developing_trend":
+            buy_threshold = 0.14      # Mais sensível em tendências em formação
+            sell_threshold = -0.13
         else:
-            buy_threshold = 0.22
-            sell_threshold = -0.22
-        
-        # CORREÇÃO: MOMENTUM SEM REDUÇÃO ARTIFICIAL
+            buy_threshold = 0.16      # Limiares padrão mais baixos
+            sell_threshold = -0.16
+
+        # CORREÇÃO: MOMENTUM MAIS FORTE - SEM REDUÇÃO ARTIFICIAL
         raw_momentum = all_analyses['traditional']['price_action']['trend_direction']
-        momentum_boost = raw_momentum * 0.3  # Usa momentum real com peso equilibrado
+        momentum_boost = raw_momentum * 0.4  # AUMENTEI o peso do momentum
         
-        total_score_with_momentum = total_score + momentum_boost
+        # ADICIONEI: Análise de indicadores técnicos para reforçar decisão
+        rsi_signal = all_analyses['traditional']['indicators']['rsi']
+        macd_signal = all_analyses['traditional']['indicators']['macd']
         
-        # 🧠 DECISÃO CONTEXTUAL EQUILIBRADA
-        if total_score_with_momentum > buy_threshold:
+        # Boost dos indicadores técnicos
+        indicator_boost = (rsi_signal * 0.3 + macd_signal * 0.3)
+        
+        total_score_with_boost = total_score + momentum_boost + indicator_boost
+        
+        # 🧠 DECISÃO MAIS AGRESSIVA E REALISTA
+        if total_score_with_boost > buy_threshold:
             direction = "buy"
-            confidence = 0.68 + (base_confidence * 0.3)
+            confidence = 0.72 + (base_confidence * 0.25)  # Aumentei confiança base
             reasoning = "📈 ALTA CONFIRMADA - Múltiplas análises convergentes"
             
-        elif total_score_with_momentum < sell_threshold:
-            direction = "sell"
-            confidence = 0.68 + (base_confidence * 0.3) 
+        elif total_score_with_boost < sell_threshold:
+            direction = "sell" 
+            confidence = 0.72 + (base_confidence * 0.25)  # Mesma confiança para venda
             reasoning = "📉 BAIXA CONFIRMADA - Sinais microscópicos alinhados"
             
-        elif total_score_with_momentum > 0.12:
+        elif total_score_with_boost > 0.08:  # REDUZI limite para viés de compra
             direction = "buy"
-            confidence = 0.62 + (base_confidence * 0.25)
+            confidence = 0.65 + (base_confidence * 0.2)
             reasoning = "↗️ VIES DE ALTA - Análise fina detectando oportunidades"
             
-        elif total_score_with_momentum < -0.12:
+        elif total_score_with_boost < -0.08:  # REDUZI limite para viés de venda
             direction = "sell"
-            confidence = 0.62 + (base_confidence * 0.25)
+            confidence = 0.65 + (base_confidence * 0.2)
             reasoning = "↘️ VIES DE BAIXA - Padrões microscópicos indicando fraqueza"
             
         else:
             direction = "hold"
-            confidence = 0.58
+            confidence = 0.55  # Reduzi confiança no hold
             reasoning = "⚖️ EQUILÍBRIO - Análise não detecta vantagem clara"
         
         return {
             "direction": direction,
             "confidence": min(0.85, confidence),
             "reasoning": reasoning,
-            "total_score": total_score_with_momentum,
+            "total_score": total_score_with_boost,
             "context": context,
             "micro_analysis_quality": base_confidence
         }
@@ -1074,7 +1084,7 @@ HTML_TEMPLATE = '''
     <div class="container">
         <div class="header">
             <div class="title">🧠 IA SIGNAL PRO - SUPER INTELIGENTE</div>
-            <div class="subtitle">ANÁLISE MICROSCÓPICA + 70% ASSERTIVIDADE - RSI/MACD CORRIGIDOS</div>
+            <div class="subtitle">ANÁLISE MICROSCÓPICA + 70% ASSERTIVIDADE - LIMIARES CORRIGIDOS</div>
         </div>
         
         <div class="timeframe-selector">
@@ -1455,7 +1465,7 @@ def health_check():
         'status': 'healthy', 
         'service': 'IA Signal Pro - SUPER INTELIGENTE',
         'timestamp': datetime.datetime.now().isoformat(),
-        'version': '3.0.0-rsimacd-corrigido'
+        'version': '3.1.0-limiares-corrigidos'
     })
 
 @app.route('/cache/clear', methods=['POST'])
@@ -1487,7 +1497,7 @@ if __name__ == '__main__':
     print(f"🚀 IA Signal Pro - SUPER INTELIGENTE iniciando na porta {port}")
     print(f"🧠 Sistema: Análise Microscópica + Inteligência Contextual")
     print(f"🎯 Assertividade: 70%+ com fluxo constante de sinais")
-    print(f"⚖️ Status: EQUILIBRADO - Sem viés de compra/venda")
-    print(f"🔧 Correções: RSI e MACD FUNCIONAIS - Sem mais valores zerados!")
+    print(f"⚖️ Status: AGRESSIVO - Mais sinais de VENDA ativados")
+    print(f"🔧 Correções: LIMIARES OTIMIZADOS - Menos 'aguardar', mais ação!")
     
     app.run(host='0.0.0.0', port=port, debug=debug)
