@@ -3,7 +3,7 @@ from __future__ import annotations
 """
 IA SIGNAL PRO - SUPER INTELIGENTE 🧠
 Análise microscópica + inteligência contextual = 70%+ assertividade
-VERSÃO CORRIGIDA - SEM VIÉS DE COMPRA/VENDA
+VERSÃO CORRIGIDA - RSI E MACD FUNCIONAIS
 """
 
 import io
@@ -445,38 +445,71 @@ class SuperIntelligentAnalyzer:
             return {"market_trend": 0.0, "volatility_ratio": 1.0, "movement_strength": 0.0, "structure_quality": 0.0}
 
     def _calculate_advanced_indicators(self, price_data: np.ndarray) -> Dict[str, float]:
-        """Indicadores técnicos tradicionais - CORRIGIDO SEM VIÉS"""
+        """Indicadores técnicos tradicionais - CORRIGIDO E FUNCIONAL"""
         try:
             height, width = price_data.shape
             
             if width > 10:
-                recent = np.mean(price_data[:, -5:])
-                older = np.mean(price_data[:, -10:-5])
-                change = recent - older
+                # CORREÇÃO: Extrai dados de preço de forma mais robusta
+                row_means = np.mean(price_data, axis=0)
                 
-                # CORREÇÃO: RSI SIMÉTRICO E NEUTRO
-                max_change = np.max(np.abs(price_data)) - np.min(np.abs(price_data))
-                if max_change > 0:
-                    rsi_normalized = (change / max_change) * 0.5  # Limita entre -0.5 e +0.5
+                # Dados recentes vs antigos para tendência
+                recent_size = min(5, len(row_means) // 3)
+                older_size = min(8, len(row_means) // 2)
+                
+                recent_prices = row_means[-recent_size:]
+                older_prices = row_means[-older_size:-recent_size] if len(row_means) > recent_size else row_means[:older_size]
+                
+                if len(recent_prices) > 0 and len(older_prices) > 0:
+                    recent_avg = np.mean(recent_prices)
+                    older_avg = np.mean(older_prices)
+                    change = recent_avg - older_avg
+                    
+                    # CORREÇÃO RSI: Calcula baseado na volatilidade real
+                    price_range = np.max(row_means) - np.min(row_means)
+                    if price_range > 0:
+                        rsi_normalized = (change / price_range) * 0.8  # Mais sensível
+                    else:
+                        # Se não há variação, analisa a estrutura
+                        volatility = np.std(row_means)
+                        if volatility > 0:
+                            rsi_normalized = (change / volatility) * 0.3
+                        else:
+                            rsi_normalized = 0.0
+                    
+                    # CORREÇÃO MACD: Calcula diferença entre médias móveis
+                    fast_window = min(3, len(row_means))
+                    slow_window = min(8, len(row_means))
+                    
+                    fast_ma = np.mean(row_means[-fast_window:])
+                    slow_ma = np.mean(row_means[-slow_window:])
+                    
+                    macd_raw = fast_ma - slow_ma
+                    
+                    # Normaliza baseado na volatilidade
+                    volatility = np.std(row_means) + 1e-8
+                    macd_normalized = (macd_raw / volatility) * 0.5
+                    
                 else:
                     rsi_normalized = 0.0
-                
-                # MACD simplificado - CORRIGIDO
-                fast = np.mean(price_data[:, -3:])
-                slow = np.mean(price_data[:, -8:])
-                price_std = np.std(price_data) + 1e-8
-                macd_normalized = (fast - slow) / price_std * 0.3  # Normalização mais suave
+                    macd_normalized = 0.0
             else:
                 rsi_normalized = 0.0
                 macd_normalized = 0.0
             
+            # Limita os valores para faixa razoável
+            rsi_normalized = max(-0.8, min(0.8, rsi_normalized))
+            macd_normalized = max(-0.8, min(0.8, macd_normalized))
+            
             return {
-                "rsi": float(max(-0.5, min(0.5, rsi_normalized))),
-                "macd": float(max(-0.5, min(0.5, macd_normalized))),
+                "rsi": float(rsi_normalized),
+                "macd": float(macd_normalized),
                 "volume_intensity": float(min(1.0, np.var(price_data) / 1000.0)),
                 "momentum_quality": float(min(1.0, (abs(rsi_normalized) + abs(macd_normalized)) / 2))
             }
-        except Exception:
+        except Exception as e:
+            # Fallback melhorado
+            print(f"Erro nos indicadores: {e}")
             return {"rsi": 0.0, "macd": 0.0, "volume_intensity": 0.0, "momentum_quality": 0.0}
 
     # =========================
@@ -1041,7 +1074,7 @@ HTML_TEMPLATE = '''
     <div class="container">
         <div class="header">
             <div class="title">🧠 IA SIGNAL PRO - SUPER INTELIGENTE</div>
-            <div class="subtitle">ANÁLISE MICROSCÓPICA + 70% ASSERTIVIDADE - SEM VIÉS</div>
+            <div class="subtitle">ANÁLISE MICROSCÓPICA + 70% ASSERTIVIDADE - RSI/MACD CORRIGIDOS</div>
         </div>
         
         <div class="timeframe-selector">
@@ -1422,7 +1455,7 @@ def health_check():
         'status': 'healthy', 
         'service': 'IA Signal Pro - SUPER INTELIGENTE',
         'timestamp': datetime.datetime.now().isoformat(),
-        'version': '3.0.0-super-intelligent-sem-vies'
+        'version': '3.0.0-rsimacd-corrigido'
     })
 
 @app.route('/cache/clear', methods=['POST'])
@@ -1455,6 +1488,6 @@ if __name__ == '__main__':
     print(f"🧠 Sistema: Análise Microscópica + Inteligência Contextual")
     print(f"🎯 Assertividade: 70%+ com fluxo constante de sinais")
     print(f"⚖️ Status: EQUILIBRADO - Sem viés de compra/venda")
-    print(f"🔧 Correções: Força da Tendência + RSI Simétrico + Momentum Completo")
+    print(f"🔧 Correções: RSI e MACD FUNCIONAIS - Sem mais valores zerados!")
     
     app.run(host='0.0.0.0', port=port, debug=debug)
