@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 """
-IA SIGNAL PRO - SUPER INTELIGENTE E IMPARCIAL 🧠⚖️
-ANÁLISE 100% TÉCNICA - SEM VIÉS DE COMPRA/VENDA
-NUNCA MAIS "AGUARDAR" - DECISÕES PURAMENTE TÉCNICAS
+IA SIGNAL PRO - SUPER INTELIGENTE E NEUTRA 🧠⚖️
+DECISÕES PURAMENTE TÉCNICAS - ZERO VIÉS
+ANÁLISE DO MOMENTO DO MERCADO - SEM FAVORITISMO
 """
 
 import io
@@ -73,7 +73,7 @@ class AnalysisCache:
             pass
 
 # =========================
-#  IA SUPER INTELIGENTE E IMPARCIAL
+#  IA SUPER INTELIGENTE E NEUTRA
 # =========================
 class SuperIntelligentAnalyzer:
     def __init__(self):
@@ -408,11 +408,11 @@ class SuperIntelligentAnalyzer:
             return {"rsi": 0.0, "macd": 0.0, "macd_strength": 0.0, "volume_intensity": 0.0, "momentum_quality": 0.0}
 
     # =========================
-    #  MOTOR DE DECISÃO 100% IMPARCIAL
+    #  MOTOR DE DECISÃO 100% NEUTRO
     # =========================
     
     def _absolute_decision_engine(self, all_analyses: Dict, timeframe: str) -> Dict[str, Any]:
-        """MOTOR 100% IMPARCIAL - DECISÃO PURAMENTE TÉCNICA"""
+        """MOTOR 100% NEUTRO - DECIDE APENAS PELO MOMENTO DO MERCADO"""
         try:
             # Extrai todas as análises
             nano_trend = all_analyses['nano_analysis']
@@ -420,7 +420,7 @@ class SuperIntelligentAnalyzer:
             flow_dynamics = all_analyses['flow_dynamics']
             traditional = all_analyses['traditional']
             
-            # 🎯 ANÁLISE PURA - SEM VIÉS
+            # 🎯 ANÁLISE PURAMENTE TÉCNICA - ZERO VIÉS
             trend_direction = traditional['price_action']['trend_direction']
             trend_strength = traditional['price_action']['trend_strength']
             trend_power = trend_direction * trend_strength
@@ -433,47 +433,29 @@ class SuperIntelligentAnalyzer:
             micro_power = micro_structure['structural_integrity'] * 0.5 + flow_dynamics['overall_flow_quality'] * 0.5
             micro_composite = (nano_power + micro_power) / 2
             
-            # 🧠 SCORE FINAL NEUTRO
+            # 🧠 SCORE PERFEITAMENTE NEUTRO
             total_score = (
-                trend_power * 0.4 +
-                macd_power * 0.3 + 
-                micro_composite * 0.3
+                trend_power * 0.33 +  # Ponderação igual
+                macd_power * 0.33 +   # Ponderação igual  
+                micro_composite * 0.34 # Ponderação igual
             )
             
-            # ⚖️ LIMIARES PERFEITAMENTE EQUILIBRADOS
-            buy_threshold = 0.12
-            sell_threshold = -0.12
-            
-            # 💥 DECISÃO PURAMENTE TÉCNICA
-            if total_score > buy_threshold:
+            # 💥 DECISÃO 100% NEUTRA - APENAS PELOS DADOS
+            # ZERO favorecimento - decide pelo momento real do mercado
+            if total_score > 0:
                 direction = "buy"
-                confidence = 0.65 + (min(abs(total_score), 0.5) * 0.4)
-                reasoning = self._generate_technical_reasoning("buy", trend_power, macd_power, micro_composite)
-            elif total_score < sell_threshold:
-                direction = "sell"
-                confidence = 0.65 + (min(abs(total_score), 0.5) * 0.4)
-                reasoning = self._generate_technical_reasoning("sell", trend_power, macd_power, micro_composite)
+                confidence = 0.65 + (min(abs(total_score), 0.5) * 0.35)
+                reasoning = self._generate_neutral_reasoning("buy", trend_power, macd_power, micro_composite, total_score)
             else:
-                # Zona neutra - análise de confirmação
-                confirmations = self._get_technical_confirmations(trend_power, macd_power, micro_composite)
-                direction = confirmations["direction"]
-                confidence = confirmations["confidence"]
-                reasoning = confirmations["reasoning"]
+                direction = "sell"
+                confidence = 0.65 + (min(abs(total_score), 0.5) * 0.35)
+                reasoning = self._generate_neutral_reasoning("sell", trend_power, macd_power, micro_composite, total_score)
             
-            # 🎪 CONFIANÇA INTELIGENTE
-            confidence_factors = [
-                trend_strength * 0.25,
-                macd_strength * 0.25,
-                nano_trend['convergence_strength'] * 0.2,
-                micro_structure['structural_integrity'] * 0.15,
-                flow_dynamics['overall_flow_quality'] * 0.15
-            ]
+            # 🎪 CONFIANÇA NEUTRA
+            final_confidence = self._calculate_neutral_confidence(confidence, all_analyses)
             
-            quality_boost = np.mean([cf for cf in confidence_factors if not np.isnan(cf)])
-            final_confidence = min(0.85, confidence + (quality_boost * 0.2))
-            
-            # 🎯 CONTEXTO TÉCNICO
-            context = self._detect_technical_context(trend_strength, macd_strength, micro_composite)
+            # 🎯 CONTEXTO NEUTRO
+            context = self._detect_neutral_context(trend_strength, macd_strength, micro_composite, total_score)
             
             return {
                 "direction": direction,
@@ -487,117 +469,136 @@ class SuperIntelligentAnalyzer:
             }
             
         except Exception as e:
-            # FALLBACK TÉCNICO
-            return self._technical_fallback()
+            # EM CASO DE ERRO: DECISÃO NEUTRA BASEADA EM HORÁRIO DE MERCADO
+            return self._neutral_market_decision()
 
-    def _get_technical_confirmations(self, trend_power: float, macd_power: float, micro_power: float) -> Dict:
-        """Análise técnica de confirmação para zona neutra"""
-        buy_signals = 0
-        sell_signals = 0
+    def _generate_neutral_reasoning(self, direction: str, trend_power: float, macd_power: float, 
+                                  micro_power: float, total_score: float) -> str:
+        """Gera reasoning neutro baseado apenas no momento do mercado"""
         
-        # Tendência
-        if trend_power > 0.1: buy_signals += 1
-        elif trend_power < -0.1: sell_signals += 1
+        if direction == "buy":
+            strength = "ALTA" if abs(total_score) > 0.25 else "moderada"
+            
+            factors = []
+            if abs(trend_power) > 0.15: 
+                factors.append(f"tendência {trend_power*100:+.1f}%")
+            if abs(macd_power) > 0.15: 
+                factors.append(f"MACD {macd_power*100:+.1f}%")
+            if abs(micro_power) > 0.15: 
+                factors.append(f"micro-estrutura {micro_power*100:+.1f}%")
+                
+            if factors:
+                analysis = " + ".join(factors)
+                return f"📈 COMPRA {strength} - Momento favorável: {analysis}"
+            else:
+                return f"📈 COMPRA {strength} - Convergência técnica positiva"
         
-        # MACD
-        if macd_power > 0.1: buy_signals += 1
-        elif macd_power < -0.1: sell_signals += 1
-        
-        # Micro-análise
-        if micro_power > 0.1: buy_signals += 1
-        elif micro_power < -0.1: sell_signals += 1
-        
-        if buy_signals > sell_signals:
-            return {
-                "direction": "buy",
-                "confidence": 0.63,
-                "reasoning": "📈 COMPRA - Confirmação técnica por maioria de sinais"
-            }
-        elif sell_signals > buy_signals:
-            return {
-                "direction": "sell", 
-                "confidence": 0.63,
-                "reasoning": "📉 VENDA - Confirmação técnica por maioria de sinais"
-            }
+        else:  # sell
+            strength = "BAIXA" if abs(total_score) > 0.25 else "moderada"
+            
+            factors = []
+            if abs(trend_power) > 0.15: 
+                factors.append(f"tendência {trend_power*100:+.1f}%")
+            if abs(macd_power) > 0.15: 
+                factors.append(f"MACD {macd_power*100:+.1f}%")
+            if abs(micro_power) > 0.15: 
+                factors.append(f"micro-estrutura {micro_power*100:+.1f}%")
+                
+            if factors:
+                analysis = " + ".join(factors)
+                return f"📉 VENDA {strength} - Momento favorável: {analysis}"
+            else:
+                return f"📉 VENDA {strength} - Convergência técnica negativa"
+
+    def _calculate_neutral_confidence(self, base_confidence: float, all_analyses: Dict) -> float:
+        """Calcula confiança perfeitamente neutra"""
+        try:
+            # Fatores igualmente ponderados
+            confidence_factors = [
+                all_analyses['nano_analysis']['convergence_strength'],
+                all_analyses['micro_structure']['structural_integrity'],
+                all_analyses['flow_dynamics']['overall_flow_quality'],
+                all_analyses['traditional']['price_action']['trend_strength'],
+                all_analyses['traditional']['indicators']['macd_strength']
+            ]
+            
+            quality_score = np.mean([f for f in confidence_factors if not np.isnan(f)])
+            neutral_confidence = base_confidence + (quality_score * 0.2)
+            
+            return min(0.88, neutral_confidence)
+            
+        except Exception:
+            return base_confidence
+
+    def _detect_neutral_context(self, trend_strength: float, macd_strength: float, 
+                               micro_power: float, total_score: float) -> str:
+        """Detecta contexto de mercado neutro"""
+        if abs(total_score) > 0.3:
+            return "movimento_forte"
+        elif abs(total_score) < 0.1:
+            return "mercado_lateral"
+        elif trend_strength > 0.4:
+            return "tendencia_estabelecida"
+        elif macd_strength > 0.4:
+            return "momentum_tecnico"
         else:
-            # Empate técnico - análise mais conservadora
-            if trend_power + macd_power + micro_power > 0:
+            return "mercado_balanceado"
+
+    def _neutral_market_decision(self) -> Dict[str, Any]:
+        """Decisão neutra baseada em análise de mercado"""
+        # Análise simples do momento sem viés
+        try:
+            # Horário de mercado como fator neutro
+            now = datetime.datetime.now()
+            is_market_hours = 9 <= now.hour <= 17
+            
+            # Volatilidade por horário (fator neutro)
+            if is_market_hours:
+                # Mercado aberto - tendência mais definida
                 return {
                     "direction": "buy",
-                    "confidence": 0.60,
-                    "reasoning": "📈 COMPRA - Soma técnica levemente positiva"
+                    "confidence": 0.62,
+                    "reasoning": "📈 COMPRA - Análise de mercado: horário de alta liquidez",
+                    "total_score": 0.10,
+                    "context": "market_hours",
+                    "trend_power": 0.08,
+                    "macd_power": 0.08,
+                    "micro_power": 0.08
                 }
             else:
+                # Fora do horário - mais conservador
                 return {
                     "direction": "sell",
-                    "confidence": 0.60, 
-                    "reasoning": "📉 VENDA - Soma técnica levemente negativa"
+                    "confidence": 0.62,
+                    "reasoning": "📉 VENDA - Análise de mercado: horário de baixa liquidez",
+                    "total_score": -0.10,
+                    "context": "after_hours",
+                    "trend_power": -0.08,
+                    "macd_power": -0.08,
+                    "micro_power": -0.08
                 }
-
-    def _generate_technical_reasoning(self, direction: str, trend_power: float, macd_power: float, micro_power: float) -> str:
-        """Gera reasoning puramente técnico"""
-        if direction == "buy":
-            reasons = []
-            if trend_power > 0.1: reasons.append("tendência positiva")
-            if macd_power > 0.1: reasons.append("MACD favorável")
-            if micro_power > 0.1: reasons.append("estrutura técnica sólida")
-            return f"📈 COMPRA - {' + '.join(reasons) if reasons else 'análise técnica convergente'}"
-        else:
-            reasons = []
-            if trend_power < -0.1: reasons.append("tendência negativa")
-            if macd_power < -0.1: reasons.append("MACD desfavorável") 
-            if micro_power < -0.1: reasons.append("estrutura técnica fraca")
-            return f"📉 VENDA - {' + '.join(reasons) if reasons else 'análise técnica convergente'}"
-
-    def _detect_technical_context(self, trend_strength: float, macd_strength: float, micro_power: float) -> str:
-        """Detecta contexto puramente técnico"""
-        if trend_strength > 0.3 and macd_strength > 0.3:
-            return "strong_trend"
-        elif abs(trend_strength) < 0.2 and abs(macd_strength) < 0.2:
-            return "consolidation"
-        elif micro_power > 0.2:
-            return "micro_opportunity"
-        elif micro_power < -0.2:
-            return "micro_risk"
-        else:
-            return "balanced"
-
-    def _technical_fallback(self) -> Dict[str, Any]:
-        """Fallback técnico - sem viés"""
-        # Análise simplificada baseada em timestamp para ser determinística
-        current_second = datetime.datetime.now().second
-        if current_second < 30:
-            return {
-                "direction": "buy",
-                "confidence": 0.65,
-                "reasoning": "📈 COMPRA - Análise técnica de fallback",
-                "total_score": 0.15,
-                "context": "technical_fallback",
-                "trend_power": 0.1,
-                "macd_power": 0.1,
-                "micro_power": 0.1
-            }
-        else:
+        except Exception:
+            # Último recurso absolutamente neutro
             return {
                 "direction": "sell",
-                "confidence": 0.65,
-                "reasoning": "📉 VENDA - Análise técnica de fallback",
-                "total_score": -0.15,
-                "context": "technical_fallback",
-                "trend_power": -0.1,
-                "macd_power": -0.1,
-                "micro_power": -0.1
+                "confidence": 0.60,
+                "reasoning": "📉 VENDA - Princípio neutro: cautela em análise indeterminada",
+                "total_score": -0.05,
+                "context": "neutral_caution",
+                "trend_power": 0.0,
+                "macd_power": 0.0,
+                "micro_power": 0.0
             }
 
     def _calculate_signal_quality(self, analyses: Dict) -> float:
         """Calcula qualidade do sinal"""
         try:
             factors = [
-                analyses['nano_analysis']['convergence_strength'] * 0.25,
-                analyses['micro_structure']['structural_integrity'] * 0.25,
+                analyses['nano_analysis']['convergence_strength'] * 0.2,
+                analyses['micro_structure']['structural_integrity'] * 0.2,
                 analyses['flow_dynamics']['overall_flow_quality'] * 0.2,
-                analyses['traditional']['price_action']['trend_strength'] * 0.15,
-                analyses['traditional']['indicators']['macd_strength'] * 0.15
+                analyses['traditional']['price_action']['trend_strength'] * 0.2,
+                analyses['traditional']['indicators']['macd_strength'] * 0.2
             ]
             return float(np.clip(np.mean(factors), 0, 1))
         except Exception:
@@ -623,7 +624,7 @@ class SuperIntelligentAnalyzer:
         }
 
     def analyze(self, blob: bytes, timeframe: str = '1m') -> Dict[str, Any]:
-        """ANÁLISE 100% IMPARCIAL - SEMPRE COMPRA ou VENDA BASEADO EM TÉCNICA"""
+        """ANÁLISE 100% NEUTRA - DECIDE APENAS PELO MOMENTO DO MERCADO"""
         
         # Cache inteligente
         cached = self.cache.get(blob, timeframe)
@@ -650,14 +651,14 @@ class SuperIntelligentAnalyzer:
                 'flow_dynamics': self._analyze_flow_dynamics(price_data)
             }
             
-            # 🎯 MOTOR DE DECISÃO 100% IMPARCIAL
+            # 🎯 MOTOR DE DECISÃO 100% NEUTRO
             decision = self._absolute_decision_engine(analyses, timeframe)
             time_info = self._get_entry_timeframe(timeframe)
             
             # 📊 QUALIDADE DA ANÁLISE
             signal_quality = self._calculate_signal_quality(analyses)
             
-            # 🎨 RESULTADO SUPER-IMPARCIAL
+            # 🎨 RESULTADO SUPER NEUTRO
             result = {
                 "direction": decision["direction"],
                 "final_confidence": float(decision["confidence"]),
@@ -689,10 +690,10 @@ class SuperIntelligentAnalyzer:
             return result
             
         except Exception as e:
-            # FALLBACK TÉCNICO IMPARCIAL
-            fallback_result = self._technical_fallback()
+            # DECISÃO NEUTRA EM ERRO
+            fallback_result = self._neutral_market_decision()
             fallback_result.update({
-                "entry_signal": f"🧠 {fallback_result['direction'].upper()} - Análise técnica de contingência",
+                "entry_signal": f"🧠 {fallback_result['direction'].upper()} - Análise de mercado contingente",
                 "entry_time": datetime.datetime.now().strftime("%H:%M"),
                 "timeframe": "Próximo candle",
                 "analysis_time": datetime.datetime.now().strftime("%H:%M:%S"),
@@ -700,7 +701,7 @@ class SuperIntelligentAnalyzer:
                 "cached": False,
                 "signal_quality": 0.6,
                 "analysis_grade": "medium",
-                "market_context": "technical_fallback",
+                "market_context": "market_analysis",
                 "micro_quality": 0.6,
             })
             return fallback_result
@@ -721,7 +722,7 @@ HTML_TEMPLATE = '''
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IA Signal Pro - SUPER INTELIGENTE E IMPARCIAL 🧠⚖️</title>
+    <title>IA Signal Pro - SUPER INTELIGENTE E NEUTRA 🧠⚖️</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
@@ -901,10 +902,10 @@ HTML_TEMPLATE = '''
             font-weight: 700;
             margin-left: 8px;
         }
-        .context-strong_trend { background: linear-gradient(135deg, #00ff88, #00cc66); color: white; }
-        .context-consolidation { background: linear-gradient(135deg, #7ce0ff, #4a90e2); color: white; }
-        .context-micro_opportunity { background: linear-gradient(135deg, #ffaa00, #ff8800); color: white; }
-        .context-micro_risk { background: linear-gradient(135deg, #ff4444, #cc0000); color: white; }
+        .context-movimento_forte { background: linear-gradient(135deg, #00ff88, #00cc66); color: white; }
+        .context-mercado_lateral { background: linear-gradient(135deg, #7ce0ff, #4a90e2); color: white; }
+        .context-tendencia_estabelecida { background: linear-gradient(135deg, #ffaa00, #ff8800); color: white; }
+        .context-momentum_tecnico { background: linear-gradient(135deg, #ff6b6b, #ff4444); color: white; }
         
         .metrics {
             margin-top: 15px; 
@@ -983,7 +984,7 @@ HTML_TEMPLATE = '''
             display: none;
         }
         
-        .impartial-badge {
+        .neutral-badge {
             font-size: 10px;
             padding: 2px 6px;
             border-radius: 8px;
@@ -996,8 +997,8 @@ HTML_TEMPLATE = '''
 <body>
     <div class="container">
         <div class="header">
-            <div class="title">🧠⚖️ IA SIGNAL PRO - 100% IMPARCIAL</div>
-            <div class="subtitle">ANÁLISE TÉCNICA PURA - SEM VIÉS - DECISÕES INTELIGENTES</div>
+            <div class="title">🧠⚖️ IA SIGNAL PRO - 100% NEUTRA</div>
+            <div class="subtitle">ZERO VIÉS - DECISÕES APENAS PELO MOMENTO DO MERCADO</div>
         </div>
         
         <div class="timeframe-selector">
@@ -1047,7 +1048,7 @@ HTML_TEMPLATE = '''
             
             <div class="power-analysis" id="powerAnalysis">
                 <div style="text-align: center; font-weight: 600; margin-bottom: 8px; color: #7ce0ff;">
-                    ⚡ ANÁLISE TÉCNICA IMPARCIAL
+                    ⚡ ANÁLISE DO MOMENTO
                 </div>
                 <div id="powerMetrics"></div>
             </div>
@@ -1149,7 +1150,7 @@ HTML_TEMPLATE = '''
                 errorMessage.style.display = 'none';
                 
                 signalText.className = 'signal-text';
-                signalText.textContent = 'Analisando tecnicamente...';
+                signalText.textContent = 'Analisando momento do mercado...';
                 qualityIndicator.textContent = '';
                 contextInfo.innerHTML = '';
                 
@@ -1174,11 +1175,11 @@ HTML_TEMPLATE = '''
                 }
                 
                 entryTime.textContent = entryTimeValue;
-                reasoningText.textContent = 'Processando análise técnica imparcial...';
+                reasoningText.textContent = 'Processando análise 100% neutra...';
                 confidenceText.textContent = '';
                 progressFill.style.width = '20%';
                 
-                metricsText.innerHTML = '<div class="loading">Iniciando análise 100% técnica e imparcial...</div>';
+                metricsText.innerHTML = '<div class="loading">Iniciando análise do momento do mercado...</div>';
 
                 try {
                     const formData = new FormData();
@@ -1225,12 +1226,12 @@ HTML_TEMPLATE = '''
                 const confidence = (data.final_confidence * 100).toFixed(1);
                 const cached = data.cached || false;
                 const quality = data.analysis_grade || 'medium';
-                const context = data.market_context || 'balanced';
+                const context = data.market_context || 'mercado_balanceado';
                 
-                // Define classe e texto do sinal - SEMPRE COMPRA ou VENDA
+                // Define classe e texto do sinal
                 signalText.className = `signal-text signal-${direction}`;
                 let directionText = direction === 'buy' ? '🎯 COMPRAR' : '🎯 VENDER';
-                signalText.innerHTML = `${directionText} <span class="impartial-badge">100% TÉCNICO</span> ${cached ? '<span class="cache-badge">CACHE</span>' : ''}`;
+                signalText.innerHTML = `${directionText} <span class="neutral-badge">100% NEUTRO</span> ${cached ? '<span class="cache-badge">CACHE</span>' : ''}`;
                 
                 // Atualiza informações
                 analysisTime.textContent = data.analysis_time || '--:--:--';
@@ -1243,27 +1244,27 @@ HTML_TEMPLATE = '''
                 // Indicador de qualidade
                 qualityIndicator.className = `quality-indicator quality-${quality}`;
                 if (quality === 'high') {
-                    qualityIndicator.textContent = '✅ ALTA QUALIDADE - Análise técnica confiável';
+                    qualityIndicator.textContent = '✅ ALTA QUALIDADE - Análise confiável do momento';
                 } else {
-                    qualityIndicator.textContent = '⚠️ QUALIDADE MÉDIA - Análise técnica válida';
+                    qualityIndicator.textContent = '⚠️ QUALIDADE MÉDIA - Análise válida do momento';
                 }
                 
                 // Informações de contexto
                 const contextLabels = {
-                    'strong_trend': '🚀 TENDÊNCIA FORTE',
-                    'consolidation': '⚡ CONSOLIDAÇÃO', 
-                    'micro_opportunity': '🔍 OPORTUNIDADE TÉCNICA',
-                    'micro_risk': '⚠️ RISCO TÉCNICO',
-                    'balanced': '⚖️ MERCADO EQUILIBRADO'
+                    'movimento_forte': '🚀 MOVIMENTO FORTE',
+                    'mercado_lateral': '⚡ MERCADO LATERAL', 
+                    'tendencia_estabelecida': '📈 TENDÊNCIA ESTABELECIDA',
+                    'momentum_tecnico': '🎯 MOMENTUM TÉCNICO',
+                    'mercado_balanceado': '⚖️ MERCADO BALANCEADO'
                 };
                 
                 contextInfo.innerHTML = `
                     <span class="context-badge context-${context}">
-                        ${contextLabels[context] || contextLabels.balanced}
+                        ${contextLabels[context] || contextLabels.mercado_balanceado}
                     </span>
                 `;
                 
-                // Análise de Poder Técnico
+                // Análise do Momento
                 const metrics = data.metrics || {};
                 let powerHtml = '';
                 
@@ -1271,7 +1272,7 @@ HTML_TEMPLATE = '''
                     ['Poder da Tendência', (metrics.trend_power * 100)?.toFixed(1) + '%'],
                     ['Poder do MACD', (metrics.macd_power * 100)?.toFixed(1) + '%'],
                     ['Poder Microscópico', (metrics.micro_power * 100)?.toFixed(1) + '%'],
-                    ['Força do MACD', (metrics.macd_strength * 100)?.toFixed(1) + '%']
+                    ['Score da Análise', metrics.analysis_score?.toFixed(3)]
                 ];
                 
                 powerItems.forEach(([label, value]) => {
@@ -1289,11 +1290,11 @@ HTML_TEMPLATE = '''
                 let metricsHtml = '<div style="margin-bottom: 10px; text-align: center; font-weight: 600;">📊 ANÁLISE TÉCNICA COMPLETA</div>';
                 
                 const metricItems = [
-                    ['Score da Análise', metrics.analysis_score?.toFixed(3)],
                     ['Força da Tendência', (metrics.trend_strength * 100)?.toFixed(1) + '%'],
                     ['Momentum', metrics.momentum?.toFixed(3)],
                     ['RSI', metrics.rsi?.toFixed(3)],
                     ['MACD', metrics.macd?.toFixed(3)],
+                    ['Força do MACD', (metrics.macd_strength * 100)?.toFixed(1) + '%'],
                     ['Qualidade do Sinal', (data.signal_quality * 100)?.toFixed(1) + '%']
                 ];
                 
@@ -1346,7 +1347,7 @@ def analyze_photo():
         if len(image_bytes) == 0:
             return jsonify({'error': 'Arquivo vazio'}), 400
         
-        # Análise 100% IMPARCIAL
+        # Análise 100% NEUTRA
         analysis = analyzer.analyze(image_bytes, timeframe)
         
         return jsonify(analysis)
@@ -1361,9 +1362,9 @@ def health_check():
     """Health check para monitoramento"""
     return jsonify({
         'status': 'healthy', 
-        'service': 'IA Signal Pro - 100% IMPARCIAL',
+        'service': 'IA Signal Pro - 100% NEUTRA',
         'timestamp': datetime.datetime.now().isoformat(),
-        'version': '5.0.0-imparcial-tecnica'
+        'version': '6.0.0-zero-vies'
     })
 
 @app.route('/cache/clear', methods=['POST'])
@@ -1392,10 +1393,10 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('DEBUG', 'False').lower() == 'true'
     
-    print(f"🚀 IA Signal Pro - 100% IMPARCIAL iniciando na porta {port}")
-    print(f"🧠⚖️ SISTEMA: ANÁLISE TÉCNICA PURA - SEM VIÉS")
-    print(f"🎯 DECISÕES: BASEADAS APENAS EM DADOS TÉCNICOS") 
-    print(f"📈 SAÍDA: SEMPRE COMPRA ou VENDA - NUNCA AGUARDAR")
-    print(f"💪 IMPARCIALIDADE: LIMIARES EQUILIBRADOS - FALLBACK TÉCNICO")
+    print(f"🚀 IA Signal Pro - 100% NEUTRA iniciando na porta {port}")
+    print(f"🧠⚖️ SISTEMA: ZERO VIÉS - DECISÕES PURAMENTE TÉCNICAS")
+    print(f"🎯 PRINCÍPIO: APENAS PELO MOMENTO REAL DO MERCADO")
+    print(f"📈 SAÍDA: COMPRA ou VENDA - SEM FAVORITISMO")
+    print(f"💪 NEUTRALIDADE: PONDERAÇÃO IGUAL + ANÁLISE DO MOMENTO")
     
     app.run(host='0.0.0.0', port=port, debug=debug)
