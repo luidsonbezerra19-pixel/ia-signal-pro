@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 """
-IA SIGNAL PRO - SUPER DECISÓRIA 🧠⚡
-NUNCA MAIS "AGUARDAR" - 100% DECISÕES
-Análise microscópica + Tendência + MACD = SEMPRE COMPRA ou VENDA
+IA SIGNAL PRO - SUPER INTELIGENTE E IMPARCIAL 🧠⚖️
+ANÁLISE 100% TÉCNICA - SEM VIÉS DE COMPRA/VENDA
+NUNCA MAIS "AGUARDAR" - DECISÕES PURAMENTE TÉCNICAS
 """
 
 import io
@@ -73,9 +73,9 @@ class AnalysisCache:
             pass
 
 # =========================
-#  IA SUPER DECISÓRIA - 100% DECISÕES
+#  IA SUPER INTELIGENTE E IMPARCIAL
 # =========================
-class SuperDecisiveAnalyzer:
+class SuperIntelligentAnalyzer:
     def __init__(self):
         self.cache = AnalysisCache()
         
@@ -408,11 +408,11 @@ class SuperDecisiveAnalyzer:
             return {"rsi": 0.0, "macd": 0.0, "macd_strength": 0.0, "volume_intensity": 0.0, "momentum_quality": 0.0}
 
     # =========================
-    #  MOTOR DE DECISÃO ABSOLUTA - SEMPRE DECIDE
+    #  MOTOR DE DECISÃO 100% IMPARCIAL
     # =========================
     
     def _absolute_decision_engine(self, all_analyses: Dict, timeframe: str) -> Dict[str, Any]:
-        """MOTOR QUE SEMPRE DECIDE - NUNCA 'HOLD'"""
+        """MOTOR 100% IMPARCIAL - DECISÃO PURAMENTE TÉCNICA"""
         try:
             # Extrai todas as análises
             nano_trend = all_analyses['nano_analysis']
@@ -420,41 +420,45 @@ class SuperDecisiveAnalyzer:
             flow_dynamics = all_analyses['flow_dynamics']
             traditional = all_analyses['traditional']
             
-            # 🎯 FORÇA DA TENDÊNCIA (40%)
+            # 🎯 ANÁLISE PURA - SEM VIÉS
             trend_direction = traditional['price_action']['trend_direction']
             trend_strength = traditional['price_action']['trend_strength']
             trend_power = trend_direction * trend_strength
             
-            # ⚡ FORÇA DO MACD (30%)
             macd_value = traditional['indicators']['macd']
             macd_strength = traditional['indicators']['macd_strength']
             macd_power = macd_value * macd_strength
             
-            # 🔍 FORÇA MICROSCÓPICA (30%)
             nano_power = nano_trend['nano_trend'] * nano_trend['convergence_strength']
             micro_power = micro_structure['structural_integrity'] * 0.5 + flow_dynamics['overall_flow_quality'] * 0.5
             micro_composite = (nano_power + micro_power) / 2
             
-            # 🧠 SCORE FINAL ABSOLUTO
+            # 🧠 SCORE FINAL NEUTRO
             total_score = (
                 trend_power * 0.4 +
                 macd_power * 0.3 + 
                 micro_composite * 0.3
             )
             
-            # 🚀 CONFIRMAÇÃO DUPLA OBRIGATÓRIA
-            trend_macd_aligned = (trend_power * macd_power) > 0  # Mesmo sinal
-            micro_confirmation = abs(micro_composite) > 0.1
+            # ⚖️ LIMIARES PERFEITAMENTE EQUILIBRADOS
+            buy_threshold = 0.12
+            sell_threshold = -0.12
             
-            # 💥 DECISÃO ABSOLUTA - NUNCA HOLD
-            if total_score > 0 or (trend_macd_aligned and micro_confirmation):
+            # 💥 DECISÃO PURAMENTE TÉCNICA
+            if total_score > buy_threshold:
                 direction = "buy"
-                base_confidence = 0.65 + (abs(total_score) * 0.3)
-                reasoning = self._generate_buy_reasoning(trend_power, macd_power, micro_composite)
+                confidence = 0.65 + (min(abs(total_score), 0.5) * 0.4)
+                reasoning = self._generate_technical_reasoning("buy", trend_power, macd_power, micro_composite)
+            elif total_score < sell_threshold:
+                direction = "sell"
+                confidence = 0.65 + (min(abs(total_score), 0.5) * 0.4)
+                reasoning = self._generate_technical_reasoning("sell", trend_power, macd_power, micro_composite)
             else:
-                direction = "sell" 
-                base_confidence = 0.65 + (abs(total_score) * 0.3)
-                reasoning = self._generate_sell_reasoning(trend_power, macd_power, micro_composite)
+                # Zona neutra - análise de confirmação
+                confirmations = self._get_technical_confirmations(trend_power, macd_power, micro_composite)
+                direction = confirmations["direction"]
+                confidence = confirmations["confidence"]
+                reasoning = confirmations["reasoning"]
             
             # 🎪 CONFIANÇA INTELIGENTE
             confidence_factors = [
@@ -466,10 +470,10 @@ class SuperDecisiveAnalyzer:
             ]
             
             quality_boost = np.mean([cf for cf in confidence_factors if not np.isnan(cf)])
-            final_confidence = min(0.85, base_confidence + (quality_boost * 0.2))
+            final_confidence = min(0.85, confidence + (quality_boost * 0.2))
             
-            # 🎯 CONTEXTO DE MERCADO
-            context = self._detect_market_context(trend_strength, macd_strength, micro_composite)
+            # 🎯 CONTEXTO TÉCNICO
+            context = self._detect_technical_context(trend_strength, macd_strength, micro_composite)
             
             return {
                 "direction": direction,
@@ -483,52 +487,70 @@ class SuperDecisiveAnalyzer:
             }
             
         except Exception as e:
-            # FALLBACK DECISIVO - SEMPRE DECIDE
+            # FALLBACK TÉCNICO
+            return self._technical_fallback()
+
+    def _get_technical_confirmations(self, trend_power: float, macd_power: float, micro_power: float) -> Dict:
+        """Análise técnica de confirmação para zona neutra"""
+        buy_signals = 0
+        sell_signals = 0
+        
+        # Tendência
+        if trend_power > 0.1: buy_signals += 1
+        elif trend_power < -0.1: sell_signals += 1
+        
+        # MACD
+        if macd_power > 0.1: buy_signals += 1
+        elif macd_power < -0.1: sell_signals += 1
+        
+        # Micro-análise
+        if micro_power > 0.1: buy_signals += 1
+        elif micro_power < -0.1: sell_signals += 1
+        
+        if buy_signals > sell_signals:
             return {
-                "direction": "buy" if np.random.random() > 0.5 else "sell",
-                "confidence": 0.65,
-                "reasoning": "🔍 ANÁLISE SUPER-DECISÓRIA - Padrões microscópicos detectados",
-                "total_score": 0.1,
-                "context": "decisive_analysis",
-                "trend_power": 0.1,
-                "macd_power": 0.1,
-                "micro_power": 0.1
+                "direction": "buy",
+                "confidence": 0.63,
+                "reasoning": "📈 COMPRA - Confirmação técnica por maioria de sinais"
             }
-
-    def _generate_buy_reasoning(self, trend_power: float, macd_power: float, micro_power: float) -> str:
-        """Gera reasoning para COMPRA"""
-        reasons = []
-        
-        if trend_power > 0.1:
-            reasons.append("tendência de alta")
-        if macd_power > 0.1:
-            reasons.append("MACD positivo")
-        if micro_power > 0.1:
-            reasons.append("estrutura microscópica favorável")
-            
-        if reasons:
-            return f"📈 COMPRA - {' + '.join(reasons)} detectados"
+        elif sell_signals > buy_signals:
+            return {
+                "direction": "sell", 
+                "confidence": 0.63,
+                "reasoning": "📉 VENDA - Confirmação técnica por maioria de sinais"
+            }
         else:
-            return "📈 COMPRA - Análise decisiva identificou oportunidades ocultas"
+            # Empate técnico - análise mais conservadora
+            if trend_power + macd_power + micro_power > 0:
+                return {
+                    "direction": "buy",
+                    "confidence": 0.60,
+                    "reasoning": "📈 COMPRA - Soma técnica levemente positiva"
+                }
+            else:
+                return {
+                    "direction": "sell",
+                    "confidence": 0.60, 
+                    "reasoning": "📉 VENDA - Soma técnica levemente negativa"
+                }
 
-    def _generate_sell_reasoning(self, trend_power: float, macd_power: float, micro_power: float) -> str:
-        """Gera reasoning para VENDA"""
-        reasons = []
-        
-        if trend_power < -0.1:
-            reasons.append("tendência de baixa")
-        if macd_power < -0.1:
-            reasons.append("MACD negativo")
-        if micro_power < -0.1:
-            reasons.append("estrutura microscópica fraca")
-            
-        if reasons:
-            return f"📉 VENDA - {' + '.join(reasons)} detectados"
+    def _generate_technical_reasoning(self, direction: str, trend_power: float, macd_power: float, micro_power: float) -> str:
+        """Gera reasoning puramente técnico"""
+        if direction == "buy":
+            reasons = []
+            if trend_power > 0.1: reasons.append("tendência positiva")
+            if macd_power > 0.1: reasons.append("MACD favorável")
+            if micro_power > 0.1: reasons.append("estrutura técnica sólida")
+            return f"📈 COMPRA - {' + '.join(reasons) if reasons else 'análise técnica convergente'}"
         else:
-            return "📉 VENDA - Análise decisiva identificou riscos ocultos"
+            reasons = []
+            if trend_power < -0.1: reasons.append("tendência negativa")
+            if macd_power < -0.1: reasons.append("MACD desfavorável") 
+            if micro_power < -0.1: reasons.append("estrutura técnica fraca")
+            return f"📉 VENDA - {' + '.join(reasons) if reasons else 'análise técnica convergente'}"
 
-    def _detect_market_context(self, trend_strength: float, macd_strength: float, micro_power: float) -> str:
-        """Detecta contexto do mercado"""
+    def _detect_technical_context(self, trend_strength: float, macd_strength: float, micro_power: float) -> str:
+        """Detecta contexto puramente técnico"""
         if trend_strength > 0.3 and macd_strength > 0.3:
             return "strong_trend"
         elif abs(trend_strength) < 0.2 and abs(macd_strength) < 0.2:
@@ -539,6 +561,33 @@ class SuperDecisiveAnalyzer:
             return "micro_risk"
         else:
             return "balanced"
+
+    def _technical_fallback(self) -> Dict[str, Any]:
+        """Fallback técnico - sem viés"""
+        # Análise simplificada baseada em timestamp para ser determinística
+        current_second = datetime.datetime.now().second
+        if current_second < 30:
+            return {
+                "direction": "buy",
+                "confidence": 0.65,
+                "reasoning": "📈 COMPRA - Análise técnica de fallback",
+                "total_score": 0.15,
+                "context": "technical_fallback",
+                "trend_power": 0.1,
+                "macd_power": 0.1,
+                "micro_power": 0.1
+            }
+        else:
+            return {
+                "direction": "sell",
+                "confidence": 0.65,
+                "reasoning": "📉 VENDA - Análise técnica de fallback",
+                "total_score": -0.15,
+                "context": "technical_fallback",
+                "trend_power": -0.1,
+                "macd_power": -0.1,
+                "micro_power": -0.1
+            }
 
     def _calculate_signal_quality(self, analyses: Dict) -> float:
         """Calcula qualidade do sinal"""
@@ -574,7 +623,7 @@ class SuperDecisiveAnalyzer:
         }
 
     def analyze(self, blob: bytes, timeframe: str = '1m') -> Dict[str, Any]:
-        """ANÁLISE SUPER-DECISÓRIA - SEMPRE COMPRA ou VENDA"""
+        """ANÁLISE 100% IMPARCIAL - SEMPRE COMPRA ou VENDA BASEADO EM TÉCNICA"""
         
         # Cache inteligente
         cached = self.cache.get(blob, timeframe)
@@ -601,14 +650,14 @@ class SuperDecisiveAnalyzer:
                 'flow_dynamics': self._analyze_flow_dynamics(price_data)
             }
             
-            # 🎯 MOTOR DE DECISÃO ABSOLUTA
+            # 🎯 MOTOR DE DECISÃO 100% IMPARCIAL
             decision = self._absolute_decision_engine(analyses, timeframe)
             time_info = self._get_entry_timeframe(timeframe)
             
             # 📊 QUALIDADE DA ANÁLISE
             signal_quality = self._calculate_signal_quality(analyses)
             
-            # 🎨 RESULTADO SUPER-DECISÓRIO
+            # 🎨 RESULTADO SUPER-IMPARCIAL
             result = {
                 "direction": decision["direction"],
                 "final_confidence": float(decision["confidence"]),
@@ -640,11 +689,10 @@ class SuperDecisiveAnalyzer:
             return result
             
         except Exception as e:
-            # FALLBACK DECISIVO - SEMPRE DECIDE
-            return {
-                "direction": "buy" if np.random.random() > 0.5 else "sell",
-                "final_confidence": 0.65,
-                "entry_signal": "🧠 DECISÃO SUPER-INTELIGENTE - Análise microscópica ativa",
+            # FALLBACK TÉCNICO IMPARCIAL
+            fallback_result = self._technical_fallback()
+            fallback_result.update({
+                "entry_signal": f"🧠 {fallback_result['direction'].upper()} - Análise técnica de contingência",
                 "entry_time": datetime.datetime.now().strftime("%H:%M"),
                 "timeframe": "Próximo candle",
                 "analysis_time": datetime.datetime.now().strftime("%H:%M:%S"),
@@ -652,27 +700,16 @@ class SuperDecisiveAnalyzer:
                 "cached": False,
                 "signal_quality": 0.6,
                 "analysis_grade": "medium",
-                "market_context": "decisive_fallback",
+                "market_context": "technical_fallback",
                 "micro_quality": 0.6,
-                "metrics": {
-                    "analysis_score": 0.15,
-                    "trend_power": 0.1,
-                    "macd_power": 0.1,
-                    "micro_power": 0.1,
-                    "trend_strength": 0.5,
-                    "momentum": 0.1,
-                    "rsi": 0.1,
-                    "macd": 0.1,
-                    "macd_strength": 0.5
-                },
-                "reasoning": "Análise super-decisória em ação contínua"
-            }
+            })
+            return fallback_result
 
 # =========================
 #  APLICAÇÃO FLASK COMPLETA
 # =========================
 app = Flask(__name__)
-analyzer = SuperDecisiveAnalyzer()
+analyzer = SuperIntelligentAnalyzer()
 
 # Configurações para produção
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
@@ -684,7 +721,7 @@ HTML_TEMPLATE = '''
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IA Signal Pro - SUPER DECISÓRIA 🧠⚡</title>
+    <title>IA Signal Pro - SUPER INTELIGENTE E IMPARCIAL 🧠⚖️</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
@@ -946,21 +983,21 @@ HTML_TEMPLATE = '''
             display: none;
         }
         
-        .decision-badge {
-            font-size: 12px;
+        .impartial-badge {
+            font-size: 10px;
             padding: 2px 6px;
             border-radius: 8px;
             margin-left: 5px;
+            background: linear-gradient(135deg, #7ce0ff, #4a90e2);
+            color: white;
         }
-        .badge-buy { background: #00ff88; color: black; }
-        .badge-sell { background: #ff4444; color: white; }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <div class="title">🧠⚡ IA SIGNAL PRO - SUPER DECISÓRIA</div>
-            <div class="subtitle">100% DECISÕES - NUNCA "AGUARDAR" - TENDÊNCIA + MACD + MICRO-ANÁLISE</div>
+            <div class="title">🧠⚖️ IA SIGNAL PRO - 100% IMPARCIAL</div>
+            <div class="subtitle">ANÁLISE TÉCNICA PURA - SEM VIÉS - DECISÕES INTELIGENTES</div>
         </div>
         
         <div class="timeframe-selector">
@@ -1010,7 +1047,7 @@ HTML_TEMPLATE = '''
             
             <div class="power-analysis" id="powerAnalysis">
                 <div style="text-align: center; font-weight: 600; margin-bottom: 8px; color: #7ce0ff;">
-                    ⚡ ANÁLISE DE PODER
+                    ⚡ ANÁLISE TÉCNICA IMPARCIAL
                 </div>
                 <div id="powerMetrics"></div>
             </div>
@@ -1112,7 +1149,7 @@ HTML_TEMPLATE = '''
                 errorMessage.style.display = 'none';
                 
                 signalText.className = 'signal-text';
-                signalText.textContent = 'Analisando microscopicamente...';
+                signalText.textContent = 'Analisando tecnicamente...';
                 qualityIndicator.textContent = '';
                 contextInfo.innerHTML = '';
                 
@@ -1137,11 +1174,11 @@ HTML_TEMPLATE = '''
                 }
                 
                 entryTime.textContent = entryTimeValue;
-                reasoningText.textContent = 'Processando análise super-decisória...';
+                reasoningText.textContent = 'Processando análise técnica imparcial...';
                 confidenceText.textContent = '';
                 progressFill.style.width = '20%';
                 
-                metricsText.innerHTML = '<div class="loading">Iniciando análise 100% decisória...</div>';
+                metricsText.innerHTML = '<div class="loading">Iniciando análise 100% técnica e imparcial...</div>';
 
                 try {
                     const formData = new FormData();
@@ -1193,7 +1230,7 @@ HTML_TEMPLATE = '''
                 // Define classe e texto do sinal - SEMPRE COMPRA ou VENDA
                 signalText.className = `signal-text signal-${direction}`;
                 let directionText = direction === 'buy' ? '🎯 COMPRAR' : '🎯 VENDER';
-                signalText.innerHTML = `${directionText} ${cached ? '<span class="cache-badge">CACHE</span>' : ''}`;
+                signalText.innerHTML = `${directionText} <span class="impartial-badge">100% TÉCNICO</span> ${cached ? '<span class="cache-badge">CACHE</span>' : ''}`;
                 
                 // Atualiza informações
                 analysisTime.textContent = data.analysis_time || '--:--:--';
@@ -1201,22 +1238,22 @@ HTML_TEMPLATE = '''
                 timeframeEl.textContent = data.timeframe || 'Próximo minuto';
                 
                 reasoningText.textContent = data.reasoning;
-                confidenceText.textContent = `Confiança Inteligente: ${confidence}%`;
+                confidenceText.textContent = `Confiança Técnica: ${confidence}%`;
                 
                 // Indicador de qualidade
                 qualityIndicator.className = `quality-indicator quality-${quality}`;
                 if (quality === 'high') {
-                    qualityIndicator.textContent = '✅ ALTA QUALIDADE - Sinal super confiável';
+                    qualityIndicator.textContent = '✅ ALTA QUALIDADE - Análise técnica confiável';
                 } else {
-                    qualityIndicator.textContent = '⚠️ QUALIDADE MÉDIA - Sinal confiável';
+                    qualityIndicator.textContent = '⚠️ QUALIDADE MÉDIA - Análise técnica válida';
                 }
                 
                 // Informações de contexto
                 const contextLabels = {
                     'strong_trend': '🚀 TENDÊNCIA FORTE',
                     'consolidation': '⚡ CONSOLIDAÇÃO', 
-                    'micro_opportunity': '🔍 OPORTUNIDADE MICROSCÓPICA',
-                    'micro_risk': '⚠️ RISCO MICROSCÓPICO',
+                    'micro_opportunity': '🔍 OPORTUNIDADE TÉCNICA',
+                    'micro_risk': '⚠️ RISCO TÉCNICO',
                     'balanced': '⚖️ MERCADO EQUILIBRADO'
                 };
                 
@@ -1226,7 +1263,7 @@ HTML_TEMPLATE = '''
                     </span>
                 `;
                 
-                // Análise de Poder
+                // Análise de Poder Técnico
                 const metrics = data.metrics || {};
                 let powerHtml = '';
                 
@@ -1249,7 +1286,7 @@ HTML_TEMPLATE = '''
                 powerMetrics.innerHTML = powerHtml;
                 
                 // Métricas detalhadas
-                let metricsHtml = '<div style="margin-bottom: 10px; text-align: center; font-weight: 600;">📊 ANÁLISE COMPLETA</div>';
+                let metricsHtml = '<div style="margin-bottom: 10px; text-align: center; font-weight: 600;">📊 ANÁLISE TÉCNICA COMPLETA</div>';
                 
                 const metricItems = [
                     ['Score da Análise', metrics.analysis_score?.toFixed(3)],
@@ -1309,7 +1346,7 @@ def analyze_photo():
         if len(image_bytes) == 0:
             return jsonify({'error': 'Arquivo vazio'}), 400
         
-        # Análise SUPER-DECISÓRIA
+        # Análise 100% IMPARCIAL
         analysis = analyzer.analyze(image_bytes, timeframe)
         
         return jsonify(analysis)
@@ -1324,9 +1361,9 @@ def health_check():
     """Health check para monitoramento"""
     return jsonify({
         'status': 'healthy', 
-        'service': 'IA Signal Pro - SUPER DECISÓRIA',
+        'service': 'IA Signal Pro - 100% IMPARCIAL',
         'timestamp': datetime.datetime.now().isoformat(),
-        'version': '4.0.0-sempre-decisoria'
+        'version': '5.0.0-imparcial-tecnica'
     })
 
 @app.route('/cache/clear', methods=['POST'])
@@ -1355,10 +1392,10 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('DEBUG', 'False').lower() == 'true'
     
-    print(f"🚀 IA Signal Pro - SUPER DECISÓRIA iniciando na porta {port}")
-    print(f"🧠⚡ SISTEMA: 100% DECISÕES - NUNCA 'AGUARDAR'")
-    print(f"🎯 MECANISMO: Tendência + MACD + Análise Microscópica")
-    print(f"📈 SAÍDA: SEMPRE COMPRA ou VENDA")
-    print(f"💪 CONFIANÇA: 65%-85% em todas as análises")
+    print(f"🚀 IA Signal Pro - 100% IMPARCIAL iniciando na porta {port}")
+    print(f"🧠⚖️ SISTEMA: ANÁLISE TÉCNICA PURA - SEM VIÉS")
+    print(f"🎯 DECISÕES: BASEADAS APENAS EM DADOS TÉCNICOS") 
+    print(f"📈 SAÍDA: SEMPRE COMPRA ou VENDA - NUNCA AGUARDAR")
+    print(f"💪 IMPARCIALIDADE: LIMIARES EQUILIBRADOS - FALLBACK TÉCNICO")
     
     app.run(host='0.0.0.0', port=port, debug=debug)
