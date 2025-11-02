@@ -1094,9 +1094,12 @@ HTML_TEMPLATE = '''
                 });
             });
 
-            // Upload de arquivo
-            uploadArea.addEventListener('click', () => fileInput.click());
-            
+            uploadArea.addEventListener('click', (e) => {
+            // Só abre o file input se o clique não foi diretamente no file input
+                if (e.target !== fileInput) {
+                fileInput.click();
+                }
+            });
             uploadArea.addEventListener('dragover', (e) => {
                 e.preventDefault();
                 uploadArea.style.borderColor = '#00ff88';
