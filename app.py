@@ -81,152 +81,289 @@ class AnalysisCache:
 # =========================
 #  FASE 1: SISTEMA DE OCR AVANÇADO - CORRIGIDO
 # =========================
+# =========================
+#  FASE 1: SISTEMA DE OCR AVANÇADO - TOTALMENTE CORRIGIDO
+# =========================
 class TextDataExtractor:
     def __init__(self):
         self.indicators_patterns = {
-            'rsi': r'RSI\s*\d*\s*[:-]?\s*([\d.,]+)',
-            'macd': r'MACD\s*[:-]?\s*([\d.,-]+)',
-            'price': r'(\d+[.,]\d+)\s*/\s*(\d+[.,]\d+)',
-            'adl_usdt': r'ADL/USDT',
+            'rsi': [
+                r'RSI\s*\d*\s*[:=-]?\s*(\d+[.,]\d+)',  # RSI 14: 56.46
+                r'RSI[:=]?\s*(\d+[.,]\d+)',            # RSI: 56.46
+                r'(\d+[.,]\d+)\s*RSI'                  # 56.46 RSI
+            ],
+            'macd': [
+                r'MACD\s*[:=-]?\s*([\d.,-]+)',         # MACD: 12.74
+                r'MACD\s+([\d.,-]+)',                  # MACD 12.74
+                r'([\d.,-]+)\s*MACD'                   # 12.74 MACD
+            ]
         }
     
     def preprocess_for_ocr(self, image: Image.Image) -> Image.Image:
-        """Melhora a imagem para OCR - CORRIGIDO"""
-        # Aumenta o tamanho para melhor reconhecimento
-        width, height = image.size
-        if width < 400:
-            image = image.resize((width * 2, height * 2), Image.LANCZOS)
-        
-        # Converte para escala de cinza
-        if image.mode != 'L':
-            image = image.convert('L')
-        
-        # Aumenta contraste drasticamente
-        enhancer = ImageEnhance.Contrast(image)
-        image = enhancer.enhance(3.0)  # Aumentado de 2.0 para 3.0
-        
-        # Aumenta nitidez
-        enhancer = ImageEnhance.Sharpness(image)
-        image = enhancer.enhance(3.0)  # Aumentado de 2.0 para 3.0
-        
-        # Ajusta brilho
-        enhancer = ImageEnhance.Brightness(image)
-        image = enhancer.enhance(1.2)
-        
-        return image
+        """Pré-processamento ESPECÍFICO para gráficos de trading"""
+        try:
+            # Converte para numpy array para processamento avançado
+            img_array = np.array(image)
+            
+            # 🔥 CORREÇÃO: Para gráficos escuros, inverte cores
+            if np.mean(img_array) < 128:  # Imagem escura
+                img_array = 255 - img_array  # Inverte cores
+                image = Image.fromarray(img_array.astype('uint8'))
+            
+            # Converte para escala de cinza
+            if image.mode != 'L':
+                image = image.convert('L')
+            
+            # 🔥 CORREÇÃO: Aumenta drasticamente o tamanho para melhor reconhecimento
+            width, height = image.size
+            if width < 800:  # Aumenta limite mínimo
+                new_width = max(800, width * 2)
+                new_height = int(height * (new_width / width))
+                image = image.resize((new_width, new_height), Image.LANCZOS)
+            
+            # 🔥 CORREÇÃO: Aplica filtro mais agressivo
+            # Aumenta contraste
+            enhancer = ImageEnhance.Contrast(image)
+            image = enhancer.enhance(3.5)  # Mais agressivo
+            
+            # Aumenta nitidez
+            enhancer = ImageEnhance.Sharpness(image)
+            image = enhancer.enhance(3.0)
+            
+            # Ajusta brilho
+            enhancer = ImageEnhance.Brightness(image)
+            image = enhancer.enhance(1.3)
+            
+            # 🔥 CORREÇÃO: Aplica threshold para binarização
+            img_array = np.array(image)
+            _, binary_img = cv2.threshold(img_array, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            image = Image.fromarray(binary_img)
+            
+            return image
+            
+        except Exception as e:
+            print(f"⚠️ Erro no pré-processamento: {e}")
+            return image
     
     def extract_text_data(self, image: Image.Image) -> Dict[str, Any]:
-        """Extrai todos os textos e valores numéricos do gráfico - CORRIGIDO"""
+        """Extrai textos do gráfico - VERSÃO CORRIGIDA"""
         try:
-            # Pré-processa para OCR
-            processed_image = self.preprocess_for_ocr(image)
+            # 🔥 CORREÇÃO: Tenta múltiplas estratégias de OCR
+            strategies = [
+                self._ocr_strategy_aggressive,
+                self._ocr_strategy_conservative,
+                self._ocr_strategy_fallback
+            ]
             
-            # Configuração MELHORADA para o Tesseract
-            custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789.,RSI MACD ADL/USDT %()-'
+            best_result = None
+            best_confidence = 0
             
-            # Tenta OCR com diferentes pré-processamentos
-            text = pytesseract.image_to_string(processed_image, config=custom_config)
+            for strategy in strategies:
+                result = strategy(image)
+                if result['confidence'] > best_confidence:
+                    best_result = result
+                    best_confidence = result['confidence']
+                
+                # Se já tem boa confiança, para aqui
+                if best_confidence > 0.7:
+                    break
             
-            # Se não encontrou texto suficiente, tenta com PSM diferente
-            if len(text.strip()) < 10:
-                custom_config = r'--oem 3 --psm 8 -c tessedit_char_whitelist=0123456789.,RSI MACD ADL/USDT %()-'
-                text = pytesseract.image_to_string(processed_image, config=custom_config)
+            print(f"🔍 MELHOR RESULTADO OCR - Confiança: {best_confidence:.1%}")
+            print(f"📊 RSI: {best_result.get('rsi_value')}, MACD: {best_result.get('macd_value')}")
             
-            print(f"🔍 TEXTO EXTRAÍDO PELO OCR: {text}")  # DEBUG
+            return best_result
             
-            return self._parse_extracted_text(text)
         except Exception as e:
-            print(f"❌ ERRO NO OCR: {e}")  # DEBUG
+            print(f"❌ ERRO CRÍTICO NO OCR: {e}")
             return self._get_fallback_text_data()
     
-    def _parse_extracted_text(self, text: str) -> Dict[str, Any]:
-        """Analisa o texto extraído e identifica valores - CORRIGIDO"""
+    def _ocr_strategy_aggressive(self, image: Image.Image) -> Dict[str, Any]:
+        """Estratégia agressiva - máximo de texto"""
+        try:
+            # 🔥 CORREÇÃO: Whitelist expandida com TODOS os caracteres necessários
+            custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789.,:-/RSI MACD BIS USDT ADL EMA %()'
+            
+            processed_image = self.preprocess_for_ocr(image)
+            text = pytesseract.image_to_string(processed_image, config=custom_config)
+            
+            print(f"🎯 TEXTO EXTRAÍDO (Agressivo): {text[:200]}...")
+            
+            return self._parse_extracted_text(text, strategy="aggressive")
+            
+        except Exception as e:
+            print(f"❌ Estratégia agressiva falhou: {e}")
+            return self._get_fallback_text_data()
+    
+    def _ocr_strategy_conservative(self, image: Image.Image) -> Dict[str, Any]:
+        """Estratégia conservativa - foco em números"""
+        try:
+            # 🔥 CORREÇÃO: PSM 8 para tratamento de palavra única
+            custom_config = r'--oem 3 --psm 8 -c tessedit_char_whitelist=0123456789.,-'
+            
+            processed_image = self.preprocess_for_ocr(image)
+            text = pytesseract.image_to_string(processed_image, config=custom_config)
+            
+            print(f"🎯 TEXTO EXTRAÍDO (Conservativo): {text[:200]}...")
+            
+            return self._parse_extracted_text(text, strategy="conservative")
+            
+        except Exception as e:
+            print(f"❌ Estratégia conservativa falhou: {e}")
+            return self._get_fallback_text_data()
+    
+    def _ocr_strategy_fallback(self, image: Image.Image) -> Dict[str, Any]:
+        """Estratégia fallback - sem restrições"""
+        try:
+            # Sem whitelist, pega tudo
+            custom_config = r'--oem 3 --psm 6'
+            
+            processed_image = self.preprocess_for_ocr(image)
+            text = pytesseract.image_to_string(processed_image, config=custom_config)
+            
+            print(f"🎯 TEXTO EXTRAÍDO (Fallback): {text[:200]}...")
+            
+            return self._parse_extracted_text(text, strategy="fallback")
+            
+        except Exception as e:
+            print(f"❌ Estratégia fallback falhou: {e}")
+            return self._get_fallback_text_data()
+    
+    def _parse_extracted_text(self, text: str, strategy: str = "aggressive") -> Dict[str, Any]:
+        """Analisa o texto extraído - VERSÃO CORRIGIDA"""
         extracted_data = {
             'rsi_value': None,
             'macd_value': None,
             'price_values': [],
-            'timeframe': None,
             'raw_text': text,
-            'confidence': 0.0
+            'confidence': 0.0,
+            'strategy_used': strategy
         }
         
-        # 🔍 PROCURA RSI - PADRÃO MELHORADO
+        # 🔥 CORREÇÃO: Limpa e normaliza o texto
+        text_clean = re.sub(r'\s+', ' ', text.strip())  # Remove espaços múltiplos
+        
+        print(f"🧹 TEXTO LIMPO: {text_clean}")
+        
+        # 🔍 PROCURA RSI - PADRÕES EXPANDIDOS
         rsi_patterns = [
-            r'RSI\s*\d*\s*[:-]?\s*(\d+[.,]\d+)',  # RSI 14 - 47.57
-            r'RSI\s*(\d+[.,]\d+)',                 # RSI 47.57
+            r'RSI\s*\d*\s*[:=-]?\s*(\d+[.,]\d+)',  # RSI 14: 56.46
+            r'RSI[:=]?\s*(\d+[.,]\d+)',            # RSI: 56.46  
+            r'(\d+[.,]\d+)\s*RSI',                 # 56.46 RSI
+            r'RSI\s+(\d+)[^\d]*(\d+)[.,](\d+)',    # RSI 14 56.46
         ]
         
         for pattern in rsi_patterns:
-            rsi_match = re.search(pattern, text, re.IGNORECASE)
-            if rsi_match:
-                rsi_str = rsi_match.group(1).replace(',', '.')
+            matches = re.findall(pattern, text_clean, re.IGNORECASE)
+            for match in matches:
+                if isinstance(match, tuple):
+                    # Junta grupos se necessário
+                    rsi_str = ''.join(str(x) for x in match if x)
+                else:
+                    rsi_str = match
+                
+                rsi_str = rsi_str.replace(',', '.')
                 try:
-                    extracted_data['rsi_value'] = float(rsi_str)
-                    break
+                    rsi_value = float(rsi_str)
+                    # 🔥 CORREÇÃO: Validação de faixa RSI (0-100)
+                    if 0 <= rsi_value <= 100:
+                        extracted_data['rsi_value'] = rsi_value
+                        print(f"✅ RSI ENCONTRADO: {rsi_value}")
+                        break
                 except ValueError:
                     continue
+            if extracted_data['rsi_value']:
+                break
         
-        # 🔍 PROCURA MACD - PADRÃO MELHORADO  
+        # 🔍 PROCURA MACD - PADRÕES EXPANDIDOS
         macd_patterns = [
-            r'MACD\s*[:-]?\s*([\d.,-]+)',          # MACD: 12.74 ou MACD 12.74
-            r'MACD\s*close\s*([\d.,-]+)',          # MACD close 12.74
+            r'MACD\s*[:=-]?\s*([\d.,-]+)',         # MACD: 12.74
+            r'MACD\s+([\d.,-]+)',                  # MACD 12.74
+            r'([\d.,-]+)\s*MACD',                  # 12.74 MACD
+            r'MACD[^\d]*-?\d+[.,]\d+',             # MACD seguido de número
         ]
         
         for pattern in macd_patterns:
-            macd_match = re.search(pattern, text, re.IGNORECASE)
-            if macd_match:
-                macd_str = macd_match.group(1).replace(',', '.')
+            matches = re.findall(pattern, text_clean, re.IGNORECASE)
+            for match in matches:
+                if isinstance(match, tuple):
+                    macd_str = ''.join(str(x) for x in match if x)
+                else:
+                    macd_str = match
+                
+                macd_str = macd_str.replace(',', '.')
                 try:
-                    extracted_data['macd_value'] = float(macd_str)
-                    break
+                    macd_value = float(macd_str)
+                    # 🔥 CORREÇÃO: Validação de faixa MACD típica
+                    if -50 <= macd_value <= 50:  # Faixa razoável para MACD
+                        extracted_data['macd_value'] = macd_value
+                        print(f"✅ MACD ENCONTRADO: {macd_value}")
+                        break
                 except ValueError:
                     continue
+            if extracted_data['macd_value']:
+                break
         
-        # 🔍 PROCURA PREÇOS - PADRÃO MELHORADO
-        price_pattern = r'(\d+[.,]\d+)\s*/\s*(\d+[.,]\d+)'  # 0.9469 / 0.9502
-        price_match = re.search(price_pattern, text)
-        if price_match:
-            try:
-                price1 = float(price_match.group(1).replace(',', '.'))
-                price2 = float(price_match.group(2).replace(',', '.'))
-                extracted_data['price_values'] = [price1, price2]
-            except ValueError:
-                pass
+        # 🔥 CORREÇÃO: Busca números próximos a textos RSI/MACD se não encontrou
+        if not extracted_data['rsi_value']:
+            # Procura padrão "56.46" próximo de "RSI"
+            rsi_context = re.search(r'RSI[^\d]*(\d+[.,]\d+)', text_clean, re.IGNORECASE)
+            if rsi_context:
+                try:
+                    rsi_value = float(rsi_context.group(1).replace(',', '.'))
+                    if 0 <= rsi_value <= 100:
+                        extracted_data['rsi_value'] = rsi_value
+                        print(f"✅ RSI CONTEXTUAL: {rsi_value}")
+                except ValueError:
+                    pass
         
-        # 🔍 PROCURA TIMEFRAME
-        timeframe_match = re.search(r'(\d+\.\d+)\s*-\s*(\d+\.\d+)', text)  # 21.00-20.00
-        if timeframe_match:
-            extracted_data['timeframe'] = f"{timeframe_match.group(1)}-{timeframe_match.group(2)}"
+        if not extracted_data['macd_value']:
+            # Procura padrão "12.76" próximo de "MACD"  
+            macd_context = re.search(r'MACD[^\d]*(\d+[.,]\d+)', text_clean, re.IGNORECASE)
+            if macd_context:
+                try:
+                    macd_value = float(macd_context.group(1).replace(',', '.'))
+                    if -50 <= macd_value <= 50:
+                        extracted_data['macd_value'] = macd_value
+                        print(f"✅ MACD CONTEXTUAL: {macd_value}")
+                except ValueError:
+                    pass
         
-        # 📊 CALCULA CONFIANÇA - MELHORADO
+        # 🔥 CORREÇÃO: Cálculo de confiança MELHORADO
         confidence_factors = []
+        
         if extracted_data['rsi_value']:
-            confidence_factors.append(0.4)  # RSI encontrado
+            confidence_factors.append(0.4)
+            print(f"🎯 RSI adiciona 0.4 à confiança")
+        
         if extracted_data['macd_value']:
-            confidence_factors.append(0.4)  # MACD encontrado
-        if extracted_data['price_values']:
-            confidence_factors.append(0.2)  # Preços encontrados
-            
+            confidence_factors.append(0.4) 
+            print(f"🎯 MACD adiciona 0.4 à confiança")
+        
+        # Confiança baseada em números encontrados
+        all_numbers = re.findall(r'\d+[.,]\d+', text_clean)
+        if all_numbers:
+            number_confidence = min(0.3, len(all_numbers) * 0.05)
+            confidence_factors.append(number_confidence)
+            print(f"🎯 {len(all_numbers)} números adicionam {number_confidence:.2f} à confiança")
+        
         if confidence_factors:
             extracted_data['confidence'] = sum(confidence_factors)
         else:
-            # Confiança baseada na quantidade de números encontrados
-            numbers = re.findall(r'\d+[.,]\d+', text)
-            extracted_data['confidence'] = min(0.3, len(numbers) * 0.1)
+            extracted_data['confidence'] = 0.0
         
-        print(f"🎯 DADOS EXTRAÍDOS: RSI={extracted_data['rsi_value']}, MACD={extracted_data['macd_value']}, Confiança={extracted_data['confidence']}")  # DEBUG
+        print(f"📊 CONFIANÇA FINAL: {extracted_data['confidence']:.1%}")
         
         return extracted_data
     
     def _get_fallback_text_data(self) -> Dict[str, Any]:
-        """Dados fallback caso OCR falhe - CORRIGIDO"""
+        """Fallback para quando tudo falha"""
         return {
             'rsi_value': None,
-            'macd_value': None,
+            'macd_value': None, 
             'price_values': [],
-            'timeframe': None,
             'raw_text': '',
-            'confidence': 0.0
+            'confidence': 0.0,
+            'strategy_used': 'fallback'
         }
 
 # =========================
