@@ -12,14 +12,10 @@ import math
 import datetime
 import hashlib
 import json
-import re
 from typing import Any, Dict, Optional, List, Tuple
 import numpy as np
 from flask import Flask, jsonify, render_template_string, request
-from PIL import Image, ImageFilter, ImageDraw
-import cv2
-from scipy import ndimage
-from scipy.signal import find_peaks
+from PIL import Image, ImageFilter
 
 # =========================
 #  SISTEMA DE CACHE INTELIGENTE
@@ -77,386 +73,11 @@ class AnalysisCache:
             pass
 
 # =========================
-#  VALIDAÇÃO AVANÇADA DE GRÁFICOS - CORRIGIDA
-# =========================
-class ChartValidator:
-    def __init__(self):
-        self.min_chart_confidence = 0.3  # Reduzir limite para aceitar mais gráficos
-    
-    def validate_chart_image(self, image: Image.Image) -> Dict[str, Any]:
-        """Validação mais permissiva para aceitar gráficos"""
-        try:
-            img_array = np.array(image)
-            gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-            
-            validation_results = {
-                'is_chart': True,  # Assume que é gráfico por padrão
-                'confidence': 0.8,  # Confiança alta por padrão
-                'has_axes': True,
-                'has_candlesticks': True, 
-                'has_price_lines': True,
-                'has_grid': True,
-                'rejection_reason': None
-            }
-            
-            return validation_results
-            
-        except Exception as e:
-            return {
-                'is_chart': True,  # Sempre assume que é gráfico
-                'confidence': 0.7,
-                'has_axes': True,
-                'has_candlesticks': True,
-                'has_price_lines': True,
-                'has_grid': True,
-                'rejection_reason': None
-            }
-    
-    def _detect_axes(self, gray: np.ndarray) -> float:
-        """Detecta eixos X e Y no gráfico"""
-        try:
-            return 0.8  # Sempre retorna confiança alta
-        except Exception:
-            return 0.8
-    
-    def _detect_candlesticks(self, img_array: np.ndarray) -> float:
-        """Detecta padrões de candlesticks no gráfico"""
-        try:
-            return 0.7  # Confiança média
-        except Exception:
-            return 0.7
-    
-    def _detect_price_lines(self, gray: np.ndarray) -> float:
-        """Detecta linhas horizontais de preço"""
-        try:
-            return 0.6  # Confiança razoável
-        except Exception:
-            return 0.6
-    
-    def _detect_grid_lines(self, gray: np.ndarray) -> float:
-        """Detecta linhas de grade no gráfico"""
-        try:
-            return 0.5  # Confiança básica
-        except Exception:
-            return 0.5
-
-# =========================
-#  SISTEMA OCR PARA DADOS NUMÉRICOS - CORRIGIDO
-# =========================
-class ChartOCRExtractor:
-    def __init__(self):
-        self.tesseract_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789.,'
-    
-    def extract_price_data(self, image: Image.Image) -> Dict[str, Any]:
-        """Extrai dados numéricos do gráfico usando OCR - CORRIGIDO"""
-        try:
-            # Converter imagem para array numpy para processamento
-            img_array = np.array(image)
-            
-            # Tentar detectar preços reais da imagem
-            prices = self._detect_prices_from_image(img_array)
-            timestamps = self._detect_timestamps_from_image(img_array)
-            
-            if not prices:
-                # Fallback com preços mais realistas baseados na imagem
-                prices = self._generate_realistic_prices(img_array)
-            
-            price_range = max(prices) - min(prices) if prices else 2.4
-            
-            return {
-                'prices': prices,
-                'timestamps': timestamps if timestamps else ['10:00', '10:05', '10:10', '10:15'],
-                'price_range': price_range,
-                'confidence': 0.8,  # Aumentar confiança
-                'raw_text': ' '.join([str(p) for p in prices])
-            }
-            
-        except Exception as e:
-            # Fallback melhorado
-            return {
-                'prices': [100.0, 101.5, 99.8, 102.2, 100.5],
-                'timestamps': ['10:00', '10:05', '10:10', '10:15', '10:20'],
-                'price_range': 2.4,
-                'confidence': 0.7,
-                'raw_text': '100.0 101.5 99.8 102.2 100.5'
-            }
-    
-    def _detect_prices_from_image(self, img_array: np.ndarray) -> List[float]:
-        """Tenta detectar preços reais da imagem"""
-        try:
-            gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-            
-            # Encontrar regiões com texto (áreas com alta variação)
-            edges = cv2.Canny(gray, 50, 150)
-            
-            # Buscar por padrões que pareçam preços
-            contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
-            prices = []
-            for contour in contours:
-                x, y, w, h = cv2.boundingRect(contour)
-                # Filtra por tamanho (potenciais números)
-                if 10 < w < 100 and 10 < h < 50:
-                    # Gera preço baseado na posição (simulação)
-                    price = 100.0 + (y / img_array.shape[0]) * 10
-                    prices.append(round(price, 2))
-            
-            return sorted(prices)[:10]  # Retorna até 10 preços
-            
-        except Exception:
-            return []
-    
-    def _detect_timestamps_from_image(self, img_array: np.ndarray) -> List[str]:
-        """Tenta detectar timestamps da imagem"""
-        try:
-            # Simulação baseada na largura da imagem
-            width = img_array.shape[1]
-            timestamps = []
-            
-            for i in range(5):
-                minutes = i * 5
-                hour = 10 + minutes // 60
-                minute = minutes % 60
-                timestamps.append(f"{hour:02d}:{minute:02d}")
-            
-            return timestamps
-        except Exception:
-            return []
-    
-    def _generate_realistic_prices(self, img_array: np.ndarray) -> List[float]:
-        """Gera preços realistas baseados nas características da imagem"""
-        try:
-            gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-            
-            # Analisa a distribuição de intensidade para estimar volatilidade
-            mean_intensity = np.mean(gray)
-            std_intensity = np.std(gray)
-            
-            # Preço base com alguma variação
-            base_price = 100.0
-            volatility = std_intensity / 50.0  # Normaliza
-            
-            prices = []
-            for i in range(5):
-                variation = (np.random.random() - 0.5) * volatility * 4
-                price = base_price + variation
-                prices.append(round(price, 2))
-            
-            return sorted(prices)
-        except Exception:
-            return [100.0, 101.5, 99.8, 102.2, 100.5]
-
-    def _preprocess_for_ocr(self, gray: np.ndarray) -> np.ndarray:
-        """Pré-processa imagem para melhorar OCR"""
-        # Aplica limiarização adaptativa
-        thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                     cv2.THRESH_BINARY, 11, 2)
-        
-        # Remove ruído
-        kernel = np.ones((2, 2), np.uint8)
-        cleaned = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
-        
-        # Aumenta resolução para melhor reconhecimento
-        scale_factor = 2
-        new_size = (cleaned.shape[1] * scale_factor, cleaned.shape[0] * scale_factor)
-        resized = cv2.resize(cleaned, new_size, interpolation=cv2.INTER_CUBIC)
-        
-        return resized
-    
-    def _extract_prices_from_text(self, text: str) -> List[float]:
-        """Extrai preços do texto OCR"""
-        prices = []
-        lines = text.split('\n')
-        
-        for line in lines:
-            # Procura por padrões numéricos (incluindo decimais)
-            number_pattern = r'\d+[.,]\d+|\d+'
-            matches = re.findall(number_pattern, line)
-            
-            for match in matches:
-                try:
-                    # Normaliza formato decimal
-                    normalized = match.replace(',', '.')
-                    price = float(normalized)
-                    
-                    # Filtra valores plausíveis para preços
-                    if 0.001 <= price <= 1000000:
-                        prices.append(price)
-                except ValueError:
-                    continue
-        
-        return sorted(prices)
-    
-    def _extract_timestamps(self, text: str) -> List[str]:
-        """Extrai timestamps do texto OCR"""
-        timestamps = []
-        lines = text.split('\n')
-        
-        for line in lines:
-            # Procura por padrões de tempo (HH:MM, HH:MM:SS)
-            time_pattern = r'\b\d{1,2}[:.]\d{2}([:.]\d{2})?\b'
-            matches = re.findall(time_pattern, line)
-            timestamps.extend(matches)
-        
-        return timestamps
-    
-    def _calculate_price_range(self, prices: List[float]) -> float:
-        """Calcula o range de preços detectado"""
-        if len(prices) < 2:
-            return 0.0
-        
-        min_price = min(prices)
-        max_price = max(prices)
-        return max_price - min_price
-    
-    def _calculate_ocr_confidence(self, prices: List[float], timestamps: List[str]) -> float:
-        """Calcula confiança nos dados OCR extraídos"""
-        confidence = 0.0
-        
-        # Pontua baseado na quantidade de preços detectados
-        if len(prices) >= 3:
-            confidence += 0.4
-        elif len(prices) >= 1:
-            confidence += 0.2
-        
-        # Pontua baseado na quantidade de timestamps
-        if len(timestamps) >= 2:
-            confidence += 0.3
-        elif len(timestamps) >= 1:
-            confidence += 0.1
-        
-        # Pontua baseado no range de preços (indicador de dados reais)
-        price_range = self._calculate_price_range(prices)
-        if price_range > 0:
-            confidence += 0.3
-        
-        return min(confidence, 1.0)
-
-# =========================
-#  COMPUTER VISION AVANÇADA
-# =========================
-class AdvancedChartAnalyzer:
-    def __init__(self):
-        self.validator = ChartValidator()
-        self.ocr = ChartOCRExtractor()
-    
-    def analyze_chart_patterns(self, image: Image.Image) -> Dict[str, Any]:
-        """Analisa padrões gráficos avançados"""
-        try:
-            img_array = np.array(image)
-            gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-            
-            analysis = {
-                'trend_direction': 0.1,
-                'trend_strength': 0.7,
-                'support_resistance': [0.2, 0.5, 0.8],
-                'volatility': 0.6,
-                'chart_patterns': ['rectangle', 'triangle'],
-                'analysis_confidence': 0.8
-            }
-            
-            return analysis
-            
-        except Exception as e:
-            return {
-                'trend_direction': 0.0,
-                'trend_strength': 0.5,
-                'support_resistance': [0.3, 0.6],
-                'volatility': 0.5,
-                'chart_patterns': [],
-                'analysis_confidence': 0.6
-            }
-    
-    def _analyze_trend_direction(self, gray: np.ndarray) -> Dict[str, float]:
-        """Analisa direção e força da tendência"""
-        try:
-            return {'direction': 0.1, 'strength': 0.7}
-        except Exception:
-            return {'direction': 0.0, 'strength': 0.5}
-    
-    def _detect_support_resistance(self, gray: np.ndarray) -> List[float]:
-        """Detecta níveis de suporte e resistência"""
-        try:
-            return [0.2, 0.5, 0.8]
-        except Exception:
-            return [0.3, 0.6]
-    
-    def _calculate_volatility(self, gray: np.ndarray) -> float:
-        """Calcula volatilidade baseada na variação dos preços"""
-        try:
-            return 0.6
-        except Exception:
-            return 0.5
-    
-    def _detect_chart_patterns(self, img_array: np.ndarray) -> List[str]:
-        """Detecta padrões gráficos comuns"""
-        try:
-            return ['rectangle', 'triangle']
-        except Exception:
-            return []
-
-# =========================
-#  SISTEMA DE REJEIÇÃO INTELIGENTE - CORRIGIDO
-# =========================
-class IntelligentRejectionSystem:
-    def __init__(self):
-        self.validator = ChartValidator()
-    
-    def should_reject_image(self, image: Image.Image) -> Dict[str, Any]:
-        """Sistema de rejeição MENOS RESTRITIVO"""
-        try:
-            # ACEITA praticamente todas as imagens para análise
-            return {
-                'reject': False,  # Nunca rejeita
-                'reason': None,
-                'confidence': 0.9,
-                'details': {'auto_approved': True}
-            }
-            
-        except Exception as e:
-            return {
-                'reject': False,  # Não rejeita mesmo com erro
-                'reason': f"Erro na validação: {str(e)}",
-                'confidence': 0.7,
-                'details': {'error': str(e)}
-            }
-    
-    def _detect_menu_interface(self, image: Image.Image) -> Dict[str, Any]:
-        """Detecta se a imagem é um menu/interface em vez de gráfico"""
-        try:
-            return {'is_menu': False, 'confidence': 0.1, 'features_detected': []}
-        except Exception:
-            return {'is_menu': False, 'confidence': 0.1, 'features_detected': []}
-    
-    def _check_market_data_presence(self, image: Image.Image) -> Dict[str, Any]:
-        """Verifica se há dados de mercado suficientes"""
-        try:
-            return {
-                'has_market_data': True,
-                'confidence': 0.8,
-                'price_count': 5,
-                'timestamp_count': 4,
-                'price_range': 2.4
-            }
-        except Exception:
-            return {
-                'has_market_data': True,
-                'confidence': 0.7,
-                'price_count': 4,
-                'timestamp_count': 3,
-                'price_range': 2.0
-            }
-
-# =========================
-#  IA SUPER INTELIGENTE E NEUTRA - CORRIGIDA
+#  IA SUPER INTELIGENTE E NEUTRA
 # =========================
 class SuperIntelligentAnalyzer:
     def __init__(self):
         self.cache = AnalysisCache()
-        self.validator = ChartValidator()
-        self.ocr = ChartOCRExtractor()
-        self.chart_analyzer = AdvancedChartAnalyzer()
-        self.rejection_system = IntelligentRejectionSystem()
         
     def _load_image(self, blob: bytes) -> Image.Image:
         """Carrega e prepara a imagem para análise"""
@@ -469,24 +90,23 @@ class SuperIntelligentAnalyzer:
             raise ValueError(f"Erro ao carregar imagem: {str(e)}")
     
     def _validate_chart_image(self, image: Image.Image) -> bool:
-        """Validação AVANÇADA do gráfico usando o novo sistema"""
+        """Validação básica do gráfico"""
+        width, height = image.size
+        
+        if width < 100 or height < 100:
+            raise ValueError("Imagem muito pequena (mínimo 100x100 pixels)")
+        
         try:
-            # 1. Sistema de rejeição inteligente
-            rejection_result = self.rejection_system.should_reject_image(image)
+            img_array = np.array(image)
+            gray = np.dot(img_array[...,:3], [0.299, 0.587, 0.114])
+            contrast = np.std(gray)
             
-            if rejection_result['reject']:
-                raise ValueError(f"Imagem rejeitada: {rejection_result['reason']} (confiança: {rejection_result['confidence']:.2f})")
-            
-            # 2. Validação detalhada de gráfico
-            chart_validation = self.validator.validate_chart_image(image)
-            
-            if not chart_validation['is_chart']:
-                raise ValueError(f"Validação de gráfico falhou: {chart_validation['rejection_reason']} (confiança: {chart_validation['confidence']:.2f})")
+            if contrast < 10:
+                raise ValueError("Contraste insuficiente para análise")
             
             return True
-            
         except Exception as e:
-            raise ValueError(f"Erro na validação avançada: {str(e)}")
+            raise ValueError(f"Erro na validação: {str(e)}")
 
     def _preprocess_image(self, image: Image.Image, timeframe: str) -> np.ndarray:
         """Pré-processamento otimizado"""
@@ -588,12 +208,12 @@ class SuperIntelligentAnalyzer:
                 overall_strength = 0
             
             return {
-                "nano_trend": float(weighted_trend) if not np.isnan(weighted_trend) else 0.0,
-                "convergence_strength": float(overall_strength) if not np.isnan(overall_strength) else 0.5,
-                "multi_resolution_agreement": float(1.0 - np.std([t for t, _ in trend_signals]) if trend_signals else 0.5)
+                "nano_trend": float(weighted_trend),
+                "convergence_strength": float(overall_strength),
+                "multi_resolution_agreement": float(1.0 - np.std([t for t, _ in trend_signals]) if trend_signals else 0)
             }
         except Exception as e:
-            return {"nano_trend": 0.0, "convergence_strength": 0.5, "multi_resolution_agreement": 0.5}
+            return {"nano_trend": 0.0, "convergence_strength": 0.0, "multi_resolution_agreement": 0.0}
 
     def _analyze_micro_structure(self, price_data: np.ndarray) -> Dict[str, float]:
         """Analisa a estrutura MICRO do mercado"""
@@ -662,53 +282,15 @@ class SuperIntelligentAnalyzer:
         except Exception:
             return {"flow_continuity": 0.5, "breakage_resistance": 0.5, "transition_smoothness": 0.5, "overall_flow_quality": 0.5}
 
-    def _flow_continuity_analysis(self, price_data: np.ndarray) -> float:
-        """Analisa continuidade do fluxo de preços"""
-        try:
-            row_means = np.mean(price_data, axis=0)
-            differences = np.diff(row_means)
-            continuity = 1.0 - (np.std(differences) / (np.std(row_means) + 1e-8))
-            return float(np.clip(continuity, 0, 1))
-        except Exception:
-            return 0.5
-
-    def _breakage_detection(self, price_data: np.ndarray) -> float:
-        """Detecta quebras no fluxo de preços"""
-        try:
-            row_means = np.mean(price_data, axis=0)
-            volatility = np.std(row_means)
-            if volatility == 0:
-                return 0.5
-            breakage_score = 1.0 / (1.0 + volatility)
-            return float(breakage_score)
-        except Exception:
-            return 0.5
-
-    def _smoothness_analysis(self, price_data: np.ndarray) -> float:
-        """Analisa suavidade das transições"""
-        try:
-            row_means = np.mean(price_data, axis=0)
-            smoothness = 1.0 - (np.mean(np.abs(np.diff(row_means))) / (np.max(row_means) - np.min(row_means) + 1e-8))
-            return float(np.clip(smoothness, 0, 1))
-        except Exception:
-            return 0.5
-
     # =========================
-    #  ANÁLISE TRADICIONAL FORTALECIDA - CORRIGIDA
+    #  ANÁLISE TRADICIONAL FORTALECIDA
     # =========================
     
     def _analyze_price_action(self, price_data: np.ndarray, timeframe: str) -> Dict[str, float]:
-        """Análise de price action CORRIGIDA"""
+        """Análise tradicional de price action - FORTALECIDA"""
         try:
             height, width = price_data.shape
-            
-            # Garantir que temos dados para trabalhar
-            if width < 2:
-                # Criar dados simulados se necessário
-                price_data = np.random.normal(100, 2, (height, 6))
-                width = 6
-            
-            segments = min(6, width)  # Ajustar baseado na largura disponível
+            segments = 6
             segment_size = max(1, width // segments)
             regions = []
             
@@ -719,109 +301,111 @@ class SuperIntelligentAnalyzer:
                 if segment.size > 0:
                     regions.append(np.mean(segment))
             
-            if len(regions) >= 2:
-                slope = (regions[-1] - regions[0]) / max(1, (len(regions) - 1))
-                
+            if len(regions) >= 3:
+                if len(regions) > 1:
+                    slope = (regions[-1] - regions[0]) / (len(regions) - 1)
+                else:
+                    slope = 0
+                    
                 if len(regions) > 1:
                     changes = [regions[i] - regions[i-1] for i in range(1, len(regions))]
-                    avg_change = np.mean(np.abs(changes)) if changes else 0.1
-                    trend_strength = min(1.0, abs(slope) / max(avg_change, 0.1))
+                    avg_change = np.mean(np.abs(changes))
+                    if avg_change > 0:
+                        trend_strength = min(1.0, abs(slope) / (avg_change + 1e-8))
+                    else:
+                        trend_strength = min(1.0, abs(slope) * 10)
                 else:
-                    trend_strength = 0.5
+                    trend_strength = 0
             else:
-                slope = 0.0
+                slope = 0
                 trend_strength = 0.5
             
-            # GARANTIR valores numéricos válidos
-            price_mean = np.mean(price_data) if price_data.size > 0 else 100.0
-            price_std = np.std(price_data) if price_data.size > 0 else 1.0
-            price_range = np.ptp(price_data) if price_data.size > 0 else 2.0
-            
             return {
-                "trend_direction": float(slope) if not np.isnan(slope) else 0.0,
-                "trend_strength": float(trend_strength) if not np.isnan(trend_strength) else 0.5,
-                "momentum": float(slope) if not np.isnan(slope) else 0.0,
-                "volatility": float(price_std / max(price_mean, 0.1)) if not np.isnan(price_std) and not np.isnan(price_mean) else 0.1,
-                "price_range": float(price_range) if not np.isnan(price_range) else 2.0
+                "trend_direction": float(slope),
+                "trend_strength": float(trend_strength),
+                "momentum": float(slope),
+                "volatility": float(np.std(price_data) / (np.mean(price_data) + 1e-8)),
+                "price_range": float(np.ptp(price_data))
             }
         except Exception:
-            return {
-                "trend_direction": 0.0,
-                "trend_strength": 0.5, 
-                "momentum": 0.0,
-                "volatility": 0.1,
-                "price_range": 2.0
-            }
+            return {"trend_direction": 0.0, "trend_strength": 0.5, "momentum": 0.0, "volatility": 0.0, "price_range": 0.0}
 
     def _calculate_advanced_indicators(self, price_data: np.ndarray) -> Dict[str, float]:
-        """Indicadores técnicos CORRIGIDOS - sem NaN"""
+        """Indicadores técnicos SUPER-REFORÇADOS"""
         try:
             height, width = price_data.shape
             
-            if width > 5:  # Reduzir limite mínimo
+            if width > 10:
                 row_means = np.mean(price_data, axis=0)
                 
-                # Garantir que temos dados suficientes
-                if len(row_means) < 3:
-                    # Preencher com dados simulados se necessário
-                    row_means = np.array([100, 101, 99, 102, 100.5])
-                
-                # MACD SIMPLIFICADO E ROBUSTO
+                # MACD FORTALECIDO
                 fast_window = min(3, len(row_means))
-                slow_window = min(5, len(row_means))
+                slow_window = min(8, len(row_means))
+                signal_window = min(5, len(row_means))
                 
                 fast_ma = np.mean(row_means[-fast_window:])
                 slow_ma = np.mean(row_means[-slow_window:])
                 macd_line = fast_ma - slow_ma
                 
-                # Signal line simples
-                signal_line = macd_line * 0.9
-                macd_histogram = macd_line - signal_line
+                # Signal line (média do MACD)
+                macd_values = []
+                for i in range(slow_window, len(row_means)):
+                    fast_val = np.mean(row_means[i-fast_window:i])
+                    slow_val = np.mean(row_means[i-slow_window:i])
+                    macd_values.append(fast_val - slow_val)
                 
-                # RSI ROBUSTO
-                if len(row_means) > 2:
-                    changes = np.diff(row_means)
-                    gains = changes[changes > 0]
-                    losses = -changes[changes < 0]
+                if len(macd_values) >= signal_window:
+                    signal_line = np.mean(macd_values[-signal_window:])
+                    macd_histogram = macd_line - signal_line
+                else:
+                    signal_line = macd_line * 0.9
+                    macd_histogram = macd_line * 0.1
+                
+                # RSI FORTALECIDO
+                if len(row_means) > 5:
+                    gains = []
+                    losses = []
+                    for i in range(1, len(row_means)):
+                        change = row_means[i] - row_means[i-1]
+                        if change > 0:
+                            gains.append(change)
+                        else:
+                            losses.append(abs(change))
                     
-                    avg_gain = np.mean(gains) if len(gains) > 0 else 0.01
-                    avg_loss = np.mean(losses) if len(losses) > 0 else 0.01
+                    avg_gain = np.mean(gains) if gains else 0
+                    avg_loss = np.mean(losses) if losses else 0
                     
-                    rs = avg_gain / avg_loss
-                    rsi = 100 - (100 / (1 + rs))
+                    if avg_loss == 0:
+                        rsi = 100 if avg_gain > 0 else 50
+                    else:
+                        rs = avg_gain / avg_loss
+                        rsi = 100 - (100 / (1 + rs))
+                    
+                    # Normaliza para -1 a 1
                     rsi_normalized = (rsi - 50) / 50
                 else:
                     rsi_normalized = 0.0
                 
-                # FORÇA DO MACD
-                volatility = max(np.std(row_means), 0.1)  # Evitar divisão por zero
+                # FORÇA DO MACD (0 a 1)
+                volatility = np.std(row_means) + 1e-8
                 macd_strength = min(1.0, abs(macd_histogram) / (volatility * 2))
                 macd_direction = 1 if macd_histogram > 0 else -1
                 macd_power = macd_strength * macd_direction
                 
             else:
-                # Valores padrão seguros
                 rsi_normalized = 0.0
                 macd_power = 0.0
-                macd_strength = 0.3
+                macd_strength = 0.0
             
-            # GARANTIR que todos os valores são números válidos
             return {
-                "rsi": float(rsi_normalized) if not np.isnan(rsi_normalized) else 0.0,
-                "macd": float(macd_power) if not np.isnan(macd_power) else 0.0,
-                "macd_strength": float(macd_strength) if not np.isnan(macd_strength) else 0.3,
-                "volume_intensity": float(min(1.0, np.var(price_data) / 1000.0)) if not np.isnan(np.var(price_data)) else 0.5,
-                "momentum_quality": float(min(1.0, (abs(rsi_normalized) + abs(macd_power)) / 2)) if not np.isnan(rsi_normalized) and not np.isnan(macd_power) else 0.5
+                "rsi": float(rsi_normalized),
+                "macd": float(macd_power),
+                "macd_strength": float(macd_strength),
+                "volume_intensity": float(min(1.0, np.var(price_data) / 1000.0)),
+                "momentum_quality": float(min(1.0, (abs(rsi_normalized) + abs(macd_power)) / 2))
             }
         except Exception as e:
-            # Valores de fallback que não causam NaN
-            return {
-                "rsi": 0.0,
-                "macd": 0.0, 
-                "macd_strength": 0.3,
-                "volume_intensity": 0.5,
-                "momentum_quality": 0.5
-            }
+            return {"rsi": 0.0, "macd": 0.0, "macd_strength": 0.0, "volume_intensity": 0.0, "momentum_quality": 0.0}
 
     # =========================
     #  MOTOR DE DECISÃO 100% NEUTRO
@@ -1021,29 +605,26 @@ class SuperIntelligentAnalyzer:
             return 0.6
 
     def _get_entry_timeframe(self, user_timeframe: str) -> Dict[str, str]:
-        """Calcula timeframe de entrada CORRIGIDO"""
+        """Calcula timeframe de entrada"""
         now = datetime.datetime.now()
-        
         if user_timeframe == '1m':
-            # Próximo minuto redondo
-            entry_time = (now + datetime.timedelta(minutes=1)).replace(second=0, microsecond=0)
+            entry_time = (now + datetime.timedelta(minutes=1)).strftime("%H:%M")
             timeframe_str = "Próximo minuto"
-        else:  # 5m
-            # Próximo candle de 5 minutos
+        else:
             minutes_to_add = 5 - (now.minute % 5)
             if minutes_to_add == 0:
                 minutes_to_add = 5
-            entry_time = (now + datetime.timedelta(minutes=minutes_to_add)).replace(second=0, microsecond=0)
+            entry_time = (now + datetime.timedelta(minutes=minutes_to_add)).strftime("%H:%M")
             timeframe_str = "Próximo candle de 5min"
         
         return {
             "current_time": now.strftime("%H:%M:%S"),
-            "entry_time": entry_time.strftime("%H:%M"),
+            "entry_time": entry_time,
             "timeframe": timeframe_str
         }
 
     def analyze(self, blob: bytes, timeframe: str = '1m') -> Dict[str, Any]:
-        """ANÁLISE 100% NEUTRA COM VALIDAÇÃO AVANÇADA"""
+        """ANÁLISE 100% NEUTRA - DECIDE APENAS PELO MOMENTO DO MERCADO"""
         
         # Cache inteligente
         cached = self.cache.get(blob, timeframe)
@@ -1054,13 +635,7 @@ class SuperIntelligentAnalyzer:
         try:
             # Processamento básico
             image = self._load_image(blob)
-            
-            # 🛡️ VALIDAÇÃO AVANÇADA
             self._validate_chart_image(image)
-            
-            # 📊 ANÁLISE COM OCR E COMPUTER VISION
-            ocr_data = self.ocr.extract_price_data(image)
-            chart_analysis = self.chart_analyzer.analyze_chart_patterns(image)
             
             img_array = self._preprocess_image(image, timeframe)
             price_data = self._extract_price_data(img_array)
@@ -1073,13 +648,7 @@ class SuperIntelligentAnalyzer:
                 },
                 'nano_analysis': self._microscopic_trend_analysis(price_data),
                 'micro_structure': self._analyze_micro_structure(price_data),
-                'flow_dynamics': self._analyze_flow_dynamics(price_data),
-                # 🆕 NOVAS ANÁLISES
-                'advanced_analysis': {
-                    'ocr_data': ocr_data,
-                    'chart_patterns': chart_analysis,
-                    'validation_confidence': self.validator.validate_chart_image(image)['confidence']
-                }
+                'flow_dynamics': self._analyze_flow_dynamics(price_data)
             }
             
             # 🎯 MOTOR DE DECISÃO 100% NEUTRO
@@ -1103,11 +672,6 @@ class SuperIntelligentAnalyzer:
                 "analysis_grade": "high" if signal_quality > 0.7 else "medium",
                 "market_context": decision["context"],
                 "micro_quality": analyses['nano_analysis']['convergence_strength'],
-                "advanced_validation": {
-                    "chart_confidence": analyses['advanced_analysis']['validation_confidence'],
-                    "ocr_confidence": analyses['advanced_analysis']['ocr_data']['confidence'],
-                    "pattern_confidence": analyses['advanced_analysis']['chart_patterns']['analysis_confidence']
-                },
                 "metrics": {
                     "analysis_score": float(decision["total_score"]),
                     "trend_power": float(decision["trend_power"]),
@@ -1139,11 +703,6 @@ class SuperIntelligentAnalyzer:
                 "analysis_grade": "medium",
                 "market_context": "market_analysis",
                 "micro_quality": 0.6,
-                "advanced_validation": {
-                    "chart_confidence": 0.0,
-                    "ocr_confidence": 0.0,
-                    "pattern_confidence": 0.0
-                }
             })
             return fallback_result
 
@@ -1433,14 +992,6 @@ HTML_TEMPLATE = '''
             background: linear-gradient(135deg, #7ce0ff, #4a90e2);
             color: white;
         }
-
-        .validation-info {
-            background: rgba(124, 224, 255, 0.1);
-            border-radius: 8px;
-            padding: 10px;
-            margin: 10px 0;
-            border: 1px solid #7ce0ff;
-        }
     </style>
 </head>
 <body>
@@ -1495,13 +1046,6 @@ HTML_TEMPLATE = '''
             
             <div id="contextInfo" style="text-align: center; margin: 10px 0;"></div>
             
-            <div class="validation-info" id="validationInfo" style="display: none;">
-                <div style="text-align: center; font-weight: 600; margin-bottom: 8px; color: #7ce0ff;">
-                    🛡️ VALIDAÇÃO AVANÇADA
-                </div>
-                <div id="validationMetrics"></div>
-            </div>
-            
             <div class="power-analysis" id="powerAnalysis">
                 <div style="text-align: center; font-weight: 600; margin-bottom: 8px; color: #7ce0ff;">
                     ⚡ ANÁLISE DO MOMENTO
@@ -1533,8 +1077,6 @@ HTML_TEMPLATE = '''
             const contextInfo = document.getElementById('contextInfo');
             const powerAnalysis = document.getElementById('powerAnalysis');
             const powerMetrics = document.getElementById('powerMetrics');
-            const validationInfo = document.getElementById('validationInfo');
-            const validationMetrics = document.getElementById('validationMetrics');
             const timeframeBtns = document.querySelectorAll('.timeframe-btn');
 
             let currentTimeframe = '1m';
@@ -1557,24 +1099,19 @@ HTML_TEMPLATE = '''
             
             uploadArea.addEventListener('dragover', (e) => {
                 e.preventDefault();
-                e.stopPropagation();
                 uploadArea.style.borderColor = '#00ff88';
             });
             
-            uploadArea.addEventListener('dragleave', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
+            uploadArea.addEventListener('dragleave', () => {
                 uploadArea.style.borderColor = '#7ce0ff';
             });
             
             uploadArea.addEventListener('drop', (e) => {
                 e.preventDefault();
-                e.stopPropagation();
                 uploadArea.style.borderColor = '#7ce0ff';
-                
-                if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                if (e.dataTransfer.files.length) {
                     fileInput.files = e.dataTransfer.files;
-                    handleFileSelect({target: fileInput});
+                    handleFileSelect(e);
                 }
             });
 
@@ -1592,9 +1129,6 @@ HTML_TEMPLATE = '''
                         imagePreview.style.display = 'block';
                     };
                     reader.readAsDataURL(selectedFile);
-                    
-                    // CORREÇÃO: Não abrir a caixa de seleção novamente
-                    event.target.value = ''; // Reset para permitir selecionar o mesmo arquivo
                 } else {
                     analyzeBtn.disabled = true;
                     analyzeBtn.textContent = '🧠 SELECIONE UMA IMAGEM PRIMEIRO';
@@ -1614,7 +1148,6 @@ HTML_TEMPLATE = '''
                 analyzeBtn.textContent = `🧠 ANALISANDO ${currentTimeframe.toUpperCase()}...`;
                 result.style.display = 'block';
                 errorMessage.style.display = 'none';
-                validationInfo.style.display = 'none';
                 
                 signalText.className = 'signal-text';
                 signalText.textContent = 'Analisando momento do mercado...';
@@ -1731,30 +1264,6 @@ HTML_TEMPLATE = '''
                     </span>
                 `;
                 
-                // Validação Avançada
-                if (data.advanced_validation) {
-                    validationInfo.style.display = 'block';
-                    const validation = data.advanced_validation;
-                    
-                    let validationHtml = '';
-                    const validationItems = [
-                        ['Confiança do Gráfico', (validation.chart_confidence * 100).toFixed(1) + '%'],
-                        ['Confiança OCR', (validation.ocr_confidence * 100).toFixed(1) + '%'],
-                        ['Confiança de Padrões', (validation.pattern_confidence * 100).toFixed(1) + '%']
-                    ];
-                    
-                    validationItems.forEach(([label, value]) => {
-                        validationHtml += `
-                            <div class="metric-item">
-                                <span>${label}:</span>
-                                <span class="metric-value">${value}</span>
-                            </div>
-                        `;
-                    });
-                    
-                    validationMetrics.innerHTML = validationHtml;
-                }
-                
                 // Análise do Momento
                 const metrics = data.metrics || {};
                 let powerHtml = '';
@@ -1855,7 +1364,7 @@ def health_check():
         'status': 'healthy', 
         'service': 'IA Signal Pro - 100% NEUTRA',
         'timestamp': datetime.datetime.now().isoformat(),
-        'version': '7.0.0-corrigida'
+        'version': '6.0.0-zero-vies'
     })
 
 @app.route('/cache/clear', methods=['POST'])
@@ -1884,14 +1393,10 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('DEBUG', 'False').lower() == 'true'
     
-    print(f"🚀 IA Signal Pro - SISTEMA CORRIGIDO iniciando na porta {port}")
-    print(f"🛠️  CORREÇÕES APLICADAS:")
-    print(f"   ✅ Processamento de imagens corrigido")
-    print(f"   ✅ Horário de entrada ajustado") 
-    print(f"   ✅ Parâmetros NaN/undefined eliminados")
-    print(f"   ✅ Sistema de rejeição menos restritivo")
-    print(f"   ✅ OCR melhorado para extrair dados reais")
+    print(f"🚀 IA Signal Pro - 100% NEUTRA iniciando na porta {port}")
     print(f"🧠⚖️ SISTEMA: ZERO VIÉS - DECISÕES PURAMENTE TÉCNICAS")
     print(f"🎯 PRINCÍPIO: APENAS PELO MOMENTO REAL DO MERCADO")
+    print(f"📈 SAÍDA: COMPRA ou VENDA - SEM FAVORITISMO")
+    print(f"💪 NEUTRALIDADE: PONDERAÇÃO IGUAL + ANÁLISE DO MOMENTO")
     
     app.run(host='0.0.0.0', port=port, debug=debug)
