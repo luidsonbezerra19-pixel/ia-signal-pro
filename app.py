@@ -1,8 +1,3 @@
-[file name]: app_corrigido_completo.py
-[file content begin]
-from __future__ import annotations
-
-"""
 IA SIGNAL PRO - SUPER INTELIGENTE E NEUTRA 🧠⚖️
 ANÁLISE DE GRÁFICOS REAIS - SEM FALLBACKS
 """
