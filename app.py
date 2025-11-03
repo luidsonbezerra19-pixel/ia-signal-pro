@@ -1194,6 +1194,7 @@ class SuperIntelligentAnalyzer:
             }
 
 # =========================
+# =========================
 #  APLICAÇÃO FLASK COMPLETA
 # =========================
 app = Flask(__name__)
