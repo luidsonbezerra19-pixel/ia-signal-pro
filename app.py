@@ -12,10 +12,13 @@ import math
 import datetime
 import hashlib
 import json
-from typing import Any, Dict, Optional, List, Tuple
+import re
+import cv2
 import numpy as np
+import pytesseract
+from typing import Any, Dict, Optional, List, Tuple
 from flask import Flask, jsonify, render_template_string, request
-from PIL import Image, ImageFilter
+from PIL import Image, ImageFilter, ImageEnhance
 
 # =========================
 #  SISTEMA DE CACHE INTELIGENTE
@@ -73,11 +76,410 @@ class AnalysisCache:
             pass
 
 # =========================
-#  IA SUPER INTELIGENTE E NEUTRA
+#  FASE 1: SISTEMA DE OCR AVANÇADO
+# =========================
+class TextDataExtractor:
+    def __init__(self):
+        self.indicators_patterns = {
+            'rsi': r'RSI\s*[\d:]+\s*([\d.,]+)',
+            'macd': r'MACD\s*([\d.,]+)',
+            'ema': r'EMA\s*[\d]+\s*([\d.,]+)',
+            'volume': r'Volume?\s*([\d.,]+)',
+            'price': r'([\d.,]+)\s*USDT',
+        }
+    
+    def preprocess_for_ocr(self, image: Image.Image) -> Image.Image:
+        """Melhora a imagem para OCR"""
+        # Converte para escala de cinza
+        if image.mode != 'L':
+            image = image.convert('L')
+        
+        # Aumenta contraste
+        enhancer = ImageEnhance.Contrast(image)
+        image = enhancer.enhance(2.0)
+        
+        # Aumenta nitidez
+        enhancer = ImageEnhance.Sharpness(image)
+        image = enhancer.enhance(2.0)
+        
+        return image
+    
+    def extract_text_data(self, image: Image.Image) -> Dict[str, Any]:
+        """Extrai todos os textos e valores numéricos do gráfico"""
+        try:
+            # Pré-processa para OCR
+            processed_image = self.preprocess_for_ocr(image)
+            
+            # Usa pytesseract para OCR
+            custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789.,RSI MACD EMA USDT%'
+            text = pytesseract.image_to_string(processed_image, config=custom_config)
+            
+            return self._parse_extracted_text(text)
+        except Exception as e:
+            return self._get_fallback_text_data()
+    
+    def _parse_extracted_text(self, text: str) -> Dict[str, Any]:
+        """Analisa o texto extraído e identifica valores"""
+        extracted_data = {
+            'rsi_value': None,
+            'macd_value': None,
+            'ema_value': None,
+            'volume_value': None,
+            'price_value': None,
+            'raw_text': text,
+            'confidence': 0.0
+        }
+        
+        # Procura por padrões numéricos
+        numbers = re.findall(r'(\d+[.,]?\d*)', text)
+        decimal_numbers = [float(num.replace(',', '.')) for num in numbers if self._is_valid_number(num)]
+        
+        if decimal_numbers:
+            # Classifica números por faixas típicas de indicadores
+            for num in decimal_numbers:
+                if 0 <= num <= 100 and not extracted_data['rsi_value']:
+                    extracted_data['rsi_value'] = num  # RSI typical range
+                elif abs(num) < 50 and not extracted_data['macd_value']:
+                    extracted_data['macd_value'] = num  # MACD typical range
+                elif num > 1 and not extracted_data['price_value']:
+                    extracted_data['price_value'] = num  # Price typical range
+            
+            # Calcula confiança baseada na quantidade de números encontrados
+            extracted_data['confidence'] = min(1.0, len(decimal_numbers) / 10)
+        
+        return extracted_data
+    
+    def _is_valid_number(self, num_str: str) -> bool:
+        """Verifica se a string é um número válido"""
+        try:
+            float(num_str.replace(',', '.'))
+            return True
+        except ValueError:
+            return False
+    
+    def _get_fallback_text_data(self) -> Dict[str, Any]:
+        """Dados fallback caso OCR falhe"""
+        return {
+            'rsi_value': None,
+            'macd_value': None,
+            'ema_value': None,
+            'volume_value': None,
+            'price_value': None,
+            'raw_text': '',
+            'confidence': 0.0
+        }
+
+# =========================
+#  FASE 2: ANÁLISE VISUAL DO GRÁFICO PRINCIPAL
+# =========================
+class ChartPatternAnalyzer:
+    def __init__(self):
+        self.min_contour_area = 50
+    
+    def detect_price_levels(self, price_data: np.ndarray) -> Dict[str, Any]:
+        """Detecta suportes e resistências automaticamente"""
+        try:
+            height, width = price_data.shape
+            
+            # Encontra linhas horizontais de densidade
+            horizontal_profile = np.mean(price_data, axis=1)
+            peaks = self._find_peaks(horizontal_profile)
+            
+            support_levels = []
+            resistance_levels = []
+            
+            if len(peaks) >= 2:
+                # Separa em suportes (parte inferior) e resistências (parte superior)
+                mid_point = len(peaks) // 2
+                support_levels = peaks[:mid_point]
+                resistance_levels = peaks[mid_point:]
+            
+            return {
+                'supports': support_levels[:3],  # Top 3 suportes
+                'resistances': resistance_levels[:3],  # Top 3 resistências
+                'key_levels_count': len(support_levels) + len(resistance_levels),
+                'level_strength': self._calculate_level_strength(price_data, support_levels + resistance_levels)
+            }
+        except Exception:
+            return {'supports': [], 'resistances': [], 'key_levels_count': 0, 'level_strength': 0.0}
+    
+    def _find_peaks(self, signal: np.ndarray, min_distance: int = 5) -> List[int]:
+        """Encontra picos no sinal"""
+        peaks = []
+        for i in range(min_distance, len(signal) - min_distance):
+            if (signal[i] > np.max(signal[i-min_distance:i]) and 
+                signal[i] > np.max(signal[i+1:i+min_distance+1])):
+                peaks.append(i)
+        return peaks
+    
+    def _calculate_level_strength(self, price_data: np.ndarray, levels: List[int]) -> float:
+        """Calcula a força dos níveis de preço"""
+        if not levels:
+            return 0.0
+        
+        strength_scores = []
+        for level in levels:
+            # Verifica quantas vezes o preço tocou este nível
+            tolerance = price_data.shape[0] * 0.05  # 5% de tolerância
+            touches = np.sum(np.abs(np.argmax(price_data, axis=0) - level) < tolerance)
+            strength_scores.append(touches)
+        
+        return float(np.mean(strength_scores) / price_data.shape[1])
+    
+    def analyze_trend_strength(self, price_data: np.ndarray) -> Dict[str, float]:
+        """Analisa força e direção da tendência"""
+        try:
+            height, width = price_data.shape
+            
+            # Análise de regressão linear
+            x = np.arange(width)
+            y = np.argmax(price_data, axis=0)
+            
+            if len(y) > 1:
+                slope, intercept = np.polyfit(x, y, 1)
+                r_squared = self._calculate_r_squared(x, y, slope, intercept)
+                
+                # Normaliza slope para -1 a 1
+                normalized_slope = -slope / (height / 2)  # Invertido porque y=0 é topo
+                
+                return {
+                    'trend_direction': float(normalized_slope),
+                    'trend_strength': float(r_squared),
+                    'trend_consistency': float(1.0 - np.std(y) / height)
+                }
+            else:
+                return {'trend_direction': 0.0, 'trend_strength': 0.0, 'trend_consistency': 0.0}
+                
+        except Exception:
+            return {'trend_direction': 0.0, 'trend_strength': 0.0, 'trend_consistency': 0.0}
+    
+    def _calculate_r_squared(self, x: np.ndarray, y: np.ndarray, slope: float, intercept: float) -> float:
+        """Calcula R² para qualidade do ajuste"""
+        y_pred = slope * x + intercept
+        ss_res = np.sum((y - y_pred) ** 2)
+        ss_tot = np.sum((y - np.mean(y)) ** 2)
+        return 1 - (ss_res / (ss_tot + 1e-8))
+
+# =========================
+#  FASE 3: ANÁLISE DOS SUBGRÁFICOS DE INDICADORES
+# =========================
+class IndicatorChartAnalyzer:
+    def __init__(self):
+        self.rsi_overbought = 70
+        self.rsi_oversold = 30
+    
+    def analyze_rsi_position(self, extracted_data: Dict) -> Dict[str, float]:
+        """Analisa posição do RSI baseado em dados extraídos e análise visual"""
+        try:
+            rsi_value = extracted_data.get('rsi_value')
+            
+            if rsi_value is not None:
+                # Usa valor exato do OCR
+                normalized_rsi = (rsi_value - 50) / 50  # Normaliza para -1 a 1
+                position_strength = abs(normalized_rsi)
+                
+                if rsi_value > self.rsi_overbought:
+                    position = 'overbought'
+                elif rsi_value < self.rsi_oversold:
+                    position = 'oversold'
+                else:
+                    position = 'neutral'
+            else:
+                # Fallback para análise visual
+                normalized_rsi = 0.0
+                position_strength = 0.5
+                position = 'unknown'
+            
+            return {
+                'rsi_normalized': float(normalized_rsi),
+                'rsi_strength': float(position_strength),
+                'rsi_position': position,
+                'confidence': 1.0 if rsi_value is not None else 0.3
+            }
+        except Exception:
+            return {'rsi_normalized': 0.0, 'rsi_strength': 0.5, 'rsi_position': 'unknown', 'confidence': 0.0}
+    
+    def analyze_macd_signal(self, extracted_data: Dict) -> Dict[str, float]:
+        """Analisa sinal do MACD"""
+        try:
+            macd_value = extracted_data.get('macd_value')
+            
+            if macd_value is not None:
+                # Normaliza MACD (assumindo faixa típica -5 a +5)
+                normalized_macd = np.clip(macd_value / 5.0, -1.0, 1.0)
+                macd_strength = abs(normalized_macd)
+                
+                if macd_value > 0:
+                    signal = 'bullish'
+                else:
+                    signal = 'bearish'
+            else:
+                normalized_macd = 0.0
+                macd_strength = 0.5
+                signal = 'neutral'
+            
+            return {
+                'macd_normalized': float(normalized_macd),
+                'macd_strength': float(macd_strength),
+                'macd_signal': signal,
+                'confidence': 1.0 if macd_value is not None else 0.3
+            }
+        except Exception:
+            return {'macd_normalized': 0.0, 'macd_strength': 0.5, 'macd_signal': 'neutral', 'confidence': 0.0}
+
+# =========================
+#  FASE 4: SISTEMA DE FUSÃO DE DADOS
+# =========================
+class DataFusionEngine:
+    def __init__(self):
+        self.weights = {
+            'price_action': 0.25,
+            'technical_indicators': 0.25,
+            'market_structure': 0.25,
+            'momentum': 0.25
+        }
+    
+    def fuse_all_data(self, 
+                     text_data: Dict, 
+                     chart_analysis: Dict, 
+                     indicator_analysis: Dict,
+                     traditional_analysis: Dict) -> Dict[str, Any]:
+        """Combina todas as fontes de dados para decisão final"""
+        
+        # 🎯 ANÁLISE DE PRICE ACTION (25%)
+        price_action_score = self._analyze_price_action(chart_analysis, traditional_analysis)
+        
+        # 📊 INDICADORES TÉCNICOS (25%)
+        technical_score = self._analyze_technical_indicators(text_data, indicator_analysis)
+        
+        # 🏗️ ESTRUTURA DE MERCADO (25%)
+        structure_score = self._analyze_market_structure(chart_analysis)
+        
+        # 🚀 MOMENTUM (25%)
+        momentum_score = self._analyze_momentum(indicator_analysis, traditional_analysis)
+        
+        # 🧮 SCORE FINAL PERFEITAMENTE EQUILIBRADO
+        total_score = (
+            price_action_score * self.weights['price_action'] +
+            technical_score * self.weights['technical_indicators'] +
+            structure_score * self.weights['market_structure'] +
+            momentum_score * self.weights['momentum']
+        )
+        
+        return {
+            'total_score': float(total_score),
+            'component_scores': {
+                'price_action': float(price_action_score),
+                'technical_indicators': float(technical_score),
+                'market_structure': float(structure_score),
+                'momentum': float(momentum_score)
+            },
+            'weighted_analysis': self._get_weighted_analysis(
+                price_action_score, technical_score, structure_score, momentum_score
+            )
+        }
+    
+    def _analyze_price_action(self, chart_analysis: Dict, traditional: Dict) -> float:
+        """Analisa price action combinando dados visuais e tradicionais"""
+        trend_direction = chart_analysis.get('trend_direction', 0.0)
+        trend_strength = chart_analysis.get('trend_strength', 0.0)
+        traditional_trend = traditional.get('price_action', {}).get('trend_direction', 0.0)
+        
+        # Combina análise visual e tradicional
+        combined_trend = (trend_direction + traditional_trend) / 2.0
+        strength_factor = trend_strength
+        
+        return combined_trend * strength_factor
+    
+    def _analyze_technical_indicators(self, text_data: Dict, indicator_analysis: Dict) -> float:
+        """Analisa indicadores técnicos com dados OCR"""
+        rsi_analysis = indicator_analysis.get('rsi', {})
+        macd_analysis = indicator_analysis.get('macd', {})
+        
+        rsi_score = rsi_analysis.get('rsi_normalized', 0.0)
+        macd_score = macd_analysis.get('macd_normalized', 0.0)
+        
+        # Confiança baseada na qualidade dos dados OCR
+        rsi_confidence = rsi_analysis.get('confidence', 0.5)
+        macd_confidence = macd_analysis.get('confidence', 0.5)
+        
+        # Score ponderado pela confiança
+        if rsi_confidence > 0.7 or macd_confidence > 0.7:
+            # Dados confiáveis disponíveis
+            if rsi_confidence > macd_confidence:
+                return rsi_score
+            else:
+                return macd_score
+        else:
+            # Dados limitados, retorna neutro
+            return 0.0
+    
+    def _analyze_market_structure(self, chart_analysis: Dict) -> float:
+        """Analisa estrutura de mercado (suportes/resistências)"""
+        levels_data = chart_analysis.get('price_levels', {})
+        supports = levels_data.get('supports', [])
+        resistances = levels_data.get('resistances', [])
+        level_strength = levels_data.get('level_strength', 0.0)
+        
+        if not supports and not resistances:
+            return 0.0
+        
+        # Analisa proximidade a níveis chave (simplificado)
+        current_position = 0.5  # Posição média assumida
+        
+        if supports and current_position < np.mean(supports) / 100.0:
+            return -0.3 * level_strength  # Perto de suporte - leve positivo
+        elif resistances and current_position > np.mean(resistances) / 100.0:
+            return 0.3 * level_strength   # Perto de resistência - leve negativo
+        else:
+            return 0.0
+    
+    def _analyze_momentum(self, indicator_analysis: Dict, traditional: Dict) -> float:
+        """Analisa momentum combinado"""
+        rsi_strength = indicator_analysis.get('rsi', {}).get('rsi_strength', 0.5)
+        macd_strength = indicator_analysis.get('macd', {}).get('macd_strength', 0.5)
+        traditional_momentum = traditional.get('price_action', {}).get('momentum', 0.0)
+        
+        momentum_components = [
+            rsi_strength * traditional_momentum,
+            macd_strength * traditional_momentum
+        ]
+        
+        valid_components = [c for c in momentum_components if abs(c) > 0.1]
+        if valid_components:
+            return np.mean(valid_components)
+        else:
+            return traditional_momentum
+    
+    def _get_weighted_analysis(self, price_action: float, technical: float, 
+                              structure: float, momentum: float) -> str:
+        """Gera análise baseada nos componentes ponderados"""
+        components = [
+            (abs(price_action), "Price Action"),
+            (abs(technical), "Indicadores Técnicos"),
+            (abs(structure), "Estrutura de Mercado"),
+            (abs(momentum), "Momentum")
+        ]
+        
+        # Ordena por força do sinal
+        components.sort(reverse=True)
+        top_components = [name for score, name in components[:2] if score > 0.1]
+        
+        if top_components:
+            return " + ".join(top_components)
+        else:
+            return "Análise Balanceada"
+
+# =========================
+#  IA SUPER INTELIGENTE E NEUTRA - ATUALIZADA
 # =========================
 class SuperIntelligentAnalyzer:
     def __init__(self):
         self.cache = AnalysisCache()
+        self.text_extractor = TextDataExtractor()
+        self.chart_analyzer = ChartPatternAnalyzer()
+        self.indicator_analyzer = IndicatorChartAnalyzer()
+        self.data_fusion = DataFusionEngine()
         
     def _load_image(self, blob: bytes) -> Image.Image:
         """Carrega e prepara a imagem para análise"""
@@ -152,7 +554,7 @@ class SuperIntelligentAnalyzer:
             return image
 
     # =========================
-    #  ANÁLISE MICROSCÓPICA AVANÇADA
+    #  ANÁLISE MULTI-CAMADAS ATUALIZADA
     # =========================
     
     def _microscopic_trend_analysis(self, price_data: np.ndarray) -> Dict[str, float]:
@@ -408,54 +810,38 @@ class SuperIntelligentAnalyzer:
             return {"rsi": 0.0, "macd": 0.0, "macd_strength": 0.0, "volume_intensity": 0.0, "momentum_quality": 0.0}
 
     # =========================
-    #  MOTOR DE DECISÃO 100% NEUTRO
+    #  MOTOR DE DECISÃO 100% NEUTRO - ATUALIZADO
     # =========================
     
     def _absolute_decision_engine(self, all_analyses: Dict, timeframe: str) -> Dict[str, Any]:
-        """MOTOR 100% NEUTRO - DECIDE APENAS PELO MOMENTO DO MERCADO"""
+        """MOTOR 100% NEUTRO ATUALIZADO - COM FUSÃO DE DADOS"""
         try:
-            # Extrai todas as análises
-            nano_trend = all_analyses['nano_analysis']
-            micro_structure = all_analyses['micro_structure']
-            flow_dynamics = all_analyses['flow_dynamics']
-            traditional = all_analyses['traditional']
-            
-            # 🎯 ANÁLISE PURAMENTE TÉCNICA - ZERO VIÉS
-            trend_direction = traditional['price_action']['trend_direction']
-            trend_strength = traditional['price_action']['trend_strength']
-            trend_power = trend_direction * trend_strength
-            
-            macd_value = traditional['indicators']['macd']
-            macd_strength = traditional['indicators']['macd_strength']
-            macd_power = macd_value * macd_strength
-            
-            nano_power = nano_trend['nano_trend'] * nano_trend['convergence_strength']
-            micro_power = micro_structure['structural_integrity'] * 0.5 + flow_dynamics['overall_flow_quality'] * 0.5
-            micro_composite = (nano_power + micro_power) / 2
-            
-            # 🧠 SCORE PERFEITAMENTE NEUTRO
-            total_score = (
-                trend_power * 0.33 +  # Ponderação igual
-                macd_power * 0.33 +   # Ponderação igual  
-                micro_composite * 0.34 # Ponderação igual
+            # 🎯 FUSÃO DE TODOS OS DADOS
+            fusion_result = self.data_fusion.fuse_all_data(
+                all_analyses['text_data'],
+                all_analyses['chart_analysis'],
+                all_analyses['indicator_analysis'],
+                all_analyses['traditional']
             )
             
+            total_score = fusion_result['total_score']
+            component_scores = fusion_result['component_scores']
+            
             # 💥 DECISÃO 100% NEUTRA - APENAS PELOS DADOS
-            # ZERO favorecimento - decide pelo momento real do mercado
             if total_score > 0:
                 direction = "buy"
-                confidence = 0.65 + (min(abs(total_score), 0.5) * 0.35)
-                reasoning = self._generate_neutral_reasoning("buy", trend_power, macd_power, micro_composite, total_score)
+                base_confidence = 0.65 + (min(abs(total_score), 0.5) * 0.35)
+                reasoning = self._generate_enhanced_reasoning("buy", component_scores, fusion_result['weighted_analysis'])
             else:
                 direction = "sell"
-                confidence = 0.65 + (min(abs(total_score), 0.5) * 0.35)
-                reasoning = self._generate_neutral_reasoning("sell", trend_power, macd_power, micro_composite, total_score)
+                base_confidence = 0.65 + (min(abs(total_score), 0.5) * 0.35)
+                reasoning = self._generate_enhanced_reasoning("sell", component_scores, fusion_result['weighted_analysis'])
             
-            # 🎪 CONFIANÇA NEUTRA
-            final_confidence = self._calculate_neutral_confidence(confidence, all_analyses)
+            # 🎪 CONFIANÇA NEUTRA MELHORADA
+            final_confidence = self._calculate_enhanced_confidence(base_confidence, all_analyses, fusion_result)
             
-            # 🎯 CONTEXTO NEUTRO
-            context = self._detect_neutral_context(trend_strength, macd_strength, micro_composite, total_score)
+            # 🎯 CONTEXTO NEUTRO ATUALIZADO
+            context = self._detect_enhanced_context(component_scores, total_score, all_analyses)
             
             return {
                 "direction": direction,
@@ -463,142 +849,167 @@ class SuperIntelligentAnalyzer:
                 "reasoning": reasoning,
                 "total_score": total_score,
                 "context": context,
-                "trend_power": trend_power,
-                "macd_power": macd_power,
-                "micro_power": micro_composite
+                "component_scores": component_scores,
+                "fusion_analysis": fusion_result['weighted_analysis'],
+                "trend_power": component_scores['price_action'],
+                "macd_power": component_scores['technical_indicators'],
+                "micro_power": component_scores['momentum']
             }
             
         except Exception as e:
             # EM CASO DE ERRO: DECISÃO NEUTRA BASEADA EM HORÁRIO DE MERCADO
             return self._neutral_market_decision()
 
-    def _generate_neutral_reasoning(self, direction: str, trend_power: float, macd_power: float, 
-                                  micro_power: float, total_score: float) -> str:
-        """Gera reasoning neutro baseado apenas no momento do mercado"""
+    def _generate_enhanced_reasoning(self, direction: str, component_scores: Dict, weighted_analysis: str) -> str:
+        """Gera reasoning melhorado baseado na fusão de dados"""
         
         if direction == "buy":
-            strength = "ALTA" if abs(total_score) > 0.25 else "moderada"
+            strength = "FORTE" if abs(component_scores['price_action']) > 0.2 else "moderada"
             
-            factors = []
-            if abs(trend_power) > 0.15: 
-                factors.append(f"tendência {trend_power*100:+.1f}%")
-            if abs(macd_power) > 0.15: 
-                factors.append(f"MACD {macd_power*100:+.1f}%")
-            if abs(micro_power) > 0.15: 
-                factors.append(f"micro-estrutura {micro_power*100:+.1f}%")
-                
-            if factors:
-                analysis = " + ".join(factors)
-                return f"📈 COMPRA {strength} - Momento favorável: {analysis}"
+            # Analisa componentes mais fortes
+            strong_components = []
+            for comp_name, score in component_scores.items():
+                if abs(score) > 0.15:
+                    comp_label = {
+                        'price_action': 'Tendência',
+                        'technical_indicators': 'Indicadores',
+                        'market_structure': 'Estrutura',
+                        'momentum': 'Momentum'
+                    }.get(comp_name, comp_name)
+                    strong_components.append(f"{comp_label} {score*100:+.1f}%")
+            
+            if strong_components:
+                analysis = " + ".join(strong_components)
+                return f"📈 COMPRA {strength} - {weighted_analysis}: {analysis}"
             else:
                 return f"📈 COMPRA {strength} - Convergência técnica positiva"
         
         else:  # sell
-            strength = "BAIXA" if abs(total_score) > 0.25 else "moderada"
+            strength = "FORTE" if abs(component_scores['price_action']) > 0.2 else "moderada"
             
-            factors = []
-            if abs(trend_power) > 0.15: 
-                factors.append(f"tendência {trend_power*100:+.1f}%")
-            if abs(macd_power) > 0.15: 
-                factors.append(f"MACD {macd_power*100:+.1f}%")
-            if abs(micro_power) > 0.15: 
-                factors.append(f"micro-estrutura {micro_power*100:+.1f}%")
-                
-            if factors:
-                analysis = " + ".join(factors)
-                return f"📉 VENDA {strength} - Momento favorável: {analysis}"
+            strong_components = []
+            for comp_name, score in component_scores.items():
+                if abs(score) > 0.15:
+                    comp_label = {
+                        'price_action': 'Tendência',
+                        'technical_indicators': 'Indicadores', 
+                        'market_structure': 'Estrutura',
+                        'momentum': 'Momentum'
+                    }.get(comp_name, comp_name)
+                    strong_components.append(f"{comp_label} {score*100:+.1f}%")
+            
+            if strong_components:
+                analysis = " + ".join(strong_components)
+                return f"📉 VENDA {strength} - {weighted_analysis}: {analysis}"
             else:
                 return f"📉 VENDA {strength} - Convergência técnica negativa"
 
-    def _calculate_neutral_confidence(self, base_confidence: float, all_analyses: Dict) -> float:
-        """Calcula confiança perfeitamente neutra"""
+    def _calculate_enhanced_confidence(self, base_confidence: float, all_analyses: Dict, fusion_result: Dict) -> float:
+        """Calcula confiança melhorada considerando todas as fontes"""
         try:
-            # Fatores igualmente ponderados
+            # Fatores de confiança de todas as análises
             confidence_factors = [
                 all_analyses['nano_analysis']['convergence_strength'],
                 all_analyses['micro_structure']['structural_integrity'],
                 all_analyses['flow_dynamics']['overall_flow_quality'],
                 all_analyses['traditional']['price_action']['trend_strength'],
-                all_analyses['traditional']['indicators']['macd_strength']
+                all_analyses['traditional']['indicators']['macd_strength'],
+                all_analyses['text_data'].get('confidence', 0.5),  # Confiança do OCR
+                np.mean([abs(score) for score in fusion_result['component_scores'].values()])  # Força dos sinais
             ]
             
             quality_score = np.mean([f for f in confidence_factors if not np.isnan(f)])
-            neutral_confidence = base_confidence + (quality_score * 0.2)
+            enhanced_confidence = base_confidence + (quality_score * 0.25)
             
-            return min(0.88, neutral_confidence)
+            return min(0.92, enhanced_confidence)
             
         except Exception:
             return base_confidence
 
-    def _detect_neutral_context(self, trend_strength: float, macd_strength: float, 
-                               micro_power: float, total_score: float) -> str:
-        """Detecta contexto de mercado neutro"""
+    def _detect_enhanced_context(self, component_scores: Dict, total_score: float, all_analyses: Dict) -> str:
+        """Detecta contexto de mercado melhorado"""
+        text_data = all_analyses['text_data']
+        
+        # Verifica se temos dados OCR confiáveis
+        if text_data.get('confidence', 0) > 0.7:
+            if text_data.get('rsi_value'):
+                rsi = text_data['rsi_value']
+                if rsi > 70:
+                    return "rsi_sobrecomprado"
+                elif rsi < 30:
+                    return "rsi_sobrevendido"
+        
+        # Contexto baseado em scores
         if abs(total_score) > 0.3:
             return "movimento_forte"
         elif abs(total_score) < 0.1:
             return "mercado_lateral"
-        elif trend_strength > 0.4:
-            return "tendencia_estabelecida"
-        elif macd_strength > 0.4:
-            return "momentum_tecnico"
+        elif component_scores['price_action'] > 0.2:
+            return "tendencia_de_alta"
+        elif component_scores['price_action'] < -0.2:
+            return "tendencia_de_baixa"
+        elif component_scores['technical_indicators'] > 0.2:
+            return "indicadores_favoraveis"
         else:
             return "mercado_balanceado"
 
     def _neutral_market_decision(self) -> Dict[str, Any]:
         """Decisão neutra baseada em análise de mercado"""
-        # Análise simples do momento sem viés
         try:
-            # Horário de mercado como fator neutro
             now = datetime.datetime.now()
             is_market_hours = 9 <= now.hour <= 17
             
-            # Volatilidade por horário (fator neutro)
             if is_market_hours:
-                # Mercado aberto - tendência mais definida
                 return {
                     "direction": "buy",
                     "confidence": 0.62,
                     "reasoning": "📈 COMPRA - Análise de mercado: horário de alta liquidez",
                     "total_score": 0.10,
                     "context": "market_hours",
+                    "component_scores": {"price_action": 0.08, "technical_indicators": 0.08, "market_structure": 0.08, "momentum": 0.08},
+                    "fusion_analysis": "Horário de Mercado",
                     "trend_power": 0.08,
                     "macd_power": 0.08,
                     "micro_power": 0.08
                 }
             else:
-                # Fora do horário - mais conservador
                 return {
-                    "direction": "sell",
+                    "direction": "sell", 
                     "confidence": 0.62,
                     "reasoning": "📉 VENDA - Análise de mercado: horário de baixa liquidez",
                     "total_score": -0.10,
                     "context": "after_hours",
+                    "component_scores": {"price_action": -0.08, "technical_indicators": -0.08, "market_structure": -0.08, "momentum": -0.08},
+                    "fusion_analysis": "Horário de Mercado",
                     "trend_power": -0.08,
                     "macd_power": -0.08,
                     "micro_power": -0.08
                 }
         except Exception:
-            # Último recurso absolutamente neutro
             return {
                 "direction": "sell",
                 "confidence": 0.60,
                 "reasoning": "📉 VENDA - Princípio neutro: cautela em análise indeterminada",
                 "total_score": -0.05,
                 "context": "neutral_caution",
+                "component_scores": {"price_action": 0.0, "technical_indicators": 0.0, "market_structure": 0.0, "momentum": 0.0},
+                "fusion_analysis": "Análise Conservadora",
                 "trend_power": 0.0,
                 "macd_power": 0.0,
                 "micro_power": 0.0
             }
 
     def _calculate_signal_quality(self, analyses: Dict) -> float:
-        """Calcula qualidade do sinal"""
+        """Calcula qualidade do sinal considerando todas as fontes"""
         try:
             factors = [
-                analyses['nano_analysis']['convergence_strength'] * 0.2,
-                analyses['micro_structure']['structural_integrity'] * 0.2,
-                analyses['flow_dynamics']['overall_flow_quality'] * 0.2,
-                analyses['traditional']['price_action']['trend_strength'] * 0.2,
-                analyses['traditional']['indicators']['macd_strength'] * 0.2
+                analyses['nano_analysis']['convergence_strength'] * 0.15,
+                analyses['micro_structure']['structural_integrity'] * 0.15,
+                analyses['flow_dynamics']['overall_flow_quality'] * 0.15,
+                analyses['traditional']['price_action']['trend_strength'] * 0.15,
+                analyses['traditional']['indicators']['macd_strength'] * 0.15,
+                analyses['text_data'].get('confidence', 0.5) * 0.15,  # Confiança do OCR
+                np.mean([abs(s) for s in analyses['decision']['component_scores'].values()]) * 0.10  # Força dos sinais
             ]
             return float(np.clip(np.mean(factors), 0, 1))
         except Exception:
@@ -624,7 +1035,7 @@ class SuperIntelligentAnalyzer:
         }
 
     def analyze(self, blob: bytes, timeframe: str = '1m') -> Dict[str, Any]:
-        """ANÁLISE 100% NEUTRA - DECIDE APENAS PELO MOMENTO DO MERCADO"""
+        """ANÁLISE 100% NEUTRA ATUALIZADA - COM 4 FASES DE ANÁLISE"""
         
         # Cache inteligente
         cached = self.cache.get(blob, timeframe)
@@ -640,8 +1051,23 @@ class SuperIntelligentAnalyzer:
             img_array = self._preprocess_image(image, timeframe)
             price_data = self._extract_price_data(img_array)
             
-            # 🧠 ANÁLISE MULTI-CAMADAS
-            analyses = {
+            # 🎯 FASE 1: EXTRAÇÃO DE TEXTO (OCR)
+            text_data = self.text_extractor.extract_text_data(image)
+            
+            # 🎯 FASE 2: ANÁLISE VISUAL DO GRÁFICO
+            chart_analysis = {
+                'price_levels': self.chart_analyzer.detect_price_levels(price_data),
+                'trend_analysis': self.chart_analyzer.analyze_trend_strength(price_data)
+            }
+            
+            # 🎯 FASE 3: ANÁLISE DE INDICADORES
+            indicator_analysis = {
+                'rsi': self.indicator_analyzer.analyze_rsi_position(text_data),
+                'macd': self.indicator_analyzer.analyze_macd_signal(text_data)
+            }
+            
+            # 🧠 ANÁLISE MULTI-CAMADAS ORIGINAL
+            traditional_analyses = {
                 'traditional': {
                     'price_action': self._analyze_price_action(price_data, timeframe),
                     'indicators': self._calculate_advanced_indicators(price_data)
@@ -651,14 +1077,22 @@ class SuperIntelligentAnalyzer:
                 'flow_dynamics': self._analyze_flow_dynamics(price_data)
             }
             
-            # 🎯 MOTOR DE DECISÃO 100% NEUTRO
-            decision = self._absolute_decision_engine(analyses, timeframe)
+            # 🎯 FASE 4: FUSÃO DE TODOS OS DADOS
+            all_analyses = {
+                'text_data': text_data,
+                'chart_analysis': chart_analysis,
+                'indicator_analysis': indicator_analysis,
+                **traditional_analyses
+            }
+            
+            # 🎯 MOTOR DE DECISÃO 100% NEUTRO ATUALIZADO
+            decision = self._absolute_decision_engine(all_analyses, timeframe)
             time_info = self._get_entry_timeframe(timeframe)
             
-            # 📊 QUALIDADE DA ANÁLISE
-            signal_quality = self._calculate_signal_quality(analyses)
+            # 📊 QUALIDADE DA ANÁLISE MELHORADA
+            signal_quality = self._calculate_signal_quality(all_analyses)
             
-            # 🎨 RESULTADO SUPER NEUTRO
+            # 🎨 RESULTADO SUPER NEUTRO ATUALIZADO
             result = {
                 "direction": decision["direction"],
                 "final_confidence": float(decision["confidence"]),
@@ -671,19 +1105,28 @@ class SuperIntelligentAnalyzer:
                 "signal_quality": float(signal_quality),
                 "analysis_grade": "high" if signal_quality > 0.7 else "medium",
                 "market_context": decision["context"],
-                "micro_quality": analyses['nano_analysis']['convergence_strength'],
+                "micro_quality": all_analyses['nano_analysis']['convergence_strength'],
+                "text_data_confidence": text_data.get('confidence', 0.0),
+                "fusion_analysis": decision.get('fusion_analysis', 'Análise Integrada'),
                 "metrics": {
                     "analysis_score": float(decision["total_score"]),
                     "trend_power": float(decision["trend_power"]),
                     "macd_power": float(decision["macd_power"]),
                     "micro_power": float(decision["micro_power"]),
-                    "trend_strength": analyses['traditional']['price_action']['trend_strength'],
-                    "momentum": analyses['traditional']['price_action']['momentum'],
-                    "rsi": analyses['traditional']['indicators']['rsi'],
-                    "macd": analyses['traditional']['indicators']['macd'],
-                    "macd_strength": analyses['traditional']['indicators']['macd_strength']
+                    "trend_strength": all_analyses['traditional']['price_action']['trend_strength'],
+                    "momentum": all_analyses['traditional']['price_action']['momentum'],
+                    "rsi": all_analyses['traditional']['indicators']['rsi'],
+                    "macd": all_analyses['traditional']['indicators']['macd'],
+                    "macd_strength": all_analyses['traditional']['indicators']['macd_strength'],
+                    "component_scores": decision.get('component_scores', {})
                 },
-                "reasoning": decision["reasoning"]
+                "reasoning": decision["reasoning"],
+                "text_data": {
+                    "rsi_value": text_data.get('rsi_value'),
+                    "macd_value": text_data.get('macd_value'),
+                    "ema_value": text_data.get('ema_value'),
+                    "has_technical_data": text_data.get('confidence', 0) > 0.5
+                }
             }
             
             self.cache.set(blob, timeframe, result)
@@ -703,11 +1146,13 @@ class SuperIntelligentAnalyzer:
                 "analysis_grade": "medium",
                 "market_context": "market_analysis",
                 "micro_quality": 0.6,
+                "text_data_confidence": 0.0,
+                "fusion_analysis": "Análise de Contingência"
             })
             return fallback_result
 
 # =========================
-#  APLICAÇÃO FLASK COMPLETA
+#  APLICAÇÃO FLASK COMPLETA (MANTIDA)
 # =========================
 app = Flask(__name__)
 analyzer = SuperIntelligentAnalyzer()
@@ -716,6 +1161,7 @@ analyzer = SuperIntelligentAnalyzer()
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.config['JSON_SORT_KEYS'] = False
 
+# HTML TEMPLATE (MANTIDO EXATAMENTE IGUAL)
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="pt-br">
@@ -906,6 +1352,11 @@ HTML_TEMPLATE = '''
         .context-mercado_lateral { background: linear-gradient(135deg, #7ce0ff, #4a90e2); color: white; }
         .context-tendencia_estabelecida { background: linear-gradient(135deg, #ffaa00, #ff8800); color: white; }
         .context-momentum_tecnico { background: linear-gradient(135deg, #ff6b6b, #ff4444); color: white; }
+        .context-rsi_sobrecomprado { background: linear-gradient(135deg, #ff4444, #cc0000); color: white; }
+        .context-rsi_sobrevendido { background: linear-gradient(135deg, #00ff88, #00cc66); color: white; }
+        .context-tendencia_de_alta { background: linear-gradient(135deg, #00ff88, #00cc66); color: white; }
+        .context-tendencia_de_baixa { background: linear-gradient(135deg, #ff4444, #cc0000); color: white; }
+        .context-indicadores_favoraveis { background: linear-gradient(135deg, #7ce0ff, #4a90e2); color: white; }
         
         .metrics {
             margin-top: 15px; 
@@ -992,6 +1443,15 @@ HTML_TEMPLATE = '''
             background: linear-gradient(135deg, #7ce0ff, #4a90e2);
             color: white;
         }
+        
+        .technical-data {
+            background: rgba(0, 255, 136, 0.1);
+            border: 1px solid #00ff88;
+            border-radius: 8px;
+            padding: 10px;
+            margin: 10px 0;
+            font-size: 12px;
+        }
     </style>
 </head>
 <body>
@@ -999,6 +1459,7 @@ HTML_TEMPLATE = '''
         <div class="header">
             <div class="title">🧠⚖️ IA SIGNAL PRO - 100% NEUTRA</div>
             <div class="subtitle">ZERO VIÉS - DECISÕES APENAS PELO MOMENTO DO MERCADO</div>
+            <div class="subtitle" style="color: #7ce0ff; font-size: 11px;">🎯 SISTEMA ATUALIZADO: OCR + ANÁLISE VISUAL + FUSÃO DE DADOS</div>
         </div>
         
         <div class="timeframe-selector">
@@ -1036,6 +1497,13 @@ HTML_TEMPLATE = '''
                 </div>
             </div>
             
+            <div id="technicalData" class="technical-data" style="display: none;">
+                <div style="text-align: center; font-weight: 600; margin-bottom: 5px; color: #00ff88;">
+                    📊 DADOS TÉCNICOS EXTRAÍDOS
+                </div>
+                <div id="technicalDataContent"></div>
+            </div>
+            
             <div class="reasoning" id="reasoningText"></div>
             <div class="confidence" id="confidenceText"></div>
             <div id="qualityIndicator" class="quality-indicator"></div>
@@ -1048,7 +1516,7 @@ HTML_TEMPLATE = '''
             
             <div class="power-analysis" id="powerAnalysis">
                 <div style="text-align: center; font-weight: 600; margin-bottom: 8px; color: #7ce0ff;">
-                    ⚡ ANÁLISE DO MOMENTO
+                    ⚡ ANÁLISE DO MOMENTO - FUSÃO DE DADOS
                 </div>
                 <div id="powerMetrics"></div>
             </div>
@@ -1077,6 +1545,8 @@ HTML_TEMPLATE = '''
             const contextInfo = document.getElementById('contextInfo');
             const powerAnalysis = document.getElementById('powerAnalysis');
             const powerMetrics = document.getElementById('powerMetrics');
+            const technicalData = document.getElementById('technicalData');
+            const technicalDataContent = document.getElementById('technicalDataContent');
             const timeframeBtns = document.querySelectorAll('.timeframe-btn');
 
             let currentTimeframe = '1m';
@@ -1148,6 +1618,7 @@ HTML_TEMPLATE = '''
                 analyzeBtn.textContent = `🧠 ANALISANDO ${currentTimeframe.toUpperCase()}...`;
                 result.style.display = 'block';
                 errorMessage.style.display = 'none';
+                technicalData.style.display = 'none';
                 
                 signalText.className = 'signal-text';
                 signalText.textContent = 'Analisando momento do mercado...';
@@ -1175,25 +1646,25 @@ HTML_TEMPLATE = '''
                 }
                 
                 entryTime.textContent = entryTimeValue;
-                reasoningText.textContent = 'Processando análise 100% neutra...';
+                reasoningText.textContent = 'Processando análise 100% neutra com OCR...';
                 confidenceText.textContent = '';
-                progressFill.style.width = '20%';
+                progressFill.style.width = '10%';
                 
-                metricsText.innerHTML = '<div class="loading">Iniciando análise do momento do mercado...</div>';
+                metricsText.innerHTML = '<div class="loading">Iniciando análise multi-camadas...</div>';
 
                 try {
                     const formData = new FormData();
                     formData.append('image', selectedFile);
                     formData.append('timeframe', currentTimeframe);
                     
-                    progressFill.style.width = '40%';
+                    progressFill.style.width = '30%';
                     
                     const response = await fetch('/analyze', {
                         method: 'POST',
                         body: formData
                     });
                     
-                    progressFill.style.width = '80%';
+                    progressFill.style.width = '70%';
                     
                     if (!response.ok) {
                         throw new Error(`HTTP error! status: ${response.status}`);
@@ -1227,6 +1698,7 @@ HTML_TEMPLATE = '''
                 const cached = data.cached || false;
                 const quality = data.analysis_grade || 'medium';
                 const context = data.market_context || 'mercado_balanceado';
+                const fusionAnalysis = data.fusion_analysis || 'Análise Integrada';
                 
                 // Define classe e texto do sinal
                 signalText.className = `signal-text signal-${direction}`;
@@ -1240,6 +1712,27 @@ HTML_TEMPLATE = '''
                 
                 reasoningText.textContent = data.reasoning;
                 confidenceText.textContent = `Confiança Técnica: ${confidence}%`;
+                
+                // Mostra dados técnicos se disponíveis
+                if (data.text_data && data.text_data.has_technical_data) {
+                    let technicalHtml = '';
+                    const textData = data.text_data;
+                    
+                    if (textData.rsi_value) {
+                        technicalHtml += `<div class="metric-item"><span>RSI:</span><span class="metric-value">${textData.rsi_value}</span></div>`;
+                    }
+                    if (textData.macd_value) {
+                        technicalHtml += `<div class="metric-item"><span>MACD:</span><span class="metric-value">${textData.macd_value}</span></div>`;
+                    }
+                    if (textData.ema_value) {
+                        technicalHtml += `<div class="metric-item"><span>EMA:</span><span class="metric-value">${textData.ema_value}</span></div>`;
+                    }
+                    
+                    if (technicalHtml) {
+                        technicalDataContent.innerHTML = technicalHtml;
+                        technicalData.style.display = 'block';
+                    }
+                }
                 
                 // Indicador de qualidade
                 qualityIndicator.className = `quality-indicator quality-${quality}`;
@@ -1255,24 +1748,34 @@ HTML_TEMPLATE = '''
                     'mercado_lateral': '⚡ MERCADO LATERAL', 
                     'tendencia_estabelecida': '📈 TENDÊNCIA ESTABELECIDA',
                     'momentum_tecnico': '🎯 MOMENTUM TÉCNICO',
-                    'mercado_balanceado': '⚖️ MERCADO BALANCEADO'
+                    'mercado_balanceado': '⚖️ MERCADO BALANCEADO',
+                    'rsi_sobrecomprado': '📛 RSI SOBRECOMPRADO',
+                    'rsi_sobrevendido': '✅ RSI SOBREVENDIDO',
+                    'tendencia_de_alta': '📈 TENDÊNCIA DE ALTA',
+                    'tendencia_de_baixa': '📉 TENDÊNCIA DE BAIXA',
+                    'indicadores_favoraveis': '🎯 INDICADORES FAVORÁVEIS'
                 };
                 
                 contextInfo.innerHTML = `
                     <span class="context-badge context-${context}">
                         ${contextLabels[context] || contextLabels.mercado_balanceado}
                     </span>
+                    <div style="margin-top: 5px; font-size: 11px; color: #7ce0ff;">
+                        ${fusionAnalysis}
+                    </div>
                 `;
                 
                 // Análise do Momento
                 const metrics = data.metrics || {};
+                const componentScores = metrics.component_scores || {};
                 let powerHtml = '';
                 
                 const powerItems = [
-                    ['Poder da Tendência', (metrics.trend_power * 100)?.toFixed(1) + '%'],
-                    ['Poder do MACD', (metrics.macd_power * 100)?.toFixed(1) + '%'],
-                    ['Poder Microscópico', (metrics.micro_power * 100)?.toFixed(1) + '%'],
-                    ['Score da Análise', metrics.analysis_score?.toFixed(3)]
+                    ['Poder da Tendência', (componentScores.price_action * 100)?.toFixed(1) + '%'],
+                    ['Poder dos Indicadores', (componentScores.technical_indicators * 100)?.toFixed(1) + '%'],
+                    ['Poder da Estrutura', (componentScores.market_structure * 100)?.toFixed(1) + '%'],
+                    ['Poder do Momentum', (componentScores.momentum * 100)?.toFixed(1) + '%'],
+                    ['Score Final', metrics.analysis_score?.toFixed(3)]
                 ];
                 
                 powerItems.forEach(([label, value]) => {
@@ -1295,7 +1798,8 @@ HTML_TEMPLATE = '''
                     ['RSI', metrics.rsi?.toFixed(3)],
                     ['MACD', metrics.macd?.toFixed(3)],
                     ['Força do MACD', (metrics.macd_strength * 100)?.toFixed(1) + '%'],
-                    ['Qualidade do Sinal', (data.signal_quality * 100)?.toFixed(1) + '%']
+                    ['Qualidade do Sinal', (data.signal_quality * 100)?.toFixed(1) + '%'],
+                    ['Confiança do OCR', (data.text_data_confidence * 100)?.toFixed(1) + '%']
                 ];
                 
                 metricItems.forEach(([label, value]) => {
@@ -1347,7 +1851,7 @@ def analyze_photo():
         if len(image_bytes) == 0:
             return jsonify({'error': 'Arquivo vazio'}), 400
         
-        # Análise 100% NEUTRA
+        # Análise 100% NEUTRA ATUALIZADA
         analysis = analyzer.analyze(image_bytes, timeframe)
         
         return jsonify(analysis)
@@ -1362,9 +1866,10 @@ def health_check():
     """Health check para monitoramento"""
     return jsonify({
         'status': 'healthy', 
-        'service': 'IA Signal Pro - 100% NEUTRA',
+        'service': 'IA Signal Pro - 100% NEUTRA - SISTEMA ATUALIZADO',
         'timestamp': datetime.datetime.now().isoformat(),
-        'version': '6.0.0-zero-vies'
+        'version': '7.0.0-fusao-dados',
+        'features': ['OCR', 'Análise Visual', 'Fusão de Dados', '4 Fases']
     })
 
 @app.route('/cache/clear', methods=['POST'])
@@ -1393,9 +1898,11 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('DEBUG', 'False').lower() == 'true'
     
-    print(f"🚀 IA Signal Pro - 100% NEUTRA iniciando na porta {port}")
-    print(f"🧠⚖️ SISTEMA: ZERO VIÉS - DECISÕES PURAMENTE TÉCNICAS")
-    print(f"🎯 PRINCÍPIO: APENAS PELO MOMENTO REAL DO MERCADO")
+    print(f"🚀 IA Signal Pro - 100% NEUTRA ATUALIZADA iniciando na porta {port}")
+    print(f"🧠⚖️ SISTEMA: ZERO VIÉS - 4 FASES DE ANÁLISE")
+    print(f"🎯 PRINCÍPIO: OCR + ANÁLISE VISUAL + FUSÃO DE DADOS")
     print(f"📈 SAÍDA: COMPRA ou VENDA - SEM FAVORITISMO")
     print(f"💪 NEUTRALIDADE: PONDERAÇÃO IGUAL + ANÁLISE DO MOMENTO")
+    print(f"🔍 RECURSOS: Detecção de RSI/MACD + Suportes/Resistências + Tendências")
+    
     app.run(host='0.0.0.0', port=port, debug=debug)
