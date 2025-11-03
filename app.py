@@ -1,4 +1,7 @@
-IA SIGNAL PRO - SUPER INTELIGENTE E NEUTRA 
+from __future__ import annotations
+
+"""
+IA SIGNAL PRO - SUPER INTELIGENTE E NEUTRA 🧠⚖️
 ANÁLISE DE GRÁFICOS REAIS - SEM FALLBACKS
 """
 
@@ -808,1147 +811,525 @@ class SuperIntelligentAnalyzer:
                 "rsi": float(rsi_normalized),
                 "macd": float(macd_power),
                 "macd_strength": float(macd_strength),
-                "volume_intensity": float(min(1.0, np.var(price_data) / 1000.0)),
-                "momentum_quality": float(min(1.0, (abs(rsi_normalized) + abs(macd_power)) / 2))
+                "momentum": float(rsi_normalized * 0.7 + macd_power * 0.3)
             }
         except Exception as e:
-            return {"rsi": 0.0, "macd": 0.0, "macd_strength": 0.0, "volume_intensity": 0.0, "momentum_quality": 0.0}
+            return {"rsi": 0.0, "macd": 0.0, "macd_strength": 0.0, "momentum": 0.0}
 
-    # =========================
-    #  MOTOR DE DECISÃO OTIMIZADO - CORRIGIDO
-    # =========================
-    
-    def _enhanced_decision_engine(self, all_analyses: Dict, timeframe: str) -> Dict[str, Any]:
-        """MOTOR VERDADEIRAMENTE NEUTRO - SEM VIÉS"""
+    def _enhanced_decision_engine(self, analysis_data: Dict, timeframe: str) -> Dict[str, Any]:
+        """MOTOR DE DECISÃO SUPER-INTELIGENTE E NEUTRO"""
         try:
-            # Extrair análises
-            traditional = all_analyses['traditional']
-            nano_trend = all_analyses['nano_analysis']
-            micro_structure = all_analyses['micro_structure']
-            flow_dynamics = all_analyses['flow_dynamics']
-            ocr_analysis = all_analyses['ocr_analysis']
-            trend_analysis = all_analyses['trend_analysis']
-            pattern_analysis = all_analyses['pattern_analysis']
+            # DADOS MICROSCÓPICOS
+            micro_trend = analysis_data.get("microscopic_trend", {})
+            micro_structure = analysis_data.get("micro_structure", {})
+            flow_dynamics = analysis_data.get("flow_dynamics", {})
             
-            # 🎯 ANÁLISE TÉCNICA EQUILIBRADA
-            trend_direction = traditional['price_action']['trend_direction']
-            trend_strength = max(0.1, traditional['price_action']['trend_strength'])
-            trend_power = trend_direction * trend_strength
+            # DADOS TRADICIONAIS
+            price_action = analysis_data.get("price_action", {})
+            indicators = analysis_data.get("indicators", {})
+            chart_data = analysis_data.get("chart_data", {})
+            trend_data = analysis_data.get("trend_data", {})
+            pattern_data = analysis_data.get("pattern_data", {})
             
-            macd_value = traditional['indicators']['macd']
-            macd_strength = max(0.1, traditional['indicators']['macd_strength'])
-            macd_power = macd_value * macd_strength
+            # =========================================
+            # 1. ANÁLISE MICROSCÓPICA (PESO ALTO)
+            # =========================================
+            nano_trend = micro_trend.get("nano_trend", 0)
+            convergence = micro_trend.get("convergence_strength", 0)
+            multi_res = micro_trend.get("multi_resolution_agreement", 0)
             
-            nano_power = nano_trend['nano_trend'] * nano_trend['convergence_strength']
-            micro_power = micro_structure['structural_integrity'] * 0.5 + flow_dynamics['overall_flow_quality'] * 0.5
-            micro_composite = (nano_power + micro_power) / 2
+            structural_integrity = micro_structure.get("structural_integrity", 0.5)
+            price_density = micro_structure.get("price_density", 0.5)
+            micro_momentum = micro_structure.get("micro_momentum", 0.5)
             
-            # 🆕 CORREÇÃO DOS VIÉSES - Valores neutros quando não há sinal claro
-            # Trend lines - se não detectou linhas, considera neutro
-            if trend_analysis['lines_count'] == 0:
-                trend_line_power = 0.0
+            flow_quality = flow_dynamics.get("overall_flow_quality", 0.5)
+            continuity = flow_dynamics.get("flow_continuity", 0.5)
+            breakage_resist = flow_dynamics.get("breakage_resistance", 0.5)
+            smoothness = flow_dynamics.get("transition_smoothness", 0.5)
+            
+            # =========================================
+            # 2. ANÁLISE TRADICIONAL (PESO MÉDIO)
+            # =========================================
+            trend_dir = price_action.get("trend_direction", 0)
+            trend_strength = price_action.get("trend_strength", 0.5)
+            price_momentum = price_action.get("momentum", 0)
+            volatility = price_action.get("volatility", 0)
+            
+            rsi = indicators.get("rsi", 0)
+            macd = indicators.get("macd", 0)
+            macd_strength = indicators.get("macd_strength", 0)
+            momentum_ind = indicators.get("momentum", 0)
+            
+            # =========================================
+            # 3. ANÁLISE VISUAL (PESO BAIXO)
+            # =========================================
+            visual_trend = trend_data.get("trend", "neutral")
+            visual_strength = trend_data.get("strength", 0.5)
+            visual_angle = trend_data.get("angle", 0)
+            
+            pattern_bias = pattern_data.get("bias", "neutral")
+            pattern_strength = pattern_data.get("strength", 0.5)
+            
+            price_levels = chart_data.get("price_levels", [])
+            levels_count = chart_data.get("levels_count", 0)
+            detection_quality = chart_data.get("detection_quality", "medium")
+            
+            # =========================================
+            # 4. CÁLCULO DE PESOS INTELIGENTES
+            # =========================================
+            # Pesos dinâmicos baseados na qualidade dos dados
+            micro_weight = 0.45  # Peso mais alto para análise microscópica
+            traditional_weight = 0.35  # Peso médio para análise tradicional
+            visual_weight = 0.20  # Peso menor para análise visual
+            
+            # Ajustar pesos baseado na confiança dos dados
+            if detection_quality == "high":
+                visual_weight = min(0.25, visual_weight * 1.2)
+            elif detection_quality == "low":
+                visual_weight = max(0.15, visual_weight * 0.8)
+            
+            if convergence > 0.7:
+                micro_weight = min(0.5, micro_weight * 1.1)
+            
+            # =========================================
+            # 5. SINAIS MICROSCÓPICOS (CRÍTICOS)
+            # =========================================
+            micro_signals = []
+            
+            # Sinal de tendência nano
+            if abs(nano_trend) > 0.05:
+                trend_signal = nano_trend * convergence * multi_res
+                micro_signals.append(trend_signal * 1.2)
+            
+            # Sinal de estrutura
+            structure_signal = (structural_integrity - 0.5) * 2
+            if abs(structure_signal) > 0.1:
+                micro_signals.append(structure_signal * price_density)
+            
+            # Sinal de momentum micro
+            momentum_signal = (micro_momentum - 0.5) * 2
+            if abs(momentum_signal) > 0.1:
+                micro_signals.append(momentum_signal * 0.8)
+            
+            # Sinal de fluxo
+            flow_signal = (flow_quality - 0.5) * 2
+            continuity_signal = (continuity - 0.5) * 2
+            micro_signals.extend([flow_signal * 0.7, continuity_signal * 0.6])
+            
+            # Média ponderada dos sinais micro
+            if micro_signals:
+                micro_score = np.mean(micro_signals)
+                micro_confidence = min(1.0, len(micro_signals) * 0.2 + convergence)
             else:
-                trend_line_power = trend_analysis['strength'] * (1 if trend_analysis['trend'] == 'uptrend' else -1)
+                micro_score = 0
+                micro_confidence = 0.3
             
-            # Pattern bias - se força muito baixa, considera neutro
-            if pattern_analysis['strength'] < 0.3:
-                pattern_power = 0.0
+            # =========================================
+            # 6. SINAIS TRADICIONAIS
+            # =========================================
+            traditional_signals = []
+            
+            # Sinal de price action
+            if abs(trend_dir) > 0.05:
+                pa_signal = trend_dir * trend_strength
+                traditional_signals.append(pa_signal * 1.1)
+            
+            # Sinal RSI
+            if abs(rsi) > 0.1:
+                rsi_signal = -rsi  # RSI invertido (sobrecomprado/vendido)
+                traditional_signals.append(rsi_signal * 0.9)
+            
+            # Sinal MACD
+            if abs(macd) > 0.05 and macd_strength > 0.3:
+                traditional_signals.append(macd * macd_strength)
+            
+            # Sinal momentum
+            if abs(momentum_ind) > 0.05:
+                traditional_signals.append(momentum_ind * 0.8)
+            
+            # Média tradicional
+            if traditional_signals:
+                traditional_score = np.mean(traditional_signals)
+                traditional_confidence = min(1.0, len(traditional_signals) * 0.25 + trend_strength)
             else:
-                pattern_power = pattern_analysis['strength'] * (1 if pattern_analysis['bias'] == 'bullish' else -1)
+                traditional_score = 0
+                traditional_confidence = 0.3
             
-            # 🧠 SCORE PERFEITAMENTE EQUILIBRADO
-            total_score = (
-                trend_power * 0.30 +           # Mais peso na tendência principal
-                macd_power * 0.25 +            # MACD importante
-                micro_composite * 0.25 +       # Análise micro
-                trend_line_power * 0.10 +      # Menos peso em linhas (menos confiável)
-                pattern_power * 0.10           # Menos peso em padrões (menos confiável)
+            # =========================================
+            # 7. SINAIS VISUAIS
+            # =========================================
+            visual_signals = []
+            
+            # Converter tendência visual para numérico
+            trend_map = {"uptrend": 0.3, "downtrend": -0.3, "neutral": 0}
+            visual_trend_signal = trend_map.get(visual_trend, 0) * visual_strength
+            if abs(visual_trend_signal) > 0.05:
+                visual_signals.append(visual_trend_signal)
+            
+            # Padrão de cores
+            pattern_map = {"bullish": 0.2, "bearish": -0.2, "neutral": 0}
+            pattern_signal = pattern_map.get(pattern_bias, 0) * pattern_strength
+            if abs(pattern_signal) > 0.05:
+                visual_signals.append(pattern_signal)
+            
+            # Média visual
+            if visual_signals:
+                visual_score = np.mean(visual_signals)
+                visual_confidence = min(1.0, len(visual_signals) * 0.3 + pattern_strength)
+            else:
+                visual_score = 0
+                visual_confidence = 0.2
+            
+            # =========================================
+            # 8. DECISÃO FINAL SUPER PONDERADA
+            # =========================================
+            # Aplicar pesos com confiança
+            final_score = (
+                micro_score * micro_weight * micro_confidence +
+                traditional_score * traditional_weight * traditional_confidence +
+                visual_score * visual_weight * visual_confidence
             )
             
-            # 💥 DECISÃO BASEADA EM ANÁLISE REAL DO MOMENTO
-            threshold = 0.02  # Threshold pequeno para evitar decisões por ruído
+            # Normalizar para -1 a 1
+            final_score = max(-1.0, min(1.0, final_score))
             
-            if total_score > threshold:
-                direction = "buy"
-                strength = "FORTE" if total_score > 0.15 else "MODERADA"
-                base_confidence = 0.65 + (min(total_score, 0.5) * 0.3)
-                reasoning = f"📈 COMPRA {strength} - Score: {total_score:.3f}"
-                
-            elif total_score < -threshold:
-                direction = "sell" 
-                strength = "FORTE" if total_score < -0.15 else "MODERADA"
-                base_confidence = 0.65 + (min(abs(total_score), 0.5) * 0.3)
-                reasoning = f"📉 VENDA {strength} - Score: {total_score:.3f}"
-                
+            # Determinar direção com base no score
+            if final_score > 0.15:
+                direction = "COMPRA"
+                confidence = min(0.95, (final_score + 1) / 2)
+                strength = "FORTE" if final_score > 0.4 else "MODERADA"
+            elif final_score < -0.15:
+                direction = "VENDA" 
+                confidence = min(0.95, (abs(final_score) + 1) / 2)
+                strength = "FORTE" if final_score < -0.4 else "MODERADA"
             else:
-                # Mercado muito equilibrado - análise mais detalhada
-                bullish_signals = 0
-                bearish_signals = 0
-                
-                # Contagem de sinais individuais
-                if trend_power > 0.05: bullish_signals += 1
-                elif trend_power < -0.05: bearish_signals += 1
-                    
-                if macd_power > 0.05: bullish_signals += 1
-                elif macd_power < -0.05: bearish_signals += 1
-                    
-                if micro_composite > 0: bullish_signals += 1
-                elif micro_composite < 0: bearish_signals += 1
-                
-                # Tendência das linhas
-                if trend_analysis['trend'] == 'uptrend': bullish_signals += 1
-                elif trend_analysis['trend'] == 'downtrend': bearish_signals += 1
-                    
-                # Padrão de cores
-                if pattern_analysis['dominant_color'] == 'green': bullish_signals += 1
-                elif pattern_analysis['dominant_color'] == 'red': bearish_signals += 1
-                
-                # Decide pela maioria
-                if bullish_signals > bearish_signals:
-                    direction = "buy"
-                    base_confidence = 0.62
-                    reasoning = f"📈 COMPRA - Majority signals ({bullish_signals}/{bearish_signals})"
-                elif bearish_signals > bullish_signals:
-                    direction = "sell"
-                    base_confidence = 0.62
-                    reasoning = f"📉 VENDA - Majority signals ({bearish_signals}/{bullish_signals})"
-                else:
-                    # Empate total - decide pelo RSI
-                    rsi = traditional['indicators']['rsi']
-                    if rsi > 0:
-                        direction = "buy"
-                        base_confidence = 0.60
-                        reasoning = "📈 COMPRA - Neutral tie, slight RSI bias"
-                    else:
-                        direction = "sell"
-                        base_confidence = 0.60
-                        reasoning = "📉 VENDA - Neutral tie, slight RSI bias"
+                direction = "NEUTRO"
+                confidence = 0.5
+                strength = "FRACA"
             
-            # 🎪 CONFIANÇA BASEADA NA QUALIDADE DA ANÁLISE
-            final_confidence = self._calculate_enhanced_confidence(base_confidence, all_analyses)
-            
-            # 🎯 CONTEXTO DO MERCADO
-            context = self._detect_enhanced_context(trend_strength, macd_strength, micro_composite, 
-                                                  trend_analysis, pattern_analysis, total_score)
+            # =========================================
+            # 9. METADADOS DETALHADOS
+            # =========================================
+            metadata = {
+                "final_score": float(final_score),
+                "components": {
+                    "micro_score": float(micro_score),
+                    "traditional_score": float(traditional_score),
+                    "visual_score": float(visual_score)
+                },
+                "weights": {
+                    "micro": float(micro_weight),
+                    "traditional": float(traditional_weight),
+                    "visual": float(visual_weight)
+                },
+                "confidences": {
+                    "micro": float(micro_confidence),
+                    "traditional": float(traditional_confidence),
+                    "visual": float(visual_confidence)
+                },
+                "micro_analysis": {
+                    "nano_trend": float(nano_trend),
+                    "convergence": float(convergence),
+                    "structural_integrity": float(structural_integrity),
+                    "flow_quality": float(flow_quality)
+                }
+            }
             
             return {
                 "direction": direction,
-                "confidence": final_confidence,
-                "reasoning": reasoning,
-                "total_score": total_score,
-                "context": context,
-                "trend_power": trend_power,
-                "macd_power": macd_power,
-                "micro_power": micro_composite,
-                "trend_line_power": trend_line_power,
-                "pattern_power": pattern_power,
-                "ocr_confidence": min(1.0, ocr_analysis['levels_count'] / 5)
+                "confidence": float(confidence),
+                "strength": strength,
+                "timestamp": datetime.datetime.now().isoformat(),
+                "timeframe": timeframe,
+                "metadata": metadata
             }
             
         except Exception as e:
-            # Fallback verdadeiramente aleatório
-            import random
-            direction = "buy" if random.random() > 0.5 else "sell"
+            # FALLBACK NEUTRO EM CASO DE ERRO
             return {
-                "direction": direction,
-                "confidence": 0.60,
-                "reasoning": f"🎯 {'COMPRA' if direction == 'buy' else 'VENDA'} - Análise contingência",
-                "total_score": 0.1 if direction == "buy" else -0.1,
-                "context": "market_analysis",
-                "trend_power": 0.0,
-                "macd_power": 0.0,
-                "micro_power": 0.0,
-                "trend_line_power": 0.0,
-                "pattern_power": 0.0,
-                "ocr_confidence": 0.5
+                "direction": "NEUTRO",
+                "confidence": 0.5,
+                "strength": "FRACA",
+                "timestamp": datetime.datetime.now().isoformat(),
+                "timeframe": timeframe,
+                "metadata": {"error": str(e), "fallback": True}
             }
 
-    def _generate_enhanced_reasoning(self, direction: str, trend_power: float, macd_power: float, 
-                                   micro_power: float, trend_line_power: float, pattern_power: float,
-                                   total_score: float, ocr_analysis: Dict) -> str:
-        """Gera reasoning aprimorado SEMPRE com COMPRA ou VENDA"""
-        
-        strength = "FORTE" if abs(total_score) > 0.2 else "MODERADA"
-        
-        factors = []
-        if abs(trend_power) > 0.1: 
-            factors.append(f"tendência {trend_power*100:+.1f}%")
-        if abs(macd_power) > 0.1: 
-            factors.append(f"MACD {macd_power*100:+.1f}%")
-        if abs(trend_line_power) > 0.05:
-            factors.append(f"linhas {trend_line_power*100:+.1f}%")
-        if abs(pattern_power) > 0.05:
-            factors.append(f"padrões {pattern_power*100:+.1f}%")
-            
-        if factors:
-            analysis = " + ".join(factors)
-            levels_info = f" ({ocr_analysis['levels_count']} níveis)" if ocr_analysis['levels_count'] > 0 else ""
-            
-            if direction == "buy":
-                return f"📈 COMPRA {strength} - Convergência: {analysis}{levels_info}"
-            else:
-                return f"📉 VENDA {strength} - Convergência: {analysis}{levels_info}"
-        else:
-            if direction == "buy":
-                return f"📈 COMPRA {strength} - Análise multi-camadas positiva"
-            else:
-                return f"📉 VENDA {strength} - Análise multi-camadas negativa"
-
-    def _calculate_enhanced_confidence(self, base_confidence: float, all_analyses: Dict) -> float:
-        """Calcula confiança aprimorada"""
+    def analyze_chart(self, image_blob: bytes, timeframe: str = "1m") -> Dict[str, Any]:
+        """ANÁLISE PRINCIPAL - SUPER ROBUSTA"""
         try:
-            confidence_factors = [
-                all_analyses['nano_analysis']['convergence_strength'],
-                all_analyses['micro_structure']['structural_integrity'],
-                all_analyses['flow_dynamics']['overall_flow_quality'],
-                all_analyses['traditional']['price_action']['trend_strength'],
-                all_analyses['traditional']['indicators']['macd_strength'],
-                all_analyses['trend_analysis']['strength'],
-                all_analyses['pattern_analysis']['strength'],
-                min(1.0, all_analyses['ocr_analysis']['levels_count'] / 6)
-            ]
+            # Verificar cache primeiro
+            cached_result = self.cache.get(image_blob, timeframe)
+            if cached_result:
+                cached_result["cached"] = True
+                return cached_result
             
-            quality_score = np.mean([f for f in confidence_factors if not np.isnan(f)])
-            enhanced_confidence = base_confidence + (quality_score * 0.2)
-            
-            return min(0.90, enhanced_confidence)
-            
-        except Exception:
-            return base_confidence
-
-    def _detect_enhanced_context(self, trend_strength: float, macd_strength: float, 
-                               micro_power: float, trend_analysis: Dict, pattern_analysis: Dict, 
-                               total_score: float) -> str:
-        """Detecta contexto de mercado"""
-        if abs(total_score) > 0.25:
-            return "movimento_forte"
-        elif abs(total_score) < 0.05:
-            return "mercado_lateral"
-        elif trend_strength > 0.5:
-            return "tendencia_estabelecida"
-        elif trend_analysis['strength'] > 0.6:
-            return "linhas_tendencia_fortes"
-        elif pattern_analysis['strength'] > 0.6:
-            return "padroes_candlestick_claros"
-        elif macd_strength > 0.5:
-            return "momentum_tecnico"
-        else:
-            return "mercado_balanceado"
-
-    def _calculate_signal_quality(self, analyses: Dict) -> float:
-        """Calcula qualidade do sinal"""
-        try:
-            factors = [
-                analyses['nano_analysis']['convergence_strength'] * 0.15,
-                analyses['micro_structure']['structural_integrity'] * 0.15,
-                analyses['flow_dynamics']['overall_flow_quality'] * 0.15,
-                analyses['traditional']['price_action']['trend_strength'] * 0.15,
-                analyses['traditional']['indicators']['macd_strength'] * 0.15,
-                analyses['trend_analysis']['strength'] * 0.10,
-                analyses['pattern_analysis']['strength'] * 0.10,
-                min(1.0, analyses['ocr_analysis']['levels_count'] / 6) * 0.05
-            ]
-            return float(np.clip(np.mean(factors), 0, 1))
-        except Exception:
-            return 0.6
-
-    def _get_entry_timeframe(self, user_timeframe: str) -> Dict[str, str]:
-        """Calcula timeframe de entrada"""
-        now = datetime.datetime.now()
-        if user_timeframe == '1m':
-            entry_time = (now + datetime.timedelta(minutes=1)).strftime("%H:%M")
-            timeframe_str = "Próximo minuto"
-        else:
-            minutes_to_add = 5 - (now.minute % 5)
-            if minutes_to_add == 0:
-                minutes_to_add = 5
-            entry_time = (now + datetime.timedelta(minutes=minutes_to_add)).strftime("%H:%M")
-            timeframe_str = "Próximo candle de 5min"
-        
-        return {
-            "current_time": now.strftime("%H:%M:%S"),
-            "entry_time": entry_time,
-            "timeframe": timeframe_str
-        }
-
-    def analyze(self, blob: bytes, timeframe: str = '1m') -> Dict[str, Any]:
-        """ANÁLISE 100% NEUTRA OTIMIZADA - SEMPRE COMPRA OU VENDA"""
-        
-        # Cache inteligente
-        cached = self.cache.get(blob, timeframe)
-        if cached:
-            cached['cached'] = True
-            return cached
-        
-        try:
-            # Processamento básico
-            image = self._load_image(blob)
+            # Carregar e validar imagem
+            image = self._load_image(image_blob)
             self._validate_chart_image(image)
             
+            # Pré-processamento
             img_array = self._preprocess_image(image, timeframe)
+            
+            # Extrair dados de preço
             price_data = self._extract_price_data(img_array)
             
-            # 🧠 ANÁLISE MULTI-CAMADAS
-            analyses = {
-                'traditional': {
-                    'price_action': self._analyze_price_action(price_data, timeframe),
-                    'indicators': self._calculate_advanced_indicators(price_data)
-                },
-                'nano_analysis': self._microscopic_trend_analysis(price_data),
-                'micro_structure': self._analyze_micro_structure(price_data),
-                'flow_dynamics': self._analyze_flow_dynamics(price_data),
-                # 🆕 ANÁLISES AVANÇADAS
-                'ocr_analysis': self.chart_reader.extract_price_levels(img_array),
-                'trend_analysis': self.trend_detector.detect_trend_lines(img_array),
-                'pattern_analysis': self.pattern_detector.detect_patterns(img_array)
+            # ANÁLISE MICROSCÓPICA AVANÇADA
+            microscopic_trend = self._microscopic_trend_analysis(price_data)
+            micro_structure = self._analyze_micro_structure(price_data)
+            flow_dynamics = self._analyze_flow_dynamics(price_data)
+            
+            # ANÁLISE TRADICIONAL
+            price_action = self._analyze_price_action(price_data, timeframe)
+            indicators = self._calculate_advanced_indicators(price_data)
+            
+            # ANÁLISE VISUAL
+            chart_data = self.chart_reader.extract_price_levels(img_array)
+            trend_data = self.trend_detector.detect_trend_lines(img_array)
+            pattern_data = self.pattern_detector.detect_patterns(img_array)
+            
+            # Consolidar dados
+            analysis_data = {
+                "microscopic_trend": microscopic_trend,
+                "micro_structure": micro_structure,
+                "flow_dynamics": flow_dynamics,
+                "price_action": price_action,
+                "indicators": indicators,
+                "chart_data": chart_data,
+                "trend_data": trend_data,
+                "pattern_data": pattern_data
             }
             
-            # 🎯 MOTOR DE DECISÃO
-            decision = self._enhanced_decision_engine(analyses, timeframe)
-            time_info = self._get_entry_timeframe(timeframe)
+            # DECISÃO FINAL
+            result = self._enhanced_decision_engine(analysis_data, timeframe)
+            result["cached"] = False
             
-            # 📊 QUALIDADE DA ANÁLISE
-            signal_quality = self._calculate_signal_quality(analyses)
+            # Salvar no cache
+            self.cache.set(image_blob, timeframe, result)
             
-            # 🎨 RESULTADO
-            result = {
-                "direction": decision["direction"],
-                "final_confidence": float(decision["confidence"]),
-                "entry_signal": f"🧠 {decision['direction'].upper()} - {decision['reasoning']}",
-                "entry_time": time_info["entry_time"],
-                "timeframe": time_info["timeframe"],
-                "analysis_time": time_info["current_time"],
-                "user_timeframe": timeframe,
-                "cached": False,
-                "signal_quality": float(signal_quality),
-                "analysis_grade": "high" if signal_quality > 0.7 else "medium",
-                "market_context": decision["context"],
-                "micro_quality": analyses['nano_analysis']['convergence_strength'],
-                "advanced_metrics": {
-                    "ocr_levels": analyses['ocr_analysis']['levels_count'],
-                    "trend_lines": analyses['trend_analysis']['lines_count'],
-                    "pattern_bias": analyses['pattern_analysis']['dominant_color'],
-                    "price_range": analyses['ocr_analysis']['price_range'],
-                    "detection_quality": analyses['ocr_analysis'].get('detection_quality', 'good')
-                },
-                "metrics": {
-                    "analysis_score": float(decision["total_score"]),
-                    "trend_power": float(decision["trend_power"]),
-                    "macd_power": float(decision["macd_power"]),
-                    "micro_power": float(decision["micro_power"]),
-                    "trend_line_power": float(decision["trend_line_power"]),
-                    "pattern_power": float(decision["pattern_power"]),
-                    "trend_strength": analyses['traditional']['price_action']['trend_strength'],
-                    "momentum": analyses['traditional']['price_action']['momentum'],
-                    "rsi": analyses['traditional']['indicators']['rsi'],
-                    "macd": analyses['traditional']['indicators']['macd'],
-                    "macd_strength": analyses['traditional']['indicators']['macd_strength'],
-                    "ocr_confidence": float(decision["ocr_confidence"])
-                },
-                "reasoning": decision["reasoning"]
-            }
-            
-            self.cache.set(blob, timeframe, result)
             return result
             
         except Exception as e:
-            # Análise de contingência - SEMPRE decide COMPRA ou VENDA
-            direction = "buy" if random.random() > 0.5 else "sell"
-            confidence = 0.65
-            
             return {
-                "direction": direction,
-                "final_confidence": confidence,
-                "entry_signal": f"🧠 {direction.upper()} - Análise contingência técnica",
-                "entry_time": datetime.datetime.now().strftime("%H:%M"),
-                "timeframe": "Próximo candle",
-                "analysis_time": datetime.datetime.now().strftime("%H:%M:%S"),
-                "user_timeframe": timeframe,
-                "cached": False,
-                "signal_quality": 0.6,
-                "analysis_grade": "medium",
-                "market_context": "market_analysis",
-                "micro_quality": 0.5,
-                "advanced_metrics": {
-                    "ocr_levels": 4,
-                    "trend_lines": 3,
-                    "pattern_bias": "neutral",
-                    "price_range": 12.5,
-                    "detection_quality": "contingency"
-                },
-                "metrics": {
-                    "analysis_score": 0.1 if direction == "buy" else -0.1,
-                    "trend_power": 0.1,
-                    "macd_power": 0.1,
-                    "micro_power": 0.1,
-                    "trend_line_power": 0.1,
-                    "pattern_power": 0.1,
-                    "trend_strength": 0.3,
-                    "momentum": 0.0,
-                    "rsi": 0.0,
-                    "macd": 0.0,
-                    "macd_strength": 0.3,
-                    "ocr_confidence": 0.6
-                },
-                "reasoning": "📈 COMPRA - Análise contingência" if direction == "buy" else "📉 VENDA - Análise contingência"
+                "direction": "NEUTRO",
+                "confidence": 0.5,
+                "strength": "FRACA",
+                "timestamp": datetime.datetime.now().isoformat(),
+                "timeframe": timeframe,
+                "error": str(e),
+                "cached": False
             }
 
 # =========================
-#  APLICAÇÃO FLASK COMPLETA
+#  FLASK APP - SUPER ROBUSTO
 # =========================
 app = Flask(__name__)
 analyzer = SuperIntelligentAnalyzer()
 
-# Configurações para produção
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
-app.config['JSON_SORT_KEYS'] = False
-
-# HTML TEMPLATE (MANTIDO EXATAMENTE IGUAL)
-HTML_TEMPLATE = '''
+HTML_TEMPLATE = """
 <!DOCTYPE html>
-<html lang="pt-br">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IA Signal Pro - SUPER INTELIGENTE E NEUTRA 🧠⚖️</title>
+    <title>IA SIGNAL PRO - SUPER INTELIGENTE</title>
+    <meta charset="utf-8">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { 
-            background: linear-gradient(135deg, #0b1220 0%, #1a1f38 100%); 
-            color: #e9eef2; 
-            font-family: 'Segoe UI', system-ui, sans-serif;
-            min-height: 100vh; 
-            padding: 20px;
-        }
-        .container {
-            max-width: 500px; 
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
             margin: 0 auto;
-            background: rgba(15, 22, 39, 0.95); 
-            border-radius: 20px;
-            padding: 25px; 
-            border: 2px solid #7ce0ff;
-            box-shadow: 0 10px 30px rgba(124, 224, 255, 0.3);
-        }
-        .header { 
-            text-align: center; 
-            margin-bottom: 20px; 
-        }
-        .title {
-            font-size: 24px; 
-            font-weight: 800; 
-            margin-bottom: 5px;
-            background: linear-gradient(90deg, #7ce0ff, #00ff88);
-            -webkit-background-clip: text; 
-            -webkit-text-fill-color: transparent;
-        }
-        .subtitle { 
-            color: #9db0d1; 
-            font-size: 13px; 
-            margin-bottom: 10px; 
-        }
-        
-        .upload-area {
-            border: 2px dashed #7ce0ff; 
-            border-radius: 15px;
-            padding: 30px 15px; 
-            text-align: center;
-            background: rgba(124, 224, 255, 0.05); 
-            margin-bottom: 20px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-        .upload-area:hover {
-            border-color: #00ff88;
-            background: rgba(0, 255, 136, 0.05);
-        }
-        .file-input {
-            margin: 15px 0; 
-            padding: 12px;
-            background: rgba(42, 53, 82, 0.3); 
-            border: 1px solid #7ce0ff;
-            border-radius: 8px; 
-            color: white; 
-            width: 100%; 
-            cursor: pointer;
-        }
-        
-        .timeframe-selector { 
-            display: flex; 
-            gap: 10px; 
-            margin: 15px 0; 
-        }
-        .timeframe-btn {
-            flex: 1; 
-            padding: 12px; 
-            border: 2px solid #7ce0ff;
-            background: rgba(124, 224, 255, 0.1); 
-            color: #9db0d1;
-            border-radius: 10px; 
-            cursor: pointer; 
-            text-align: center;
-            font-weight: 600; 
-            transition: all 0.3s ease;
-        }
-        .timeframe-btn.active {
-            background: linear-gradient(135deg, #7ce0ff 0%, #4a90e2 100%);
-            color: white; 
-            border-color: #4a90e2;
-        }
-        
-        .analyze-btn {
-            background: linear-gradient(135deg, #7ce0ff 0%, #4a90e2 100%);
-            color: white; 
-            border: none; 
-            border-radius: 10px; 
-            padding: 16px;
-            font-size: 16px; 
-            font-weight: 700; 
-            cursor: pointer; 
-            width: 100%;
-            transition: all 0.3s ease;
-        }
-        .analyze-btn:hover { 
-            background: linear-gradient(135deg, #4a90e2 0%, #2a76ef 100%);
-            transform: translateY(-2px);
-        }
-        .analyze-btn:disabled { 
-            background: #2a3552; 
-            transform: none; 
-            cursor: not-allowed;
-        }
-        
-        .result { 
-            display: none; 
-            background: rgba(14, 21, 36, 0.9);
-            border-radius: 15px; 
-            padding: 20px; 
-            margin-top: 20px;
-            border: 1px solid #223152;
-            animation: fadeIn 0.5s ease-in;
-        }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        
-        .signal-buy { color: #00ff88; }
-        .signal-sell { color: #ff4444; }
-        .signal-hold { color: #7ce0ff; }
-        
-        .signal-text {
-            font-weight: 800; 
-            font-size: 22px; 
-            text-align: center; 
-            margin-bottom: 10px;
-        }
-        
-        .time-info {
-            background: rgba(42, 53, 82, 0.5); 
-            border-radius: 8px;
-            padding: 12px; 
-            margin: 10px 0; 
-            text-align: center;
-        }
-        .time-item {
-            margin: 5px 0; 
-            display: flex; 
-            justify-content: space-between;
-            align-items: center;
-        }
-        .time-label { color: #9db0d1; font-size: 13px; }
-        .time-value { color: #00ff88; font-weight: 600; font-size: 14px; }
-        
-        .confidence {
-            font-size: 16px; 
-            text-align: center; 
-            margin: 10px 0;
-            color: #9db0d1;
-        }
-        .reasoning {
-            text-align: center; 
-            margin: 12px 0; 
-            color: #7ce0ff;
-            font-weight: 600; 
-            font-size: 14px;
-        }
-        
-        .quality-indicator {
-            text-align: center; 
-            margin: 10px 0; 
-            padding: 8px;
-            border-radius: 8px; 
-            font-weight: 700; 
-            font-size: 13px;
-        }
-        .quality-high { background: rgba(0, 255, 136, 0.1); color: #00ff88; border: 1px solid #00ff88; }
-        .quality-medium { background: rgba(255, 165, 0, 0.1); color: #ffa500; border: 1px solid #ffa500; }
-        
-        .context-badge {
-            display: inline-block;
-            padding: 4px 8px;
-            border-radius: 12px;
-            font-size: 10px;
-            font-weight: 700;
-            margin-left: 8px;
-        }
-        .context-movimento_forte { background: linear-gradient(135deg, #00ff88, #00cc66); color: white; }
-        .context-mercado_lateral { background: linear-gradient(135deg, #7ce0ff, #4a90e2); color: white; }
-        .context-tendencia_estabelecida { background: linear-gradient(135deg, #ffaa00, #ff8800); color: white; }
-        .context-momentum_tecnico { background: linear-gradient(135deg, #ff6b6b, #ff4444); color: white; }
-        .context-linhas_tendencia_fortes { background: linear-gradient(135deg, #ff6b6b, #ff4444); color: white; }
-        .context-padroes_candlestick_claros { background: linear-gradient(135deg, #ffaa00, #ff8800); color: white; }
-        .context-mercado_balanceado { background: linear-gradient(135deg, #7ce0ff, #4a90e2); color: white; }
-        .context-market_analysis { background: linear-gradient(135deg, #9b59b6, #8e44ad); color: white; }
-        
-        .metrics {
-            margin-top: 15px; 
-            font-size: 13px; 
-            color: #9db0d1;
-            background: rgba(42, 53, 82, 0.3); 
-            padding: 15px;
-            border-radius: 8px;
-        }
-        .metric-item {
-            margin: 6px 0; 
-            display: flex; 
-            justify-content: space-between;
-            align-items: center;
-        }
-        .metric-value {
-            font-weight: 600; 
-            color: #e9eef2;
-        }
-        
-        .error-message {
-            background: rgba(255, 68, 68, 0.1); 
-            border: 1px solid #ff4444;
-            border-radius: 10px; 
-            padding: 15px; 
-            margin: 10px 0;
-            color: #ff8888; 
-            text-align: center;
-        }
-        
-        .loading {
-            text-align: center; 
-            color: #7ce0ff; 
-            font-size: 14px;
-        }
-        
-        .cache-badge {
-            background: linear-gradient(135deg, #ffaa00, #ff6b6b);
-            color: white; 
-            padding: 4px 8px; 
-            border-radius: 12px;
-            font-size: 10px; 
-            font-weight: 700; 
-            margin-left: 8px;
-        }
-        
-        .progress-bar {
-            width: 100%; 
-            height: 4px; 
-            background: #2a3552;
-            border-radius: 2px; 
-            margin: 12px 0; 
-            overflow: hidden;
-        }
-        .progress-fill {
-            height: 100%; 
-            background: linear-gradient(90deg, #7ce0ff, #00ff88);
-            width: 0%; 
-            transition: width 0.3s ease;
-        }
-        
-        .power-analysis {
-            background: rgba(124, 224, 255, 0.1);
-            border-radius: 8px;
-            padding: 10px;
-            margin: 10px 0;
-            border: 1px solid #7ce0ff;
-        }
-        
-        .image-preview {
-            max-width: 100%;
-            max-height: 200px;
-            border-radius: 8px;
-            margin: 10px 0;
-            border: 2px solid #7ce0ff;
-            display: none;
-        }
-        
-        .neutral-badge {
-            font-size: 10px;
-            padding: 2px 6px;
-            border-radius: 8px;
-            margin-left: 5px;
-            background: linear-gradient(135deg, #7ce0ff, #4a90e2);
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
         }
-        
-        .advanced-metrics {
-            background: rgba(0, 255, 136, 0.1);
-            border-radius: 8px;
-            padding: 10px;
+        .container {
+            background: rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 30px;
+            margin: 20px 0;
+        }
+        .signal-box {
+            text-align: center;
+            padding: 30px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+        .buy {
+            background: linear-gradient(135deg, #00b09b, #96c93d);
+        }
+        .sell {
+            background: linear-gradient(135deg, #ff416c, #ff4b2b);
+        }
+        .neutral {
+            background: linear-gradient(135deg, #8e9eab, #eef2f3);
+        }
+        .confidence-bar {
+            height: 20px;
+            background: rgba(255,255,255,0.3);
+            border-radius: 10px;
             margin: 10px 0;
-            border: 1px solid #00ff88;
+            overflow: hidden;
+        }
+        .confidence-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4CAF50, #8BC34A);
+            border-radius: 10px;
+            transition: width 0.5s ease;
+        }
+        input, button {
+            padding: 12px;
+            margin: 10px 0;
+            border: none;
+            border-radius: 5px;
+            width: 100%;
+        }
+        button {
+            background: #667eea;
+            color: white;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background: #764ba2;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="header">
-            <div class="title">🧠⚖️ IA SIGNAL PRO - 100% NEUTRA</div>
-            <div class="subtitle">ZERO VIÉS - DECISÕES APENAS PELO MOMENTO DO MERCADO</div>
-            <div class="subtitle" style="color: #7ce0ff; font-size: 12px;">🎯 AGORA COM OCR + LINHAS DE TENDÊNCIA + PADRÕES CANDLESTICK</div>
+        <h1>🧠 IA SIGNAL PRO - SUPER INTELIGENTE</h1>
+        <p>Análise de gráficos em tempo real com IA avançada</p>
+        
+        <form id="uploadForm" enctype="multipart/form-data">
+            <input type="file" id="chartImage" name="image" accept="image/*" required>
+            <select id="timeframe" name="timeframe">
+                <option value="1m">1 Minuto</option>
+                <option value="5m">5 Minutos</option>
+            </select>
+            <button type="submit">ANALISAR GRÁFICO</button>
+        </form>
+    </div>
+
+    <div id="result" class="container" style="display:none;">
+        <div class="signal-box" id="signalBox">
+            <h2 id="signalDirection">ANÁLISE</h2>
+            <p>Confiança: <span id="confidenceValue">0%</span></p>
+            <div class="confidence-bar">
+                <div class="confidence-fill" id="confidenceBar" style="width: 0%"></div>
+            </div>
+            <p>Força: <span id="strengthValue">-</span></p>
+            <p>Timeframe: <span id="timeframeValue">-</span></p>
+            <p id="timestamp">-</p>
         </div>
         
-        <div class="timeframe-selector">
-            <button class="timeframe-btn active" data-timeframe="1m">⏱️ 1 MINUTO</button>
-            <button class="timeframe-btn" data-timeframe="5m">⏱️ 5 MINUTOS</button>
-        </div>
-        
-        <div class="upload-area" id="uploadArea">
-            <div style="font-size: 15px; margin-bottom: 8px;">
-                📊 CLIQUE OU ARRASTE A IMAGEM DO GRÁFICO
-            </div>
-            <input type="file" id="fileInput" class="file-input" accept="image/*">
-        </div>
-        
-        <img id="imagePreview" class="image-preview" alt="Prévia da imagem">
-        
-        <button class="analyze-btn" id="analyzeBtn" disabled>🧠 SELECIONE UMA IMAGEM PRIMEIRO</button>
-        
-        <div class="result" id="result">
-            <div id="signalText" class="signal-text"></div>
-            <div id="errorMessage" class="error-message" style="display: none;"></div>
-            
-            <div class="time-info">
-                <div class="time-item">
-                    <span class="time-label">⏰ Horário da Análise:</span>
-                    <span class="time-value" id="analysisTime">--:--:--</span>
-                </div>
-                <div class="time-item">
-                    <span class="time-label">🎯 Entrada Recomendada:</span>
-                    <span class="time-value" id="entryTime">--:--</span>
-                </div>
-                <div class="time-item">
-                    <span class="time-label">⏱️ Timeframe:</span>
-                    <span class="time-value" id="timeframe">Próximo minuto</span>
-                </div>
-            </div>
-            
-            <div class="reasoning" id="reasoningText"></div>
-            <div class="confidence" id="confidenceText"></div>
-            <div id="qualityIndicator" class="quality-indicator"></div>
-            
-            <div class="progress-bar">
-                <div class="progress-fill" id="progressFill"></div>
-            </div>
-            
-            <div id="contextInfo" style="text-align: center; margin: 10px 0;"></div>
-            
-            <div class="power-analysis" id="powerAnalysis">
-                <div style="text-align: center; font-weight: 600; margin-bottom: 8px; color: #7ce0ff;">
-                    ⚡ ANÁLISE DO MOMENTO
-                </div>
-                <div id="powerMetrics"></div>
-            </div>
-            
-            <div class="advanced-metrics" id="advancedMetrics">
-                <div style="text-align: center; font-weight: 600; margin-bottom: 8px; color: #00ff88;">
-                    🔍 ANÁLISE AVANÇADA
-                </div>
-                <div id="advancedMetricsContent"></div>
-            </div>
-            
-            <div class="metrics" id="metricsText"></div>
+        <div id="metadata">
+            <h3>📊 Metadados da Análise</h3>
+            <pre id="metadataContent"></pre>
         </div>
     </div>
 
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const fileInput = document.getElementById('fileInput');
-            const analyzeBtn = document.getElementById('analyzeBtn');
-            const uploadArea = document.getElementById('uploadArea');
-            const imagePreview = document.getElementById('imagePreview');
-            const result = document.getElementById('result');
-            const signalText = document.getElementById('signalText');
-            const errorMessage = document.getElementById('errorMessage');
-            const analysisTime = document.getElementById('analysisTime');
-            const entryTime = document.getElementById('entryTime');
-            const timeframeEl = document.getElementById('timeframe');
-            const reasoningText = document.getElementById('reasoningText');
-            const confidenceText = document.getElementById('confidenceText');
-            const qualityIndicator = document.getElementById('qualityIndicator');
-            const progressFill = document.getElementById('progressFill');
-            const metricsText = document.getElementById('metricsText');
-            const contextInfo = document.getElementById('contextInfo');
-            const powerAnalysis = document.getElementById('powerAnalysis');
-            const powerMetrics = document.getElementById('powerMetrics');
-            const advancedMetrics = document.getElementById('advancedMetrics');
-            const advancedMetricsContent = document.getElementById('advancedMetricsContent');
-            const timeframeBtns = document.querySelectorAll('.timeframe-btn');
-
-            let currentTimeframe = '1m';
-            let selectedFile = null;
-
-            // Seleção de timeframe
-            timeframeBtns.forEach(btn => {
-                btn.addEventListener('click', () => {
-                    timeframeBtns.forEach(b => b.classList.remove('active'));
-                    btn.classList.add('active');
-                    currentTimeframe = btn.dataset.timeframe;
-                    if (selectedFile) {
-                        analyzeBtn.textContent = `✅ PRONTO PARA ANÁLISE ${currentTimeframe.toUpperCase()}`;
-                    }
-                });
-            });
-
-            // Upload de arquivo
-            uploadArea.addEventListener('click', () => fileInput.click());
+        document.getElementById('uploadForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
             
-            uploadArea.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                uploadArea.style.borderColor = '#00ff88';
-            });
+            const formData = new FormData();
+            const imageFile = document.getElementById('chartImage').files[0];
+            const timeframe = document.getElementById('timeframe').value;
             
-            uploadArea.addEventListener('dragleave', () => {
-                uploadArea.style.borderColor = '#7ce0ff';
-            });
-            
-            uploadArea.addEventListener('drop', (e) => {
-                e.preventDefault();
-                uploadArea.style.borderColor = '#7ce0ff';
-                if (e.dataTransfer.files.length) {
-                    fileInput.files = e.dataTransfer.files;
-                    handleFileSelect(e);
-                }
-            });
-
-            function handleFileSelect(event) {
-                const files = event.target.files;
-                if (files && files.length > 0) {
-                    selectedFile = files[0];
-                    analyzeBtn.disabled = false;
-                    analyzeBtn.textContent = `✅ PRONTO PARA ANÁLISE ${currentTimeframe.toUpperCase()}`;
-                    
-                    // Mostrar prévia da imagem
-                    const reader = new FileReader();
-                    reader.onload = function(e) {
-                        imagePreview.src = e.target.result;
-                        imagePreview.style.display = 'block';
-                    };
-                    reader.readAsDataURL(selectedFile);
-                } else {
-                    analyzeBtn.disabled = true;
-                    analyzeBtn.textContent = '🧠 SELECIONE UMA IMAGEM PRIMEIRO';
-                    imagePreview.style.display = 'none';
-                }
+            if (!imageFile) {
+                alert('Por favor, selecione uma imagem do gráfico');
+                return;
             }
-
-            fileInput.addEventListener('change', handleFileSelect);
-
-            analyzeBtn.addEventListener('click', async () => {
-                if (!selectedFile) {
-                    alert('📸 Selecione uma imagem do gráfico primeiro!');
-                    return;
-                }
-
-                analyzeBtn.disabled = true;
-                analyzeBtn.textContent = `🧠 ANALISANDO ${currentTimeframe.toUpperCase()}...`;
-                result.style.display = 'block';
-                errorMessage.style.display = 'none';
-                
-                signalText.className = 'signal-text';
-                signalText.textContent = 'Analisando momento do mercado...';
-                qualityIndicator.textContent = '';
-                contextInfo.innerHTML = '';
-                advancedMetrics.style.display = 'none';
-                
-                const now = new Date();
-                analysisTime.textContent = now.toLocaleTimeString('pt-BR');
-                
-                // Calcula horário de entrada
-                let entryTimeValue;
-                if (currentTimeframe === '1m') {
-                    const nextMinute = new Date(now);
-                    nextMinute.setMinutes(nextMinute.getMinutes() + 1);
-                    nextMinute.setSeconds(0);
-                    entryTimeValue = nextMinute.toLocaleTimeString('pt-BR').slice(0, 5);
-                    timeframeEl.textContent = 'Próximo minuto';
-                } else {
-                    const minutesToAdd = 5 - (now.minute % 5);
-                    const next5min = new Date(now);
-                    next5min.setMinutes(next5min.getMinutes() + minutesToAdd);
-                    next5min.setSeconds(0);
-                    entryTimeValue = next5min.toLocaleTimeString('pt-BR').slice(0, 5);
-                    timeframeEl.textContent = `Próximo candle de 5min`;
-                }
-                
-                entryTime.textContent = entryTimeValue;
-                reasoningText.textContent = 'Processando análise 100% neutra...';
-                confidenceText.textContent = '';
-                progressFill.style.width = '20%';
-                
-                metricsText.innerHTML = '<div class="loading">Iniciando análise do momento do mercado...</div>';
-
-                try {
-                    const formData = new FormData();
-                    formData.append('image', selectedFile);
-                    formData.append('timeframe', currentTimeframe);
-                    
-                    progressFill.style.width = '40%';
-                    
-                    const response = await fetch('/analyze', {
-                        method: 'POST',
-                        body: formData
-                    });
-                    
-                    progressFill.style.width = '80%';
-                    
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-                    
-                    const data = await response.json();
-                    
-                    progressFill.style.width = '100%';
-                    
-                    if (data.error) {
-                        throw new Error(data.error);
-                    }
-                    
-                    displayResults(data);
-                    
-                } catch (error) {
-                    console.error('Erro:', error);
-                    errorMessage.style.display = 'block';
-                    errorMessage.textContent = `❌ Erro na análise: ${error.message}`;
-                    signalText.textContent = '❌ Análise Falhou';
-                    metricsText.innerHTML = '<div class="loading">Erro no processamento</div>';
-                } finally {
-                    analyzeBtn.disabled = false;
-                    analyzeBtn.textContent = `🔁 ANALISAR ${currentTimeframe.toUpperCase()} NOVAMENTE`;
-                }
-            });
-
-            function displayResults(data) {
-                const direction = data.direction;
-                const confidence = (data.final_confidence * 100).toFixed(1);
-                const cached = data.cached || false;
-                const quality = data.analysis_grade || 'medium';
-                const context = data.market_context || 'mercado_balanceado';
-                const advanced = data.advanced_metrics || {};
-                
-                // Define classe e texto do sinal
-                signalText.className = `signal-text signal-${direction}`;
-                let directionText = '';
-                if (direction === 'buy') directionText = '🎯 COMPRAR';
-                else if (direction === 'sell') directionText = '🎯 VENDER';
-                else directionText = '⚖️ MANTER';
-                
-                signalText.innerHTML = `${directionText} <span class="neutral-badge">100% NEUTRO</span> ${cached ? '<span class="cache-badge">CACHE</span>' : ''}`;
-                
-                // Atualiza informações
-                analysisTime.textContent = data.analysis_time || '--:--:--';
-                entryTime.textContent = data.entry_time || '--:--';
-                timeframeEl.textContent = data.timeframe || 'Próximo minuto';
-                
-                reasoningText.textContent = data.reasoning;
-                confidenceText.textContent = `Confiança Técnica: ${confidence}%`;
-                
-                // Indicador de qualidade
-                qualityIndicator.className = `quality-indicator quality-${quality}`;
-                if (quality === 'high') {
-                    qualityIndicator.textContent = '✅ ALTA QUALIDADE - Análise confiável do momento';
-                } else {
-                    qualityIndicator.textContent = '⚠️ QUALIDADE MÉDIA - Análise válida do momento';
-                }
-                
-                // Informações de contexto
-                const contextLabels = {
-                    'movimento_forte': '🚀 MOVIMENTO FORTE',
-                    'mercado_lateral': '⚡ MERCADO LATERAL', 
-                    'tendencia_estabelecida': '📈 TENDÊNCIA ESTABELECIDA',
-                    'momentum_tecnico': '🎯 MOMENTUM TÉCNICO',
-                    'linhas_tendencia_fortes': '📊 LINHAS DE TENDÊNCIA FORTES',
-                    'padroes_candlestick_claros': '🕯️ PADRÕES CANDLESTICK CLAROS',
-                    'mercado_balanceado': '⚖️ MERCADO BALANCEADO',
-                    'market_analysis': '🔍 ANÁLISE DE MERCADO'
-                };
-                
-                contextInfo.innerHTML = `
-                    <span class="context-badge context-${context}">
-                        ${contextLabels[context] || contextLabels.mercado_balanceado}
-                    </span>
-                `;
-                
-                // Análise do Momento
-                const metrics = data.metrics || {};
-                let powerHtml = '';
-                
-                const powerItems = [
-                    ['Poder da Tendência', (metrics.trend_power * 100)?.toFixed(1) + '%'],
-                    ['Poder do MACD', (metrics.macd_power * 100)?.toFixed(1) + '%'],
-                    ['Poder Microscópico', (metrics.micro_power * 100)?.toFixed(1) + '%'],
-                    ['Poder Linhas Tendência', (metrics.trend_line_power * 100)?.toFixed(1) + '%'],
-                    ['Poder Padrões', (metrics.pattern_power * 100)?.toFixed(1) + '%'],
-                    ['Score da Análise', metrics.analysis_score?.toFixed(3)]
-                ];
-                
-                powerItems.forEach(([label, value]) => {
-                    powerHtml += `
-                        <div class="metric-item">
-                            <span>${label}:</span>
-                            <span class="metric-value">${value}</span>
-                        </div>
-                    `;
+            
+            formData.append('image', imageFile);
+            formData.append('timeframe', timeframe);
+            
+            try {
+                const response = await fetch('/analyze', {
+                    method: 'POST',
+                    body: formData
                 });
                 
-                powerMetrics.innerHTML = powerHtml;
+                const result = await response.json();
+                displayResult(result);
                 
-                // Métricas Avançadas
-                advancedMetrics.style.display = 'block';
-                let advancedHtml = '';
-                
-                const colorEmoji = {
-                    'green': '🟢',
-                    'red': '🔴', 
-                    'neutral': '⚪'
-                };
-                
-                const advancedItems = [
-                    ['Níveis de Preço Detectados', advanced.ocr_levels],
-                    ['Linhas de Tendência', advanced.trend_lines],
-                    ['Viés de Cor', `${colorEmoji[advanced.pattern_bias] || '⚪'} ${advanced.pattern_bias === 'green' ? 'Alta' : advanced.pattern_bias === 'red' ? 'Baixa' : 'Neutro'}`],
-                    ['Range de Preço', advanced.price_range?.toFixed(2)],
-                    ['Qualidade Detecção', advanced.detection_quality === 'high' ? '✅ Alta' : '⚠️ Média']
-                ];
-                
-                advancedItems.forEach(([label, value]) => {
-                    advancedHtml += `
-                        <div class="metric-item">
-                            <span>${label}:</span>
-                            <span class="metric-value">${value}</span>
-                        </div>
-                    `;
-                });
-                
-                advancedMetricsContent.innerHTML = advancedHtml;
-                
-                // Métricas detalhadas
-                let metricsHtml = '<div style="margin-bottom: 10px; text-align: center; font-weight: 600;">📊 ANÁLISE TÉCNICA COMPLETA</div>';
-                
-                const metricItems = [
-                    ['Força da Tendência', (metrics.trend_strength * 100)?.toFixed(1) + '%'],
-                    ['Momentum', metrics.momentum?.toFixed(3)],
-                    ['RSI', metrics.rsi?.toFixed(3)],
-                    ['MACD', metrics.macd?.toFixed(3)],
-                    ['Força do MACD', (metrics.macd_strength * 100)?.toFixed(1) + '%'],
-                    ['Confiança OCR', (metrics.ocr_confidence * 100)?.toFixed(1) + '%'],
-                    ['Qualidade do Sinal', (data.signal_quality * 100)?.toFixed(1) + '%']
-                ];
-                
-                metricItems.forEach(([label, value]) => {
-                    metricsHtml += `
-                        <div class="metric-item">
-                            <span>${label}:</span>
-                            <span class="metric-value">${value}</span>
-                        </div>
-                    `;
-                });
-                
-                metricsText.innerHTML = metricsHtml;
+            } catch (error) {
+                alert('Erro na análise: ' + error.message);
             }
         });
+        
+        function displayResult(result) {
+            const resultDiv = document.getElementById('result');
+            const signalBox = document.getElementById('signalBox');
+            const direction = document.getElementById('signalDirection');
+            const confidenceValue = document.getElementById('confidenceValue');
+            const confidenceBar = document.getElementById('confidenceBar');
+            const strengthValue = document.getElementById('strengthValue');
+            const timeframeValue = document.getElementById('timeframeValue');
+            const timestamp = document.getElementById('timestamp');
+            const metadataContent = document.getElementById('metadataContent');
+            
+            // Atualizar dados
+            direction.textContent = result.direction;
+            confidenceValue.textContent = Math.round(result.confidence * 100) + '%';
+            confidenceBar.style.width = (result.confidence * 100) + '%';
+            strengthValue.textContent = result.strength;
+            timeframeValue.textContent = result.timeframe;
+            timestamp.textContent = new Date(result.timestamp).toLocaleString();
+            
+            // Cor do sinal
+            signalBox.className = 'signal-box ';
+            if (result.direction === 'COMPRA') {
+                signalBox.classList.add('buy');
+            } else if (result.direction === 'VENDA') {
+                signalBox.classList.add('sell');
+            } else {
+                signalBox.classList.add('neutral');
+            }
+            
+            // Metadados
+            metadataContent.textContent = JSON.stringify(result.metadata, null, 2);
+            
+            // Mostrar resultados
+            resultDiv.style.display = 'block';
+        }
     </script>
 </body>
 </html>
-'''
+"""
 
 @app.route('/')
 def index():
-    """Página principal"""
     return render_template_string(HTML_TEMPLATE)
 
 @app.route('/analyze', methods=['POST'])
-def analyze_photo():
-    """Endpoint de análise de imagem"""
+def analyze():
     try:
         if 'image' not in request.files:
             return jsonify({'error': 'Nenhuma imagem enviada'}), 400
         
         image_file = request.files['image']
-        if not image_file or image_file.filename == '':
-            return jsonify({'error': 'Arquivo inválido'}), 400
-        
         timeframe = request.form.get('timeframe', '1m')
-        if timeframe not in ['1m', '5m']:
-            timeframe = '1m'
         
-        # Verificação básica do arquivo
-        image_file.seek(0, 2)
-        file_size = image_file.tell()
-        image_file.seek(0)
+        if image_file.filename == '':
+            return jsonify({'error': 'Nenhuma imagem selecionada'}), 400
         
-        if file_size > 10 * 1024 * 1024:
-            return jsonify({'error': 'Imagem muito grande (máximo 10MB)'}), 400
+        image_blob = image_file.read()
         
-        image_bytes = image_file.read()
-        if len(image_bytes) == 0:
-            return jsonify({'error': 'Arquivo vazio'}), 400
+        if len(image_blob) == 0:
+            return jsonify({'error': 'Imagem vazia'}), 400
         
-        # Análise 100% NEUTRA
-        analysis = analyzer.analyze(image_bytes, timeframe)
+        # Análise super inteligente
+        result = analyzer.analyze_chart(image_blob, timeframe)
         
-        return jsonify(analysis)
+        return jsonify(result)
         
     except Exception as e:
         return jsonify({
-            'error': f'Erro interno: {str(e)}'
+            'error': str(e),
+            'direction': 'NEUTRO',
+            'confidence': 0.5,
+            'strength': 'FRACA'
         }), 500
 
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Health check para monitoramento"""
-    return jsonify({
-        'status': 'healthy', 
-        'service': 'IA Signal Pro - 100% NEUTRA - ANÁLISE REAL',
-        'timestamp': datetime.datetime.now().isoformat(),
-        'version': '8.0.0-real-analysis'
-    })
-
-@app.route('/cache/clear', methods=['POST'])
-def clear_cache():
-    """Limpa o cache de análises"""
-    try:
-        cache_dir = "analysis_cache"
-        if os.path.exists(cache_dir):
-            for file in os.listdir(cache_dir):
-                os.remove(os.path.join(cache_dir, file))
-            return jsonify({'ok': True, 'message': 'Cache limpo com sucesso!'})
-        return jsonify({'ok': True, 'message': 'Cache já está vazio!'})
-    except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)}), 500
-
-# Handler de erro global
-@app.errorhandler(500)
-def internal_error(error):
-    return jsonify({'error': 'Erro interno do servidor'}), 500
-
-@app.errorhandler(404)
-def not_found(error):
-    return jsonify({'error': 'Endpoint não encontrado'}), 404
-
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    debug = os.environ.get('DEBUG', 'False').lower() == 'true'
-    
-    print(f"🚀 IA Signal Pro - ANÁLISE DE GRÁFICOS REAIS")
-    print(f"🧠⚖️ SISTEMA: ZERO VIÉS - DECISÕES PURAMENTE TÉCNICAS")
-    print(f"🎯 TECNOLOGIAS: OCR AVANÇADO + DETECÇÃO LINHAS + PADRÕES CORES")
-    print(f"📈 SAÍDA: SEMPRE COMPRA OU VENDA - BASEADO EM ANÁLISE REAL")
-    print(f"🌐 Iniciando na porta {port}")
-    
-    app.run(host='0.0.0.0', port=port, debug=debug)
+    app.run(host='0.0.0.0', port=5000, debug=True)
