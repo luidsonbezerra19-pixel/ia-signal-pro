@@ -1,3 +1,5 @@
+[file name]: app_corrigido_completo.py
+[file content begin]
 from __future__ import annotations
 
 """
@@ -818,154 +820,153 @@ class SuperIntelligentAnalyzer:
             return {"rsi": 0.0, "macd": 0.0, "macd_strength": 0.0, "volume_intensity": 0.0, "momentum_quality": 0.0}
 
     # =========================
-    #  MOTOR DE DECISÃO OTIMIZADO - SEM "MANTER"
+    #  MOTOR DE DECISÃO OTIMIZADO - CORRIGIDO
     # =========================
     
-    # 💥 DECISÃO 100% NEUTRA - VERDADEIRAMENTE IMPARCIAL
-def _enhanced_decision_engine(self, all_analyses: Dict, timeframe: str) -> Dict[str, Any]:
-    """MOTOR VERDADEIRAMENTE NEUTRO - SEM VIÉS"""
-    try:
-        # Extrair análises
-        traditional = all_analyses['traditional']
-        nano_trend = all_analyses['nano_analysis']
-        micro_structure = all_analyses['micro_structure']
-        flow_dynamics = all_analyses['flow_dynamics']
-        ocr_analysis = all_analyses['ocr_analysis']
-        trend_analysis = all_analyses['trend_analysis']
-        pattern_analysis = all_analyses['pattern_analysis']
-        
-        # 🎯 ANÁLISE TÉCNICA EQUILIBRADA
-        trend_direction = traditional['price_action']['trend_direction']
-        trend_strength = max(0.1, traditional['price_action']['trend_strength'])
-        trend_power = trend_direction * trend_strength
-        
-        macd_value = traditional['indicators']['macd']
-        macd_strength = max(0.1, traditional['indicators']['macd_strength'])
-        macd_power = macd_value * macd_strength
-        
-        nano_power = nano_trend['nano_trend'] * nano_trend['convergence_strength']
-        micro_power = micro_structure['structural_integrity'] * 0.5 + flow_dynamics['overall_flow_quality'] * 0.5
-        micro_composite = (nano_power + micro_power) / 2
-        
-        # 🆕 CORREÇÃO DOS VIÉSES - Valores neutros quando não há sinal claro
-        # Trend lines - se não detectou linhas, considera neutro
-        if trend_analysis['lines_count'] == 0:
-            trend_line_power = 0.0
-        else:
-            trend_line_power = trend_analysis['strength'] * (1 if trend_analysis['trend'] == 'uptrend' else -1)
-        
-        # Pattern bias - se força muito baixa, considera neutro
-        if pattern_analysis['strength'] < 0.3:
-            pattern_power = 0.0
-        else:
-            pattern_power = pattern_analysis['strength'] * (1 if pattern_analysis['bias'] == 'bullish' else -1)
-        
-        # 🧠 SCORE PERFEITAMENTE EQUILIBRADO
-        total_score = (
-            trend_power * 0.30 +           # Mais peso na tendência principal
-            macd_power * 0.25 +            # MACD importante
-            micro_composite * 0.25 +       # Análise micro
-            trend_line_power * 0.10 +      # Menos peso em linhas (menos confiável)
-            pattern_power * 0.10           # Menos peso em padrões (menos confiável)
-        )
-        
-        # 💥 DECISÃO BASEADA EM ANÁLISE REAL DO MOMENTO
-        threshold = 0.02  # Threshold pequeno para evitar decisões por ruído
-        
-        if total_score > threshold:
-            direction = "buy"
-            strength = "FORTE" if total_score > 0.15 else "MODERADA"
-            base_confidence = 0.65 + (min(total_score, 0.5) * 0.3)
-            reasoning = f"📈 COMPRA {strength} - Score: {total_score:.3f}"
+    def _enhanced_decision_engine(self, all_analyses: Dict, timeframe: str) -> Dict[str, Any]:
+        """MOTOR VERDADEIRAMENTE NEUTRO - SEM VIÉS"""
+        try:
+            # Extrair análises
+            traditional = all_analyses['traditional']
+            nano_trend = all_analyses['nano_analysis']
+            micro_structure = all_analyses['micro_structure']
+            flow_dynamics = all_analyses['flow_dynamics']
+            ocr_analysis = all_analyses['ocr_analysis']
+            trend_analysis = all_analyses['trend_analysis']
+            pattern_analysis = all_analyses['pattern_analysis']
             
-        elif total_score < -threshold:
-            direction = "sell" 
-            strength = "FORTE" if total_score < -0.15 else "MODERADA"
-            base_confidence = 0.65 + (min(abs(total_score), 0.5) * 0.3)
-            reasoning = f"📉 VENDA {strength} - Score: {total_score:.3f}"
+            # 🎯 ANÁLISE TÉCNICA EQUILIBRADA
+            trend_direction = traditional['price_action']['trend_direction']
+            trend_strength = max(0.1, traditional['price_action']['trend_strength'])
+            trend_power = trend_direction * trend_strength
             
-        else:
-            # Mercado muito equilibrado - análise mais detalhada
-            bullish_signals = 0
-            bearish_signals = 0
+            macd_value = traditional['indicators']['macd']
+            macd_strength = max(0.1, traditional['indicators']['macd_strength'])
+            macd_power = macd_value * macd_strength
             
-            # Contagem de sinais individuais
-            if trend_power > 0.05: bullish_signals += 1
-            elif trend_power < -0.05: bearish_signals += 1
-                
-            if macd_power > 0.05: bullish_signals += 1
-            elif macd_power < -0.05: bearish_signals += 1
-                
-            if micro_composite > 0: bullish_signals += 1
-            elif micro_composite < 0: bearish_signals += 1
+            nano_power = nano_trend['nano_trend'] * nano_trend['convergence_strength']
+            micro_power = micro_structure['structural_integrity'] * 0.5 + flow_dynamics['overall_flow_quality'] * 0.5
+            micro_composite = (nano_power + micro_power) / 2
             
-            # Tendência das linhas
-            if trend_analysis['trend'] == 'uptrend': bullish_signals += 1
-            elif trend_analysis['trend'] == 'downtrend': bearish_signals += 1
-                
-            # Padrão de cores
-            if pattern_analysis['dominant_color'] == 'green': bullish_signals += 1
-            elif pattern_analysis['dominant_color'] == 'red': bearish_signals += 1
-            
-            # Decide pela maioria
-            if bullish_signals > bearish_signals:
-                direction = "buy"
-                base_confidence = 0.62
-                reasoning = f"📈 COMPRA - Majority signals ({bullish_signals}/{bearish_signals})"
-            elif bearish_signals > bullish_signals:
-                direction = "sell"
-                base_confidence = 0.62
-                reasoning = f"📉 VENDA - Majority signals ({bearish_signals}/{bullish_signals})"
+            # 🆕 CORREÇÃO DOS VIÉSES - Valores neutros quando não há sinal claro
+            # Trend lines - se não detectou linhas, considera neutro
+            if trend_analysis['lines_count'] == 0:
+                trend_line_power = 0.0
             else:
-                # Empate total - decide pelo RSI
-                rsi = traditional['indicators']['rsi']
-                if rsi > 0:
+                trend_line_power = trend_analysis['strength'] * (1 if trend_analysis['trend'] == 'uptrend' else -1)
+            
+            # Pattern bias - se força muito baixa, considera neutro
+            if pattern_analysis['strength'] < 0.3:
+                pattern_power = 0.0
+            else:
+                pattern_power = pattern_analysis['strength'] * (1 if pattern_analysis['bias'] == 'bullish' else -1)
+            
+            # 🧠 SCORE PERFEITAMENTE EQUILIBRADO
+            total_score = (
+                trend_power * 0.30 +           # Mais peso na tendência principal
+                macd_power * 0.25 +            # MACD importante
+                micro_composite * 0.25 +       # Análise micro
+                trend_line_power * 0.10 +      # Menos peso em linhas (menos confiável)
+                pattern_power * 0.10           # Menos peso em padrões (menos confiável)
+            )
+            
+            # 💥 DECISÃO BASEADA EM ANÁLISE REAL DO MOMENTO
+            threshold = 0.02  # Threshold pequeno para evitar decisões por ruído
+            
+            if total_score > threshold:
+                direction = "buy"
+                strength = "FORTE" if total_score > 0.15 else "MODERADA"
+                base_confidence = 0.65 + (min(total_score, 0.5) * 0.3)
+                reasoning = f"📈 COMPRA {strength} - Score: {total_score:.3f}"
+                
+            elif total_score < -threshold:
+                direction = "sell" 
+                strength = "FORTE" if total_score < -0.15 else "MODERADA"
+                base_confidence = 0.65 + (min(abs(total_score), 0.5) * 0.3)
+                reasoning = f"📉 VENDA {strength} - Score: {total_score:.3f}"
+                
+            else:
+                # Mercado muito equilibrado - análise mais detalhada
+                bullish_signals = 0
+                bearish_signals = 0
+                
+                # Contagem de sinais individuais
+                if trend_power > 0.05: bullish_signals += 1
+                elif trend_power < -0.05: bearish_signals += 1
+                    
+                if macd_power > 0.05: bullish_signals += 1
+                elif macd_power < -0.05: bearish_signals += 1
+                    
+                if micro_composite > 0: bullish_signals += 1
+                elif micro_composite < 0: bearish_signals += 1
+                
+                # Tendência das linhas
+                if trend_analysis['trend'] == 'uptrend': bullish_signals += 1
+                elif trend_analysis['trend'] == 'downtrend': bearish_signals += 1
+                    
+                # Padrão de cores
+                if pattern_analysis['dominant_color'] == 'green': bullish_signals += 1
+                elif pattern_analysis['dominant_color'] == 'red': bearish_signals += 1
+                
+                # Decide pela maioria
+                if bullish_signals > bearish_signals:
                     direction = "buy"
-                    base_confidence = 0.60
-                    reasoning = "📈 COMPRA - Neutral tie, slight RSI bias"
-                else:
+                    base_confidence = 0.62
+                    reasoning = f"📈 COMPRA - Majority signals ({bullish_signals}/{bearish_signals})"
+                elif bearish_signals > bullish_signals:
                     direction = "sell"
-                    base_confidence = 0.60
-                    reasoning = "📉 VENDA - Neutral tie, slight RSI bias"
-        
-        # 🎪 CONFIANÇA BASEADA NA QUALIDADE DA ANÁLISE
-        final_confidence = self._calculate_enhanced_confidence(base_confidence, all_analyses)
-        
-        # 🎯 CONTEXTO DO MERCADO
-        context = self._detect_enhanced_context(trend_strength, macd_strength, micro_composite, 
-                                              trend_analysis, pattern_analysis, total_score)
-        
-        return {
-            "direction": direction,
-            "confidence": final_confidence,
-            "reasoning": reasoning,
-            "total_score": total_score,
-            "context": context,
-            "trend_power": trend_power,
-            "macd_power": macd_power,
-            "micro_power": micro_composite,
-            "trend_line_power": trend_line_power,
-            "pattern_power": pattern_power,
-            "ocr_confidence": min(1.0, ocr_analysis['levels_count'] / 5)
-        }
-        
-    except Exception as e:
-        # Fallback verdadeiramente aleatório
-        import random
-        direction = "buy" if random.random() > 0.5 else "sell"
-        return {
-            "direction": direction,
-            "confidence": 0.60,
-            "reasoning": f"🎯 {'COMPRA' if direction == 'buy' else 'VENDA'} - Análise contingência",
-            "total_score": 0.1 if direction == "buy" else -0.1,
-            "context": "market_analysis",
-            "trend_power": 0.0,
-            "macd_power": 0.0,
-            "micro_power": 0.0,
-            "trend_line_power": 0.0,
-            "pattern_power": 0.0,
-            "ocr_confidence": 0.5
-        }
+                    base_confidence = 0.62
+                    reasoning = f"📉 VENDA - Majority signals ({bearish_signals}/{bullish_signals})"
+                else:
+                    # Empate total - decide pelo RSI
+                    rsi = traditional['indicators']['rsi']
+                    if rsi > 0:
+                        direction = "buy"
+                        base_confidence = 0.60
+                        reasoning = "📈 COMPRA - Neutral tie, slight RSI bias"
+                    else:
+                        direction = "sell"
+                        base_confidence = 0.60
+                        reasoning = "📉 VENDA - Neutral tie, slight RSI bias"
+            
+            # 🎪 CONFIANÇA BASEADA NA QUALIDADE DA ANÁLISE
+            final_confidence = self._calculate_enhanced_confidence(base_confidence, all_analyses)
+            
+            # 🎯 CONTEXTO DO MERCADO
+            context = self._detect_enhanced_context(trend_strength, macd_strength, micro_composite, 
+                                                  trend_analysis, pattern_analysis, total_score)
+            
+            return {
+                "direction": direction,
+                "confidence": final_confidence,
+                "reasoning": reasoning,
+                "total_score": total_score,
+                "context": context,
+                "trend_power": trend_power,
+                "macd_power": macd_power,
+                "micro_power": micro_composite,
+                "trend_line_power": trend_line_power,
+                "pattern_power": pattern_power,
+                "ocr_confidence": min(1.0, ocr_analysis['levels_count'] / 5)
+            }
+            
+        except Exception as e:
+            # Fallback verdadeiramente aleatório
+            import random
+            direction = "buy" if random.random() > 0.5 else "sell"
+            return {
+                "direction": direction,
+                "confidence": 0.60,
+                "reasoning": f"🎯 {'COMPRA' if direction == 'buy' else 'VENDA'} - Análise contingência",
+                "total_score": 0.1 if direction == "buy" else -0.1,
+                "context": "market_analysis",
+                "trend_power": 0.0,
+                "macd_power": 0.0,
+                "micro_power": 0.0,
+                "trend_line_power": 0.0,
+                "pattern_power": 0.0,
+                "ocr_confidence": 0.5
+            }
 
     def _generate_enhanced_reasoning(self, direction: str, trend_power: float, macd_power: float, 
                                    micro_power: float, trend_line_power: float, pattern_power: float,
@@ -1956,3 +1957,4 @@ if __name__ == '__main__':
     print(f"🌐 Iniciando na porta {port}")
     
     app.run(host='0.0.0.0', port=port, debug=debug)
+[file content end]
