@@ -78,93 +78,153 @@ class AnalysisCache:
 # =========================
 #  FASE 1: SISTEMA DE OCR AVANÇADO
 # =========================
+# =========================
+#  FASE 1: SISTEMA DE OCR AVANÇADO - CORRIGIDO
+# =========================
 class TextDataExtractor:
     def __init__(self):
         self.indicators_patterns = {
-            'rsi': r'RSI\s*[\d:]+\s*([\d.,]+)',
-            'macd': r'MACD\s*([\d.,]+)',
-            'ema': r'EMA\s*[\d]+\s*([\d.,]+)',
-            'volume': r'Volume?\s*([\d.,]+)',
-            'price': r'([\d.,]+)\s*USDT',
+            'rsi': r'RSI\s*\d*\s*[:-]?\s*([\d.,]+)',
+            'macd': r'MACD\s*[:-]?\s*([\d.,-]+)',
+            'price': r'(\d+[.,]\d+)\s*/\s*(\d+[.,]\d+)',
+            'adl_usdt': r'ADL/USDT',
         }
     
     def preprocess_for_ocr(self, image: Image.Image) -> Image.Image:
-        """Melhora a imagem para OCR"""
+        """Melhora a imagem para OCR - CORRIGIDO"""
+        # Aumenta o tamanho para melhor reconhecimento
+        width, height = image.size
+        if width < 400:
+            image = image.resize((width * 2, height * 2), Image.LANCZOS)
+        
         # Converte para escala de cinza
         if image.mode != 'L':
             image = image.convert('L')
         
-        # Aumenta contraste
+        # Aumenta contraste drasticamente
         enhancer = ImageEnhance.Contrast(image)
-        image = enhancer.enhance(2.0)
+        image = enhancer.enhance(3.0)  # Aumentado de 2.0 para 3.0
         
         # Aumenta nitidez
         enhancer = ImageEnhance.Sharpness(image)
-        image = enhancer.enhance(2.0)
+        image = enhancer.enhance(3.0)  # Aumentado de 2.0 para 3.0
+        
+        # Ajusta brilho
+        enhancer = ImageEnhance.Brightness(image)
+        image = enhancer.enhance(1.2)
         
         return image
     
     def extract_text_data(self, image: Image.Image) -> Dict[str, Any]:
-        """Extrai todos os textos e valores numéricos do gráfico"""
+        """Extrai todos os textos e valores numéricos do gráfico - CORRIGIDO"""
         try:
             # Pré-processa para OCR
             processed_image = self.preprocess_for_ocr(image)
             
-            # Usa pytesseract para OCR
-            custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789.,RSI MACD EMA USDT%'
+            # Configuração MELHORADA para o Tesseract
+            custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789.,RSI MACD ADL/USDT %()-'
+            
+            # Tenta OCR com diferentes pré-processamentos
             text = pytesseract.image_to_string(processed_image, config=custom_config)
+            
+            # Se não encontrou texto suficiente, tenta com PSM diferente
+            if len(text.strip()) < 10:
+                custom_config = r'--oem 3 --psm 8 -c tessedit_char_whitelist=0123456789.,RSI MACD ADL/USDT %()-'
+                text = pytesseract.image_to_string(processed_image, config=custom_config)
+            
+            print(f"🔍 TEXTO EXTRAÍDO PELO OCR: {text}")  # DEBUG
             
             return self._parse_extracted_text(text)
         except Exception as e:
+            print(f"❌ ERRO NO OCR: {e}")  # DEBUG
             return self._get_fallback_text_data()
     
     def _parse_extracted_text(self, text: str) -> Dict[str, Any]:
-        """Analisa o texto extraído e identifica valores"""
+        """Analisa o texto extraído e identifica valores - CORRIGIDO"""
         extracted_data = {
             'rsi_value': None,
             'macd_value': None,
-            'ema_value': None,
-            'volume_value': None,
-            'price_value': None,
+            'price_values': [],
+            'timeframe': None,
             'raw_text': text,
             'confidence': 0.0
         }
         
-        # Procura por padrões numéricos
-        numbers = re.findall(r'(\d+[.,]?\d*)', text)
-        decimal_numbers = [float(num.replace(',', '.')) for num in numbers if self._is_valid_number(num)]
+        # 🔍 PROCURA RSI - PADRÃO MELHORADO
+        rsi_patterns = [
+            r'RSI\s*\d*\s*[:-]?\s*(\d+[.,]\d+)',  # RSI 14 - 47.57
+            r'RSI\s*(\d+[.,]\d+)',                 # RSI 47.57
+        ]
         
-        if decimal_numbers:
-            # Classifica números por faixas típicas de indicadores
-            for num in decimal_numbers:
-                if 0 <= num <= 100 and not extracted_data['rsi_value']:
-                    extracted_data['rsi_value'] = num  # RSI typical range
-                elif abs(num) < 50 and not extracted_data['macd_value']:
-                    extracted_data['macd_value'] = num  # MACD typical range
-                elif num > 1 and not extracted_data['price_value']:
-                    extracted_data['price_value'] = num  # Price typical range
+        for pattern in rsi_patterns:
+            rsi_match = re.search(pattern, text, re.IGNORECASE)
+            if rsi_match:
+                rsi_str = rsi_match.group(1).replace(',', '.')
+                try:
+                    extracted_data['rsi_value'] = float(rsi_str)
+                    break
+                except ValueError:
+                    continue
+        
+        # 🔍 PROCURA MACD - PADRÃO MELHORADO  
+        macd_patterns = [
+            r'MACD\s*[:-]?\s*([\d.,-]+)',          # MACD: 12.74 ou MACD 12.74
+            r'MACD\s*close\s*([\d.,-]+)',          # MACD close 12.74
+        ]
+        
+        for pattern in macd_patterns:
+            macd_match = re.search(pattern, text, re.IGNORECASE)
+            if macd_match:
+                macd_str = macd_match.group(1).replace(',', '.')
+                try:
+                    extracted_data['macd_value'] = float(macd_str)
+                    break
+                except ValueError:
+                    continue
+        
+        # 🔍 PROCURA PREÇOS - PADRÃO MELHORADO
+        price_pattern = r'(\d+[.,]\d+)\s*/\s*(\d+[.,]\d+)'  # 0.9469 / 0.9502
+        price_match = re.search(price_pattern, text)
+        if price_match:
+            try:
+                price1 = float(price_match.group(1).replace(',', '.'))
+                price2 = float(price_match.group(2).replace(',', '.'))
+                extracted_data['price_values'] = [price1, price2]
+            except ValueError:
+                pass
+        
+        # 🔍 PROCURA TIMEFRAME
+        timeframe_match = re.search(r'(\d+\.\d+)\s*-\s*(\d+\.\d+)', text)  # 21.00-20.00
+        if timeframe_match:
+            extracted_data['timeframe'] = f"{timeframe_match.group(1)}-{timeframe_match.group(2)}"
+        
+        # 📊 CALCULA CONFIANÇA - MELHORADO
+        confidence_factors = []
+        if extracted_data['rsi_value']:
+            confidence_factors.append(0.4)  # RSI encontrado
+        if extracted_data['macd_value']:
+            confidence_factors.append(0.4)  # MACD encontrado
+        if extracted_data['price_values']:
+            confidence_factors.append(0.2)  # Preços encontrados
             
-            # Calcula confiança baseada na quantidade de números encontrados
-            extracted_data['confidence'] = min(1.0, len(decimal_numbers) / 10)
+        if confidence_factors:
+            extracted_data['confidence'] = sum(confidence_factors)
+        else:
+            # Confiança baseada na quantidade de números encontrados
+            numbers = re.findall(r'\d+[.,]\d+', text)
+            extracted_data['confidence'] = min(0.3, len(numbers) * 0.1)
+        
+        print(f"🎯 DADOS EXTRAÍDOS: RSI={extracted_data['rsi_value']}, MACD={extracted_data['macd_value']}, Confiança={extracted_data['confidence']}")  # DEBUG
         
         return extracted_data
     
-    def _is_valid_number(self, num_str: str) -> bool:
-        """Verifica se a string é um número válido"""
-        try:
-            float(num_str.replace(',', '.'))
-            return True
-        except ValueError:
-            return False
-    
     def _get_fallback_text_data(self) -> Dict[str, Any]:
-        """Dados fallback caso OCR falhe"""
+        """Dados fallback caso OCR falhe - CORRIGIDO"""
         return {
             'rsi_value': None,
             'macd_value': None,
-            'ema_value': None,
-            'volume_value': None,
-            'price_value': None,
+            'price_values': [],
+            'timeframe': None,
             'raw_text': '',
             'confidence': 0.0
         }
