@@ -210,7 +210,7 @@ class TextDataExtractor:
         except Exception as e:
             print(f"❌ Estratégia agressiva falhou: {e}")
             return self._get_fallback_text_data()
-def _ocr_strategy_conservative(self, image: Image.Image) -> Dict[str, Any]:
+    def _ocr_strategy_conservative(self, image: Image.Image) -> Dict[str, Any]:
         """Estratégia conservativa - foco em números"""
         try:
             processed_image = self.preprocess_for_ocr(image)
@@ -221,7 +221,7 @@ def _ocr_strategy_conservative(self, image: Image.Image) -> Dict[str, Any]:
         except Exception as e:
             print(f"❌ Estratégia conservativa falhou: {e}")
             return self._get_fallback_text_data()
-def _ocr_strategy_fallback(self, image: Image.Image) -> Dict[str, Any]:
+    def _ocr_strategy_fallback(self, image: Image.Image) -> Dict[str, Any]:
         """Estratégia fallback - sem restrições"""
         try:
             # Sem whitelist, pega tudo
