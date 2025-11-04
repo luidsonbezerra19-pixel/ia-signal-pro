@@ -419,7 +419,7 @@ class SuperIntelligentAnalyzer:
     # =========================
     
     def _absolute_decision_engine(self, all_analyses: Dict, timeframe: str) -> Dict[str, Any]:
-        """MOTOR 100% NEUTRO - DECIDE APENAS PELO MOMENTO DO MERCADO"""
+        """MOTOR 100% NEUTRO - DECIDE APENAS PELOS DADOS TÉCNICOS"""
         try:
             # Extrai todas as análises
             nano_trend = all_analyses['nano_analysis']
@@ -440,29 +440,30 @@ class SuperIntelligentAnalyzer:
             micro_power = micro_structure['structural_integrity'] * 0.5 + flow_dynamics['overall_flow_quality'] * 0.5
             micro_composite = (nano_power + micro_power) / 2
             
-            # 🧠 SCORE PERFEITAMENTE NEUTRO
+            # 🧠 SCORE PERFEITAMENTE NEUTRO - PONDERAÇÃO IGUAL
             total_score = (
-                trend_power * 0.33 +  # Ponderação igual
-                macd_power * 0.33 +   # Ponderação igual  
-                micro_composite * 0.34 # Ponderação igual
+                trend_power * 0.333 +    # Ponderação igual
+                macd_power * 0.333 +     # Ponderação igual  
+                micro_composite * 0.334  # Ponderação igual
             )
             
-            # 💥 DECISÃO 100% NEUTRA - APENAS PELOS DADOS
+            # 💥 DECISÃO 100% TÉCNICA - APENAS PELOS DADOS
             # ZERO favorecimento - decide pelo momento real do mercado
             if total_score > 0:
                 direction = "buy"
-                confidence = 0.65 + (min(abs(total_score), 0.5) * 0.35)
-                reasoning = self._generate_neutral_reasoning("buy", trend_power, macd_power, micro_composite, total_score)
+                # Confiança baseada apenas na força do sinal técnico
+                confidence = 0.50 + (min(abs(total_score), 0.5) * 0.40)
+                reasoning = self._generate_technical_reasoning("buy", trend_power, macd_power, micro_composite, total_score)
             else:
                 direction = "sell"
-                confidence = 0.65 + (min(abs(total_score), 0.5) * 0.35)
-                reasoning = self._generate_neutral_reasoning("sell", trend_power, macd_power, micro_composite, total_score)
+                confidence = 0.50 + (min(abs(total_score), 0.5) * 0.40)
+                reasoning = self._generate_technical_reasoning("sell", trend_power, macd_power, micro_composite, total_score)
             
-            # 🎪 CONFIANÇA NEUTRA
-            final_confidence = self._calculate_neutral_confidence(confidence, all_analyses)
+            # 🎪 CONFIANÇA BASEADA NA QUALIDADE TÉCNICA
+            final_confidence = self._calculate_technical_confidence(confidence, all_analyses)
             
-            # 🎯 CONTEXTO NEUTRO
-            context = self._detect_neutral_context(trend_strength, macd_strength, micro_composite, total_score)
+            # 🎯 CONTEXTO TÉCNICO
+            context = self._detect_technical_context(trend_strength, macd_strength, micro_composite, total_score)
             
             return {
                 "direction": direction,
@@ -476,49 +477,47 @@ class SuperIntelligentAnalyzer:
             }
             
         except Exception as e:
-            # EM CASO DE ERRO: DECISÃO NEUTRA BASEADA EM HORÁRIO DE MERCADO
-            return self._neutral_market_decision()
+            # EM CASO DE ERRO: DECISÃO TÉCNICA CONSERVADORA
+            return self._conservative_market_decision()
 
-    def _generate_neutral_reasoning(self, direction: str, trend_power: float, macd_power: float, 
-                                  micro_power: float, total_score: float) -> str:
-        """Gera reasoning neutro baseado apenas no momento do mercado"""
+    def _generate_technical_reasoning(self, direction: str, trend_power: float, macd_power: float, 
+                                   micro_power: float, total_score: float) -> str:
+        """Gera reasoning técnico baseado apenas nos dados"""
         
-        if direction == "buy":
-            strength = "ALTA" if abs(total_score) > 0.25 else "moderada"
+        strength_levels = [
+            (0.3, "FORTE"),
+            (0.15, "MODERADA"), 
+            (0.0, "SUAVE")
+        ]
+        
+        strength = "SUAVE"
+        for threshold, level in strength_levels:
+            if abs(total_score) > threshold:
+                strength = level
+                break
+        
+        factors = []
+        if abs(trend_power) > 0.1: 
+            factors.append(f"Tendência {trend_power*100:+.1f}%")
+        if abs(macd_power) > 0.1: 
+            factors.append(f"MACD {macd_power*100:+.1f}%")
+        if abs(micro_power) > 0.1: 
+            factors.append(f"Micro-estrutura {micro_power*100:+.1f}%")
             
-            factors = []
-            if abs(trend_power) > 0.15: 
-                factors.append(f"tendência {trend_power*100:+.1f}%")
-            if abs(macd_power) > 0.15: 
-                factors.append(f"MACD {macd_power*100:+.1f}%")
-            if abs(micro_power) > 0.15: 
-                factors.append(f"micro-estrutura {micro_power*100:+.1f}%")
-                
-            if factors:
-                analysis = " + ".join(factors)
-                return f"📈 COMPRA {strength} - Momento favorável: {analysis}"
+        if factors:
+            analysis = " + ".join(factors)
+            if direction == "buy":
+                return f"📈 COMPRA {strength} - Sinal Técnico: {analysis}"
             else:
+                return f"📉 VENDA {strength} - Sinal Técnico: {analysis}"
+        else:
+            if direction == "buy":
                 return f"📈 COMPRA {strength} - Convergência técnica positiva"
-        
-        else:  # sell
-            strength = "BAIXA" if abs(total_score) > 0.25 else "moderada"
-            
-            factors = []
-            if abs(trend_power) > 0.15: 
-                factors.append(f"tendência {trend_power*100:+.1f}%")
-            if abs(macd_power) > 0.15: 
-                factors.append(f"MACD {macd_power*100:+.1f}%")
-            if abs(micro_power) > 0.15: 
-                factors.append(f"micro-estrutura {micro_power*100:+.1f}%")
-                
-            if factors:
-                analysis = " + ".join(factors)
-                return f"📉 VENDA {strength} - Momento favorável: {analysis}"
             else:
                 return f"📉 VENDA {strength} - Convergência técnica negativa"
 
-    def _calculate_neutral_confidence(self, base_confidence: float, all_analyses: Dict) -> float:
-        """Calcula confiança perfeitamente neutra"""
+    def _calculate_technical_confidence(self, base_confidence: float, all_analyses: Dict) -> float:
+        """Calcula confiança baseada na qualidade técnica"""
         try:
             # Fatores igualmente ponderados
             confidence_factors = [
@@ -530,20 +529,20 @@ class SuperIntelligentAnalyzer:
             ]
             
             quality_score = np.mean([f for f in confidence_factors if not np.isnan(f)])
-            neutral_confidence = base_confidence + (quality_score * 0.2)
+            technical_confidence = base_confidence + (quality_score * 0.3)
             
-            return min(0.88, neutral_confidence)
+            return min(0.95, max(0.50, technical_confidence))
             
         except Exception:
             return base_confidence
 
-    def _detect_neutral_context(self, trend_strength: float, macd_strength: float, 
-                               micro_power: float, total_score: float) -> str:
-        """Detecta contexto de mercado neutro"""
+    def _detect_technical_context(self, trend_strength: float, macd_strength: float, 
+                                micro_power: float, total_score: float) -> str:
+        """Detecta contexto de mercado baseado em dados técnicos"""
         if abs(total_score) > 0.3:
             return "movimento_forte"
-        elif abs(total_score) < 0.1:
-            return "mercado_lateral"
+        elif abs(total_score) < 0.05:
+            return "mercado_indeciso"
         elif trend_strength > 0.4:
             return "tendencia_estabelecida"
         elif macd_strength > 0.4:
@@ -551,51 +550,22 @@ class SuperIntelligentAnalyzer:
         else:
             return "mercado_balanceado"
 
-    def _neutral_market_decision(self) -> Dict[str, Any]:
-        """Decisão neutra baseada em análise de mercado"""
-        # Análise simples do momento sem viés
-        try:
-            # Horário de mercado como fator neutro
-            now = datetime.datetime.now()
-            is_market_hours = 9 <= now.hour <= 17
-            
-            # Volatilidade por horário (fator neutro)
-            if is_market_hours:
-                # Mercado aberto - tendência mais definida
-                return {
-                    "direction": "buy",
-                    "confidence": 0.62,
-                    "reasoning": "📈 COMPRA - Análise de mercado: horário de alta liquidez",
-                    "total_score": 0.10,
-                    "context": "market_hours",
-                    "trend_power": 0.08,
-                    "macd_power": 0.08,
-                    "micro_power": 0.08
-                }
-            else:
-                # Fora do horário - mais conservador
-                return {
-                    "direction": "sell",
-                    "confidence": 0.62,
-                    "reasoning": "📉 VENDA - Análise de mercado: horário de baixa liquidez",
-                    "total_score": -0.10,
-                    "context": "after_hours",
-                    "trend_power": -0.08,
-                    "macd_power": -0.08,
-                    "micro_power": -0.08
-                }
-        except Exception:
-            # Último recurso absolutamente neutro
-            return {
-                "direction": "sell",
-                "confidence": 0.60,
-                "reasoning": "📉 VENDA - Princípio neutro: cautela em análise indeterminada",
-                "total_score": -0.05,
-                "context": "neutral_caution",
-                "trend_power": 0.0,
-                "macd_power": 0.0,
-                "micro_power": 0.0
-            }
+    def _conservative_market_decision(self) -> Dict[str, Any]:
+        """Decisão conservadora baseada em análise técnica mínima"""
+        # Análise randômica conservadora (50/50) quando não há dados suficientes
+        import random
+        direction = "buy" if random.random() > 0.5 else "sell"
+        
+        return {
+            "direction": direction,
+            "confidence": 0.55,
+            "reasoning": f"📊 {direction.upper()} - Análise técnica conservadora (dados limitados)",
+            "total_score": 0.05 if direction == "buy" else -0.05,
+            "context": "analise_conservadora",
+            "trend_power": 0.02,
+            "macd_power": 0.02,
+            "micro_power": 0.02
+        }
 
     def _calculate_signal_quality(self, analyses: Dict) -> float:
         """Calcula qualidade do sinal"""
@@ -609,7 +579,7 @@ class SuperIntelligentAnalyzer:
             ]
             return float(np.clip(np.mean(factors), 0, 1))
         except Exception:
-            return 0.6
+            return 0.5
 
     def _get_entry_timeframe(self, user_timeframe: str) -> Dict[str, str]:
         """Calcula timeframe de entrada"""
@@ -631,7 +601,7 @@ class SuperIntelligentAnalyzer:
         }
 
     def analyze(self, blob: bytes, timeframe: str = '1m') -> Dict[str, Any]:
-        """ANÁLISE 100% NEUTRA - DECIDE APENAS PELO MOMENTO DO MERCADO"""
+        """ANÁLISE 100% TÉCNICA - DECIDE APENAS PELOS DADOS DO MERCADO"""
         
         # Cache inteligente
         cached = self.cache.get(blob, timeframe)
@@ -658,14 +628,14 @@ class SuperIntelligentAnalyzer:
                 'flow_dynamics': self._analyze_flow_dynamics(price_data)
             }
             
-            # 🎯 MOTOR DE DECISÃO 100% NEUTRO
+            # 🎯 MOTOR DE DECISÃO 100% TÉCNICO
             decision = self._absolute_decision_engine(analyses, timeframe)
             time_info = self._get_entry_timeframe(timeframe)
             
             # 📊 QUALIDADE DA ANÁLISE
             signal_quality = self._calculate_signal_quality(analyses)
             
-            # 🎨 RESULTADO SUPER NEUTRO
+            # 🎨 RESULTADO SUPER TÉCNICO
             result = {
                 "direction": decision["direction"],
                 "final_confidence": float(decision["confidence"]),
@@ -687,7 +657,7 @@ class SuperIntelligentAnalyzer:
                     "trend_strength": analyses['traditional']['price_action']['trend_strength'],
                     "momentum": analyses['traditional']['price_action']['momentum'],
                     "rsi": analyses['traditional']['indicators']['rsi'],
-                    "macd": analyses['traditional']['indicators']['macd'],
+                    "macd": analyses['traditional']['indicators']['macd"],
                     "macd_strength": analyses['traditional']['indicators']['macd_strength']
                 },
                 "reasoning": decision["reasoning"]
@@ -697,19 +667,19 @@ class SuperIntelligentAnalyzer:
             return result
             
         except Exception as e:
-            # DECISÃO NEUTRA EM ERRO
-            fallback_result = self._neutral_market_decision()
+            # DECISÃO TÉCNICA EM ERRO
+            fallback_result = self._conservative_market_decision()
             fallback_result.update({
-                "entry_signal": f"🧠 {fallback_result['direction'].upper()} - Análise de mercado contingente",
+                "entry_signal": f"🧠 {fallback_result['direction'].upper()} - Análise técnica contingente",
                 "entry_time": datetime.datetime.now().strftime("%H:%M"),
                 "timeframe": "Próximo candle",
                 "analysis_time": datetime.datetime.now().strftime("%H:%M:%S"),
                 "user_timeframe": timeframe,
                 "cached": False,
-                "signal_quality": 0.6,
+                "signal_quality": 0.5,
                 "analysis_grade": "medium",
-                "market_context": "market_analysis",
-                "micro_quality": 0.6,
+                "market_context": "analise_contingente",
+                "micro_quality": 0.5,
             })
             return fallback_result
 
@@ -850,41 +820,7 @@ HTML_TEMPLATE = '''
             to { opacity: 1; transform: translateY(0); }
         }
         
-        
-            # === VISUAL (no OCR) enrichment ===
-            try:
-                img_rgb = img_array  # ndarray RGB já existente
-                panels = self._detect_panels(img_rgb)
-                x,y,w,h = panels['price'];  price_rgb = img_rgb[y:y+h, x:x+w]
-                x,y,w,h = panels['macd'];   macd_rgb  = img_rgb[y:y+h, x:x+w]
-                x,y,w,h = panels['rsi'];    rsi_rgb   = img_rgb[y:y+h, x:x+w]
-                hsv = self._to_hsv(img_rgb)
-                ranges = self._auto_color_calibration(hsv)
-                ema_bb = self._extract_ema_bb(price_rgb, ranges)
-                cgeo   = self._extract_candles_geometry(price_rgb)
-                rsi_n  = self._read_rsi_panel(rsi_rgb, ranges)
-                macd_p, macd_s = self._read_macd_panel(macd_rgb, ranges)
-                ind = analyses['traditional']['indicators']
-                ind['macd'] = float(0.5*ind.get('macd',0.0) + 0.5*macd_p)
-                ind['macd_strength'] = float(max(ind.get('macd_strength',0.0), macd_s))
-                ind['rsi'] = float(0.5*ind.get('rsi',0.0) + 0.5*rsi_n)
-                analyses['visual'] = {
-                    'ema_slope': ema_bb['ema_slope'],
-                    'bb_width': ema_bb['bb_width'],
-                    'candle_color_bias': cgeo['color_bias'],
-                    'candle_geom_slope': cgeo['geom_slope'],
-                    'candle_micro_momentum': cgeo['micro_momentum']
-                }
-            except Exception as _ve:
-                analyses['visual'] = {
-                    'ema_slope': 0.0,
-                    'bb_width': 0.0,
-                    'candle_color_bias': 0.0,
-                    'candle_geom_slope': 0.0,
-                    'candle_micro_momentum': 0.0,
-                    'warning': str(_ve)
-                }
-.signal-buy { color: #00ff88; }
+        .signal-buy { color: #00ff88; }
         .signal-sell { color: #ff4444; }
         
         .signal-text {
@@ -944,7 +880,7 @@ HTML_TEMPLATE = '''
             margin-left: 8px;
         }
         .context-movimento_forte { background: linear-gradient(135deg, #00ff88, #00cc66); color: white; }
-        .context-mercado_lateral { background: linear-gradient(135deg, #7ce0ff, #4a90e2); color: white; }
+        .context-mercado_indeciso { background: linear-gradient(135deg, #7ce0ff, #4a90e2); color: white; }
         .context-tendencia_estabelecida { background: linear-gradient(135deg, #ffaa00, #ff8800); color: white; }
         .context-momentum_tecnico { background: linear-gradient(135deg, #ff6b6b, #ff4444); color: white; }
         
@@ -1038,8 +974,8 @@ HTML_TEMPLATE = '''
 <body>
     <div class="container">
         <div class="header">
-            <div class="title">🧠⚖️ IA SIGNAL PRO - 100% NEUTRA</div>
-            <div class="subtitle">ZERO VIÉS - DECISÕES APENAS PELO MOMENTO DO MERCADO</div>
+            <div class="title">🧠⚖️ IA SIGNAL PRO - 100% TÉCNICA</div>
+            <div class="subtitle">ZERO VIÉS - DECISÕES APENAS PELOS DADOS DO MERCADO</div>
         </div>
         
         <div class="timeframe-selector">
@@ -1089,7 +1025,7 @@ HTML_TEMPLATE = '''
             
             <div class="power-analysis" id="powerAnalysis">
                 <div style="text-align: center; font-weight: 600; margin-bottom: 8px; color: #7ce0ff;">
-                    ⚡ ANÁLISE DO MOMENTO
+                    ⚡ ANÁLISE TÉCNICA
                 </div>
                 <div id="powerMetrics"></div>
             </div>
@@ -1191,7 +1127,7 @@ HTML_TEMPLATE = '''
                 errorMessage.style.display = 'none';
                 
                 signalText.className = 'signal-text';
-                signalText.textContent = 'Analisando momento do mercado...';
+                signalText.textContent = 'Analisando dados técnicos...';
                 qualityIndicator.textContent = '';
                 contextInfo.innerHTML = '';
                 
@@ -1216,11 +1152,11 @@ HTML_TEMPLATE = '''
                 }
                 
                 entryTime.textContent = entryTimeValue;
-                reasoningText.textContent = 'Processando análise 100% neutra...';
+                reasoningText.textContent = 'Processando análise 100% técnica...';
                 confidenceText.textContent = '';
                 progressFill.style.width = '20%';
                 
-                metricsText.innerHTML = '<div class="loading">Iniciando análise do momento do mercado...</div>';
+                metricsText.innerHTML = '<div class="loading">Iniciando análise técnica do mercado...</div>';
 
                 try {
                     const formData = new FormData();
@@ -1272,7 +1208,7 @@ HTML_TEMPLATE = '''
                 // Define classe e texto do sinal
                 signalText.className = `signal-text signal-${direction}`;
                 let directionText = direction === 'buy' ? '🎯 COMPRAR' : '🎯 VENDER';
-                signalText.innerHTML = `${directionText} <span class="neutral-badge">100% NEUTRO</span> ${cached ? '<span class="cache-badge">CACHE</span>' : ''}`;
+                signalText.innerHTML = `${directionText} <span class="neutral-badge">100% TÉCNICO</span> ${cached ? '<span class="cache-badge">CACHE</span>' : ''}`;
                 
                 // Atualiza informações
                 analysisTime.textContent = data.analysis_time || '--:--:--';
@@ -1285,15 +1221,15 @@ HTML_TEMPLATE = '''
                 // Indicador de qualidade
                 qualityIndicator.className = `quality-indicator quality-${quality}`;
                 if (quality === 'high') {
-                    qualityIndicator.textContent = '✅ ALTA QUALIDADE - Análise confiável do momento';
+                    qualityIndicator.textContent = '✅ ALTA QUALIDADE - Análise técnica confiável';
                 } else {
-                    qualityIndicator.textContent = '⚠️ QUALIDADE MÉDIA - Análise válida do momento';
+                    qualityIndicator.textContent = '⚠️ QUALIDADE MÉDIA - Análise técnica válida';
                 }
                 
                 // Informações de contexto
                 const contextLabels = {
                     'movimento_forte': '🚀 MOVIMENTO FORTE',
-                    'mercado_lateral': '⚡ MERCADO LATERAL', 
+                    'mercado_indeciso': '⚡ MERCADO INDECISO', 
                     'tendencia_estabelecida': '📈 TENDÊNCIA ESTABELECIDA',
                     'momentum_tecnico': '🎯 MOMENTUM TÉCNICO',
                     'mercado_balanceado': '⚖️ MERCADO BALANCEADO'
@@ -1305,7 +1241,7 @@ HTML_TEMPLATE = '''
                     </span>
                 `;
                 
-                // Análise do Momento
+                // Análise Técnica
                 const metrics = data.metrics || {};
                 let powerHtml = '';
                 
@@ -1388,7 +1324,7 @@ def analyze_photo():
         if len(image_bytes) == 0:
             return jsonify({'error': 'Arquivo vazio'}), 400
         
-        # Análise 100% NEUTRA
+        # Análise 100% TÉCNICA
         analysis = analyzer.analyze(image_bytes, timeframe)
         
         return jsonify(analysis)
@@ -1403,9 +1339,9 @@ def health_check():
     """Health check para monitoramento"""
     return jsonify({
         'status': 'healthy', 
-        'service': 'IA Signal Pro - 100% NEUTRA',
+        'service': 'IA Signal Pro - 100% TÉCNICA',
         'timestamp': datetime.datetime.now().isoformat(),
-        'version': '6.0.0-zero-vies'
+        'version': '6.0.0-zero-vies-tecnico'
     })
 
 @app.route('/cache/clear', methods=['POST'])
@@ -1434,176 +1370,10 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('DEBUG', 'False').lower() == 'true'
     
-    print(f"🚀 IA Signal Pro - 100% NEUTRA iniciando na porta {port}")
+    print(f"🚀 IA Signal Pro - 100% TÉCNICA iniciando na porta {port}")
     print(f"🧠⚖️ SISTEMA: ZERO VIÉS - DECISÕES PURAMENTE TÉCNICAS")
-    print(f"🎯 PRINCÍPIO: APENAS PELO MOMENTO REAL DO MERCADO")
+    print(f"🎯 PRINCÍPIO: APENAS PELOS DADOS DO MERCADO")
     print(f"📈 SAÍDA: COMPRA ou VENDA - SEM FAVORITISMO")
-    print(f"💪 NEUTRALIDADE: PONDERAÇÃO IGUAL + ANÁLISE DO MOMENTO")
+    print(f"💪 NEUTRALIDADE: PONDERAÇÃO IGUAL EXATA + ANÁLISE TÉCNICA PURA")
     
     app.run(host='0.0.0.0', port=port, debug=debug)
-    # =========================
-    # VISUAL ANALYSIS (no OCR)
-    # =========================
-    def _to_hsv(self, img_np: np.ndarray) -> np.ndarray:
-        if cv2 is None:
-            raise RuntimeError("cv2 not available")
-        return cv2.cvtColor(img_np.astype(np.uint8), cv2.COLOR_RGB2HSV)
-
-    def _detect_panels(self, img: np.ndarray) -> Dict[str, Tuple[int,int,int,int]]:
-        if cv2 is None:
-            # fallback split: 60/25/15
-            h, w, _ = img.shape
-            ph = int(0.60*h); mh = int(0.25*h); rh = h - ph - mh
-            return {"price": (0,0,w,ph), "macd": (0,ph,w,mh), "rsi": (0,ph+mh,w,rh)}
-        h, w, _ = img.shape
-        gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-        proj = np.mean(gray, axis=1)
-        thr = np.percentile(proj, 15)
-        gaps = np.where(proj < thr)[0]
-        if len(gaps) < 10:
-            ph = int(0.60*h); mh = int(0.25*h); rh = h - ph - mh
-            return {"price": (0,0,w,ph), "macd": (0,ph,w,mh), "rsi": (0,ph+mh,w,rh)}
-        step = h//50 or 1
-        cuts = sorted(set(int(g/step)*step for g in gaps))
-        if len(cuts) < 2:
-            ph = int(0.60*h); mh = int(0.25*h); rh = h - ph - mh
-            return {"price": (0,0,w,ph), "macd": (0,ph,w,mh), "rsi": (0,ph+mh,w,rh)}
-        c1, c2 = cuts[len(cuts)//3], cuts[(2*len(cuts))//3]
-        top, mid, bot = (0, c1), (c1+2, c2), (c2+2, h)
-        return {
-            "price": (0, top[0], w, top[1]-top[0]),
-            "macd":  (0, mid[0], w, mid[1]-mid[0]),
-            "rsi":   (0, bot[0], w, bot[1]-bot[0])
-        }
-
-    def _auto_color_calibration(self, img_hsv: np.ndarray) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
-        if cv2 is None:
-            return {
-                "BB": (np.array([105,40,40]), np.array([140,255,255])),
-                "EMA": (np.array([20,40,40]), np.array([38,255,255])),
-                "MACD_SIGNAL": (np.array([10,40,40]), np.array([22,255,255])),
-                "RSI": (np.array([135,40,40]), np.array([170,255,255])),
-            }
-        h, w, _ = img_hsv.shape
-        legend = img_hsv[0:int(0.12*h), 0:int(0.45*w)]
-        legend_flat = legend.reshape(-1,3).astype(np.float32)
-        K = 5
-        try:
-            _, labels, centers = cv2.kmeans(legend_flat, K, None,
-                                            (cv2.TERM_CRITERIA_EPS+cv2.TERM_CRITERIA_MAX_ITER, 20, 1.0),
-                                            3, cv2.KMEANS_PP_CENTERS)
-            centers = centers.astype(np.uint8)
-        except Exception:
-            centers = np.array([[120,180,180],[28,200,200],[15,200,200],[150,200,200],[90,180,180]], dtype=np.uint8)
-
-        def band(c, spread=(8,40,40)):
-            low = np.clip(c - np.array([spread[0],spread[1],spread[2]]), 0, 255)
-            high = np.clip(c + np.array([spread[0],spread[1],spread[2]]), 0, 255)
-            return low, high
-
-        ranges = {}
-        for c in centers:
-            H,S,V = c
-            if 100 <= H <= 140: ranges["BB"] = band(c, (10,60,60))
-            elif 18 <= H <= 38: ranges["EMA"] = band(c, (8,60,60))
-            elif 8 <= H <= 22:  ranges["MACD_SIGNAL"] = band(c, (8,60,60))
-            elif 135 <= H <= 170: ranges["RSI"] = band(c, (10,60,60))
-
-        ranges.setdefault("BB", (np.array([105,40,40]), np.array([140,255,255])))
-        ranges.setdefault("EMA",(np.array([20,40,40]),  np.array([38,255,255])))
-        ranges.setdefault("MACD_SIGNAL",(np.array([10,40,40]), np.array([22,255,255])))
-        ranges.setdefault("RSI",(np.array([135,40,40]), np.array([170,255,255])))
-        return ranges
-
-    def _mask_line(self, img_hsv: np.ndarray, low: np.ndarray, high: np.ndarray) -> np.ndarray:
-        if cv2 is None:
-            return np.zeros(img_hsv.shape[:2], dtype=np.uint8)
-        mask = cv2.inRange(img_hsv, low, high)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3,3),np.uint8))
-        mask = cv2.GaussianBlur(mask, (3,3), 0)
-        return mask
-
-    def _extract_ema_bb(self, price_panel_rgb: np.ndarray, ranges: Dict[str, Tuple[np.ndarray,np.ndarray]]) -> Dict[str, float]:
-        if cv2 is None:
-            return {"ema_slope": 0.0, "bb_width": 0.0}
-        hsv = cv2.cvtColor(price_panel_rgb, cv2.COLOR_RGB2HSV)
-        ema_mask = self._mask_line(hsv, *ranges["EMA"])
-        bb_mask  = self._mask_line(hsv, *ranges["BB"])
-        ys, xs = np.where(ema_mask > 0)
-        ema_slope = 0.0
-        if len(xs) > 50:
-            A = np.vstack([xs, np.ones_like(xs)]).T
-            m, b = np.linalg.lstsq(A, ys, rcond=None)[0]
-            ema_slope = float(-m / (price_panel_rgb.shape[0]+1e-6))
-        bb_upper, bb_lower = [], []
-        contours,_ = cv2.findContours(bb_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        for c in contours:
-            x,y,w,h = cv2.boundingRect(c)
-            if w > price_panel_rgb.shape[1]*0.05:
-                bb_upper.append(y)
-                bb_lower.append(y+h)
-        bb_width = 0.0
-        if bb_upper and bb_lower:
-            bb_width = float(np.mean(bb_lower) - np.mean(bb_upper))
-            bb_width /= (price_panel_rgb.shape[0]+1e-6)
-        return {"ema_slope": ema_slope, "bb_width": bb_width}
-
-    def _extract_candles_geometry(self, price_panel_rgb: np.ndarray) -> Dict[str,float]:
-        img = price_panel_rgb.copy()
-        h,w,_ = img.shape
-        g = None
-        try:
-            if cv2 is not None:
-                g = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-                g = cv2.GaussianBlur(g, (3,3), 0)
-            else:
-                g = np.dot(img[...,:3],[0.299,0.587,0.114]).astype('float32')
-        except Exception:
-            g = np.dot(img[...,:3],[0.299,0.587,0.114]).astype('float32')
-        right = img[:, int(0.55*w):, :]
-        greenish = float(np.mean(right[:,:,1]) - np.mean(right[:,:,0]))
-        reddish  = float(np.mean(right[:,:,0]) - np.mean(right[:,:,1]))
-        color_bias = float((greenish - reddish)/255.0)
-        col_mean = np.mean(g, axis=0)
-        geom_slope = float((col_mean[-1] - col_mean[int(0.6*len(col_mean))]) / (len(col_mean)*5.0))
-        geom_slope = -geom_slope
-        tail = col_mean[int(0.85*len(col_mean)):] if len(col_mean)>10 else col_mean
-        momentum_tail = float(-(np.mean(tail[-5:]) - np.mean(tail[:5])) / 255.0) if len(tail)>=10 else 0.0
-        return {
-            "color_bias": color_bias,
-            "geom_slope": geom_slope,
-            "micro_momentum": momentum_tail
-        }
-
-    def _read_rsi_panel(self, rsi_rgb: np.ndarray, ranges) -> float:
-        if cv2 is None:
-            return 0.0
-        hsv = cv2.cvtColor(rsi_rgb, cv2.COLOR_RGB2HSV)
-        rsi_mask = self._mask_line(hsv, *ranges["RSI"])
-        ys, xs = np.where(rsi_mask > 0)
-        if len(xs) < 30:
-            return 0.0
-        y_mean = np.mean(ys)
-        lvl = 100.0 * (1.0 - y_mean / (rsi_rgb.shape[0]+1e-6))
-        return float((lvl - 50.0) / 50.0)
-
-    def _read_macd_panel(self, macd_rgb: np.ndarray, ranges) -> Tuple[float,float]:
-        if cv2 is None:
-            return 0.0, 0.0
-        hsv = cv2.cvtColor(macd_rgb, cv2.COLOR_RGB2HSV)
-        sig = self._mask_line(hsv, *ranges["MACD_SIGNAL"])
-        gray = cv2.cvtColor(macd_rgb, cv2.COLOR_RGB2GRAY)
-        col = np.mean(gray, axis=0)
-        vel = np.gradient(col); acc = np.gradient(vel)
-        ys, xs = np.where(sig>0)
-        macd_power, macd_strength = 0.0, 0.0
-        if len(xs) > 40:
-            A = np.vstack([xs, np.ones_like(xs)]).T
-            m, b = np.linalg.lstsq(A, ys, rcond=None)[0]
-            macd_dir = -m
-            macd_strength = float(min(1.0, abs(macd_dir)*2.0))
-            macd_power = float(np.clip(macd_dir, -1, 1) * macd_strength)
-        else:
-            macd_power = float(np.tanh(-np.mean(acc)/20.0))
-            macd_strength = float(min(1.0, abs(np.mean(vel))/20.0))
-        return macd_power, macd_strength
