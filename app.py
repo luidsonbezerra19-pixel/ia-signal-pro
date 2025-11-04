@@ -12,12 +12,10 @@ import math
 import datetime
 import hashlib
 import json
-import re
-import subprocess
 from typing import Any, Dict, Optional, List, Tuple
 import numpy as np
 from flask import Flask, jsonify, render_template_string, request
-from PIL import Image, ImageFilter, ImageEnhance, ImageOps
+from PIL import Image, ImageFilter
 
 # =========================
 #  SISTEMA DE CACHE INTELIGENTE
@@ -80,44 +78,6 @@ class AnalysisCache:
 class SuperIntelligentAnalyzer:
     def __init__(self):
         self.cache = AnalysisCache()
-        self.ocr_available = self._setup_ocr_railway()
-        
-    def _setup_ocr_railway(self) -> bool:
-        """Configura e verifica OCR no ambiente Railway"""
-        try:
-            import pytesseract
-            
-            print("🔍 Configurando OCR para Railway...")
-            
-            # Tenta encontrar o Tesseract no Railway
-            possible_paths = [
-                '/usr/bin/tesseract',
-                '/usr/local/bin/tesseract', 
-                '/app/bin/tesseract',
-                'tesseract'
-            ]
-            
-            for path in possible_paths:
-                try:
-                    result = subprocess.run([path, '--version'], 
-                                          capture_output=True, text=True, timeout=10)
-                    if result.returncode == 0:
-                        pytesseract.pytesseract.tesseract_cmd = path
-                        print(f"✅ Tesseract configurado em: {path}")
-                        print(f"📄 Versão: {result.stdout.strip()}")
-                        return True
-                except Exception:
-                    continue
-            
-            print("❌ Tesseract não encontrado no Railway")
-            return False
-            
-        except ImportError:
-            print("❌ pytesseract não instalado")
-            return False
-        except Exception as e:
-            print(f"❌ Erro na configuração OCR: {e}")
-            return False
         
     def _load_image(self, blob: bytes) -> Image.Image:
         """Carrega e prepara a imagem para análise"""
@@ -153,7 +113,7 @@ class SuperIntelligentAnalyzer:
         width, height = image.size
         
         # Redimensionamento adequado
-        target_size = (800, 600)
+        target_size = (600, 450)
         image = image.resize(target_size, Image.LANCZOS)
         
         return np.array(image)
@@ -190,360 +150,6 @@ class SuperIntelligentAnalyzer:
             return np.clip(output, 0, 255)
         except Exception:
             return image
-
-    # =========================
-    #  SISTEMA OCR ESPECIALIZADO - CORRIGIDO
-    # =========================
-
-    def _extract_with_ocr(self, image: Image.Image) -> Dict[str, Any]:
-        """Extrai TODOS os valores numéricos da imagem usando OCR especializado"""
-        if not self.ocr_available:
-            return {}
-            
-        try:
-            import pytesseract
-            
-            print("🔍 Iniciando análise OCR especializada...")
-            
-            # Estratégia 1: OCR DIRETO com configuração específica
-            strategy1 = self._ocr_direct_optimized(image)
-            
-            # Estratégia 2: Alto contraste
-            strategy2 = self._ocr_high_contrast_optimized(image)
-            
-            # Estratégia 3: Regiões específicas
-            strategy3 = self._ocr_regions_optimized(image)
-            
-            # Estratégia 4: Imagem limpa
-            strategy4 = self._ocr_clean_optimized(image)
-            
-            # Combina resultados de todas as estratégias
-            combined_results = {}
-            strategies = [strategy1, strategy2, strategy3, strategy4]
-            
-            for i, strategy_result in enumerate(strategies):
-                print(f"🎯 Estratégia {i+1}: {strategy_result}")
-                for key, value in strategy_result.items():
-                    if key not in combined_results:
-                        combined_results[key] = []
-                    if value is not None and value != 0:
-                        combined_results[key].append(value)
-            
-            # Processa resultados combinados
-            final_results = {}
-            for key, values in combined_results.items():
-                if values:
-                    # Remove outliers e pega a média
-                    values_array = np.array(values)
-                    Q1 = np.percentile(values_array, 25)
-                    Q3 = np.percentile(values_array, 75)
-                    IQR = Q3 - Q1
-                    filtered_values = values_array[(values_array >= Q1 - 1.5*IQR) & (values_array <= Q3 + 1.5*IQR)]
-                    
-                    if len(filtered_values) > 0:
-                        final_results[key] = float(np.median(filtered_values))
-                        print(f"📊 {key}: {final_results[key]} (de {len(values)} leituras)")
-            
-            print(f"✅ OCR finalizado: {len(final_results)} valores extraídos")
-            return final_results
-            
-        except Exception as e:
-            print(f"❌ Erro no OCR: {e}")
-            return {}
-
-    def _ocr_direct_optimized(self, image: Image.Image) -> Dict[str, float]:
-        """OCR direto na imagem original"""
-        try:
-            import pytesseract
-            
-            # Usa a imagem original sem modificações
-            config = r'--oem 3 --psm 6'
-            text = pytesseract.image_to_string(image, config=config)
-            print(f"📝 OCR Direto: {text}")
-            
-            return self._parse_ocr_text_advanced(text)
-            
-        except Exception as e:
-            print(f"❌ OCR direto falhou: {e}")
-            return {}
-
-    def _ocr_high_contrast_optimized(self, image: Image.Image) -> Dict[str, float]:
-        """OCR com alto contraste otimizado"""
-        try:
-            import pytesseract
-            
-            # Converte para escala de cinza
-            gray = image.convert('L')
-            
-            # Aumenta contraste drasticamente
-            enhancer = ImageEnhance.Contrast(gray)
-            high_contrast = enhancer.enhance(3.0)
-            
-            # Aumenta brilho
-            enhancer = ImageEnhance.Brightness(high_contrast)
-            bright = enhancer.enhance(1.2)
-            
-            # Configuração específica para números
-            custom_config = r'--oem 3 --psm 6'
-            
-            text = pytesseract.image_to_string(bright, config=custom_config)
-            print(f"⚡ Alto Contraste: {text}")
-            
-            return self._parse_ocr_text_advanced(text)
-            
-        except Exception as e:
-            print(f"❌ OCR contraste falhou: {e}")
-            return {}
-
-    def _ocr_regions_optimized(self, image: Image.Image) -> Dict[str, float]:
-        """OCR focado em regiões específicas"""
-        try:
-            import pytesseract
-            
-            width, height = image.size
-            
-            # Define regiões onde indicadores geralmente aparecem
-            regions = [
-                (0, 0, width, height // 4),           # Topo - preço e título
-                (width // 2, 0, width, height // 3),  # Topo direito - preço atual
-                (0, height // 4, width // 2, height // 2),  # Esquerda - indicadores
-                (width // 2, height // 4, width, height // 2),  # Direita - indicadores
-                (0, 3 * height // 4, width, height)   # Rodapé - MACD, RSI
-            ]
-            
-            all_results = {}
-            
-            for i, (left, top, right, bottom) in enumerate(regions):
-                try:
-                    region = image.crop((left, top, right, bottom))
-                    
-                    # Converte para escala de cinza
-                    gray_region = region.convert('L')
-                    
-                    # Contraste agressivo para região
-                    enhancer = ImageEnhance.Contrast(gray_region)
-                    high_contrast = enhancer.enhance(3.0)
-                    
-                    custom_config = r'--oem 3 --psm 8'
-                    
-                    text = pytesseract.image_to_string(high_contrast, config=custom_config)
-                    region_results = self._parse_ocr_text_advanced(text)
-                    
-                    print(f"📍 Região {i+1}: {text.strip()}")
-                    
-                    # Combina resultados
-                    for key, value in region_results.items():
-                        if key not in all_results:
-                            all_results[key] = []
-                        all_results[key].append(value)
-                        
-                except Exception as e:
-                    continue
-            
-            # Calcula médias por região
-            final_results = {}
-            for key, values in all_results.items():
-                if values:
-                    final_results[key] = float(np.median(values))
-            
-            return final_results
-            
-        except Exception as e:
-            print(f"❌ OCR regiões falhou: {e}")
-            return {}
-
-    def _ocr_clean_optimized(self, image: Image.Image) -> Dict[str, float]:
-        """OCR com imagem limpa e suavizada"""
-        try:
-            import pytesseract
-            
-            gray = image.convert('L')
-            
-            # Suaviza a imagem para reduzir ruído
-            smoothed = gray.filter(ImageFilter.SMOOTH)
-            
-            # Realce de bordas
-            edge_enhanced = smoothed.filter(ImageFilter.EDGE_ENHANCE_MORE)
-            
-            # Filtro de nitidez
-            sharp_enhancer = ImageEnhance.Sharpness(edge_enhanced)
-            sharp = sharp_enhancer.enhance(2.0)
-            
-            config = r'--oem 3 --psm 6'
-            
-            text = pytesseract.image_to_string(sharp, config=config)
-            print(f"🧹 Imagem Limpa: {text}")
-            
-            return self._parse_ocr_text_advanced(text)
-            
-        except Exception as e:
-            print(f"❌ OCR limpo falhou: {e}")
-            return {}
-
-    def _parse_ocr_text_advanced(self, text: str) -> Dict[str, float]:
-        """Processa texto do OCR de forma avançada para gráficos trading"""
-        try:
-            results = {}
-            
-            if not text:
-                return results
-                
-            print(f"📄 Texto para parsing: {text}")
-            
-            # Padrões específicos para trading
-            patterns = {
-                'rsi': r'RSI.*?(\d{1,3}[,.]?\d*)',
-                'macd': r'MACD.*?([-]?\d{1,4}[,.]?\d*)',
-                'price': r'(\d{1,4}[,.]\d{2,4})',
-                'adx': r'ADX.*?(\d{1,3}[,.]?\d*)',
-                'ema': r'EMA.*?(\d{1,4}[,.]?\d*)',
-                'bb': r'BB.*?(\d{1,4}[,.]?\d*)',
-                'number': r'([-]?\d{1,4}[,.]\d{2,4})',
-                'simple_number': r'(\d{1,3}[,.]?\d*)'
-            }
-            
-            # Extrai todos os números do texto
-            all_numbers = []
-            
-            # Primeiro: procura por padrões específicos
-            for key, pattern in patterns.items():
-                matches = re.findall(pattern, text, re.IGNORECASE)
-                for match in matches:
-                    try:
-                        # Normaliza formato (substitui vírgula por ponto)
-                        normalized = match.replace(',', '.')
-                        num = float(normalized)
-                        
-                        # Classifica baseado no padrão encontrado
-                        if key == 'rsi' and 0 <= num <= 100:
-                            results['rsi'] = num
-                        elif key == 'macd' and -50 <= num <= 50:
-                            results['macd'] = num
-                        elif key == 'price' and 100 <= num <= 100000:
-                            results['price'] = num
-                        elif key == 'adx' and 0 <= num <= 100:
-                            results['adx'] = num
-                        elif key == 'ema' and 100 <= num <= 100000:
-                            results['price'] = num  # EMA geralmente próximo do preço
-                        elif key == 'bb' and 100 <= num <= 100000:
-                            if 'bollinger_upper' not in results:
-                                results['bollinger_upper'] = num
-                            else:
-                                results['bollinger_lower'] = num
-                        
-                        all_numbers.append(num)
-                    except ValueError:
-                        continue
-            
-            # Segundo: extrai todos os números do texto para preencher gaps
-            number_patterns = [
-                r'(\d{1,4}\.\d{2,4})',  # Preços: 1234.56
-                r'(\d{1,4},\d{2,4})',   # European: 1234,56
-                r'(-?\d{1,4}\.\d{1,4})', # Números com sinal: -123.45
-                r'(\d{1,3}\.\d{1,2})',  # Valores menores: 59.76
-                r'(-?\d{1,4})',         # Inteiros: -1234
-            ]
-            
-            for pattern in number_patterns:
-                matches = re.findall(pattern, text)
-                for match in matches:
-                    try:
-                        normalized = match.replace(',', '.')
-                        num = float(normalized)
-                        all_numbers.append(num)
-                    except ValueError:
-                        continue
-            
-            # Classifica números extraídos
-            if all_numbers:
-                # RSI: geralmente entre 0-100
-                rsi_candidates = [n for n in all_numbers if 0 <= n <= 100]
-                if rsi_candidates and 'rsi' not in results:
-                    results['rsi'] = np.median(rsi_candidates)
-                
-                # Preços: geralmente os maiores números
-                price_candidates = [n for n in all_numbers if 100 <= n <= 100000]
-                if price_candidates and 'price' not in results:
-                    results['price'] = np.median(price_candidates)
-                
-                # MACD: pode ser positivo ou negativo
-                macd_candidates = [n for n in all_numbers if -50 <= n <= 50]
-                if macd_candidates and 'macd' not in results:
-                    results['macd'] = np.median(macd_candidates)
-                
-                # ADX: entre 0-100
-                adx_candidates = [n for n in all_numbers if 0 <= n <= 100 and n not in rsi_candidates]
-                if adx_candidates and 'adx' not in results:
-                    results['adx'] = np.median(adx_candidates)
-            
-            return results
-            
-        except Exception as e:
-            print(f"❌ Erro no parsing avançado: {e}")
-            return {}
-
-    def _analyze_extracted_indicators(self, ocr_data: Dict) -> Dict[str, Any]:
-        """Analisa os indicadores extraídos via OCR"""
-        try:
-            # Valores padrão
-            default_values = {
-                'rsi': {'value': 50.0, 'overbought': False, 'oversold': False, 'trend': 'neutral', 'source': 'default'},
-                'macd': {'value': 0.0, 'signal': 0.0, 'histogram': 0.0, 'trend': 'neutral', 'source': 'default'},
-                'adx': {'value': 20.0, 'strength': 'weak', 'trend_strength': 0.2, 'source': 'default'},
-                'price': {'value': 0.0, 'change': 0.0, 'source': 'default'}
-            }
-            
-            # Se não há dados OCR, retorna padrão
-            if not ocr_data:
-                return default_values
-            
-            result = default_values.copy()
-            
-            # RSI from OCR
-            if 'rsi' in ocr_data:
-                rsi_value = ocr_data['rsi']
-                result['rsi'] = {
-                    'value': rsi_value,
-                    'overbought': rsi_value > 70,
-                    'oversold': rsi_value < 30,
-                    'trend': 'falling' if rsi_value < 50 else 'rising',
-                    'source': 'ocr'
-                }
-            
-            # MACD from OCR
-            if 'macd' in ocr_data:
-                macd_value = ocr_data['macd']
-                result['macd'] = {
-                    'value': macd_value,
-                    'signal': macd_value * 0.9,
-                    'histogram': macd_value * 0.1,
-                    'trend': 'bullish' if macd_value > 0 else 'bearish',
-                    'source': 'ocr'
-                }
-            
-            # ADX from OCR
-            if 'adx' in ocr_data:
-                adx_value = ocr_data['adx']
-                result['adx'] = {
-                    'value': adx_value,
-                    'strength': 'strong' if adx_value > 25 else 'weak',
-                    'trend_strength': min(1.0, adx_value / 100.0),
-                    'source': 'ocr'
-                }
-            
-            # Price from OCR
-            if 'price' in ocr_data:
-                result['price'] = {
-                    'value': ocr_data['price'],
-                    'change': 0.0,
-                    'source': 'ocr'
-                }
-            
-            return result
-            
-        except Exception as e:
-            print(f"❌ Erro na análise de indicadores: {e}")
-            return default_values
 
     # =========================
     #  ANÁLISE MICROSCÓPICA AVANÇADA
@@ -676,39 +282,6 @@ class SuperIntelligentAnalyzer:
         except Exception:
             return {"flow_continuity": 0.5, "breakage_resistance": 0.5, "transition_smoothness": 0.5, "overall_flow_quality": 0.5}
 
-    def _flow_continuity_analysis(self, price_data: np.ndarray) -> float:
-        """Analisa continuidade do fluxo"""
-        try:
-            row_means = np.mean(price_data, axis=0)
-            changes = np.diff(row_means)
-            volatility = np.std(changes) + 1e-8
-            continuity = 1.0 / (1.0 + volatility * 10)
-            return float(np.clip(continuity, 0, 1))
-        except Exception:
-            return 0.5
-
-    def _breakage_detection(self, price_data: np.ndarray) -> float:
-        """Detecta quebras na estrutura"""
-        try:
-            row_means = np.mean(price_data, axis=0)
-            changes = np.abs(np.diff(row_means))
-            large_jumps = np.sum(changes > np.mean(changes) * 2)
-            breakage_ratio = large_jumps / len(changes)
-            return float(np.clip(1.0 - breakage_ratio, 0, 1))
-        except Exception:
-            return 0.5
-
-    def _smoothness_analysis(self, price_data: np.ndarray) -> float:
-        """Analisa suavidade das transições"""
-        try:
-            row_means = np.mean(price_data, axis=0)
-            second_derivative = np.gradient(np.gradient(row_means))
-            roughness = np.std(second_derivative)
-            smoothness = 1.0 / (1.0 + roughness * 5)
-            return float(np.clip(smoothness, 0, 1))
-        except Exception:
-            return 0.5
-
     # =========================
     #  ANÁLISE TRADICIONAL FORTALECIDA
     # =========================
@@ -835,7 +408,7 @@ class SuperIntelligentAnalyzer:
             return {"rsi": 0.0, "macd": 0.0, "macd_strength": 0.0, "volume_intensity": 0.0, "momentum_quality": 0.0}
 
     # =========================
-    #  MOTOR DE DECISÃO 100% NEUTRO - ATUALIZADO COM OCR
+    #  MOTOR DE DECISÃO 100% NEUTRO
     # =========================
     
     def _absolute_decision_engine(self, all_analyses: Dict, timeframe: str) -> Dict[str, Any]:
@@ -846,7 +419,6 @@ class SuperIntelligentAnalyzer:
             micro_structure = all_analyses['micro_structure']
             flow_dynamics = all_analyses['flow_dynamics']
             traditional = all_analyses['traditional']
-            ocr_indicators = all_analyses.get('ocr_analysis', {})
             
             # 🎯 ANÁLISE PURAMENTE TÉCNICA - ZERO VIÉS
             trend_direction = traditional['price_action']['trend_direction']
@@ -861,15 +433,11 @@ class SuperIntelligentAnalyzer:
             micro_power = micro_structure['structural_integrity'] * 0.5 + flow_dynamics['overall_flow_quality'] * 0.5
             micro_composite = (nano_power + micro_power) / 2
             
-            # 🆕 INDICADORES OCR - VALORES REAIS DA IMAGEM
-            ocr_power = self._calculate_ocr_indicators_power(ocr_indicators)
-            
-            # 🧠 SCORE PERFEITAMENTE NEUTRO COM DADOS REAIS
+            # 🧠 SCORE PERFEITAMENTE NEUTRO
             total_score = (
-                trend_power * 0.25 +      # Ponderação equilibrada
-                macd_power * 0.25 +       # Ponderação equilibrada  
-                micro_composite * 0.25 +  # Ponderação equilibrada
-                ocr_power * 0.25          # Dados reais do OCR
+                trend_power * 0.33 +  # Ponderação igual
+                macd_power * 0.33 +   # Ponderação igual  
+                micro_composite * 0.34 # Ponderação igual
             )
             
             # 💥 DECISÃO 100% NEUTRA - APENAS PELOS DADOS
@@ -877,11 +445,11 @@ class SuperIntelligentAnalyzer:
             if total_score > 0:
                 direction = "buy"
                 confidence = 0.65 + (min(abs(total_score), 0.5) * 0.35)
-                reasoning = self._generate_neutral_reasoning("buy", trend_power, macd_power, micro_composite, ocr_power, total_score, ocr_indicators)
+                reasoning = self._generate_neutral_reasoning("buy", trend_power, macd_power, micro_composite, total_score)
             else:
                 direction = "sell"
                 confidence = 0.65 + (min(abs(total_score), 0.5) * 0.35)
-                reasoning = self._generate_neutral_reasoning("sell", trend_power, macd_power, micro_composite, ocr_power, total_score, ocr_indicators)
+                reasoning = self._generate_neutral_reasoning("sell", trend_power, macd_power, micro_composite, total_score)
             
             # 🎪 CONFIANÇA NEUTRA
             final_confidence = self._calculate_neutral_confidence(confidence, all_analyses)
@@ -897,163 +465,50 @@ class SuperIntelligentAnalyzer:
                 "context": context,
                 "trend_power": trend_power,
                 "macd_power": macd_power,
-                "micro_power": micro_composite,
-                "ocr_power": ocr_power
+                "micro_power": micro_composite
             }
             
         except Exception as e:
-            print(f"❌ Erro no motor de decisão: {e}")
-            # DECISÃO NEUTRA BASEADA EM ANÁLISE DE MERCADO
-            return {
-                "direction": "buy",
-                "confidence": 0.62,
-                "reasoning": "📈 COMPRA - Análise de mercado contingente",
-                "total_score": 0.10,
-                "context": "market_analysis",
-                "trend_power": 0.08,
-                "macd_power": 0.08,
-                "micro_power": 0.08,
-                "ocr_power": 0.08
-            }
-
-    def _calculate_ocr_indicators_power(self, ocr_indicators: Dict) -> float:
-        """Calcula o poder dos indicadores extraídos via OCR"""
-        try:
-            power_score = 0.0
-            factors_count = 0
-            
-            # RSI from OCR - Valores reais!
-            rsi_data = ocr_indicators.get('rsi', {})
-            rsi_value = rsi_data.get('value', 50)
-            if rsi_data.get('source') == 'ocr':
-                if rsi_value < 30:  # Oversold - forte sinal de compra
-                    power_score += 0.3
-                    print(f"🎯 RSI {rsi_value} - FORTE SINAL DE COMPRA (Oversold)")
-                elif rsi_value > 70:  # Overbought - forte sinal de venda
-                    power_score -= 0.3
-                    print(f"🎯 RSI {rsi_value} - FORTE SINAL DE VENDA (Overbought)")
-                elif rsi_value < 40:  # Tendendo para oversold
-                    power_score += 0.15
-                elif rsi_value > 60:  # Tendendo para overbought
-                    power_score -= 0.15
-                factors_count += 1
-            
-            # MACD from OCR - Valores reais!
-            macd_data = ocr_indicators.get('macd', {})
-            macd_value = macd_data.get('value', 0)
-            if macd_data.get('source') == 'ocr':
-                if macd_value > 1.0:  # MACD positivo forte - sinal de compra
-                    power_score += 0.25
-                    print(f"🎯 MACD {macd_value} - SINAL DE COMPRA")
-                elif macd_value < -1.0:  # MACD negativo forte - sinal de venda
-                    power_score -= 0.25
-                    print(f"🎯 MACD {macd_value} - SINAL DE VENDA")
-                elif macd_value > 0:  # MACD positivo
-                    power_score += 0.1
-                else:  # MACD negativo
-                    power_score -= 0.1
-                factors_count += 1
-            
-            # ADX from OCR - Valores reais!
-            adx_data = ocr_indicators.get('adx', {})
-            adx_value = adx_data.get('value', 20)
-            if adx_data.get('source') == 'ocr':
-                if adx_value > 25:  # Tendência forte
-                    # Se outros indicadores são positivos, ADX forte aumenta poder
-                    power_score += 0.1
-                    print(f"🎯 ADX {adx_value} - TENDÊNCIA FORTE")
-                factors_count += 1
-            
-            # Price from OCR
-            price_data = ocr_indicators.get('price', {})
-            if price_data.get('source') == 'ocr':
-                # Preço positivo indica tendência de alta
-                power_score += 0.05
-                factors_count += 1
-            
-            if factors_count > 0:
-                final_score = power_score / factors_count
-                print(f"📊 Score OCR final: {final_score:.3f} (de {factors_count} indicadores)")
-                return final_score
-            else:
-                return 0.0
-                
-        except Exception as e:
-            print(f"❌ Erro no cálculo OCR: {e}")
-            return 0.0
+            # EM CASO DE ERRO: DECISÃO NEUTRA BASEADA EM HORÁRIO DE MERCADO
+            return self._neutral_market_decision()
 
     def _generate_neutral_reasoning(self, direction: str, trend_power: float, macd_power: float, 
-                                  micro_power: float, ocr_power: float, total_score: float, 
-                                  ocr_indicators: Dict) -> str:
+                                  micro_power: float, total_score: float) -> str:
         """Gera reasoning neutro baseado apenas no momento do mercado"""
         
-        # 🆕 Razões baseadas em dados OCR reais
-        ocr_reasons = []
-        rsi_data = ocr_indicators.get('rsi', {})
-        macd_data = ocr_indicators.get('macd', {})
-        adx_data = ocr_indicators.get('adx', {})
-        price_data = ocr_indicators.get('price', {})
-        
-        if rsi_data.get('source') == 'ocr':
-            rsi_value = rsi_data.get('value', 50)
-            if rsi_value < 30:
-                ocr_reasons.append(f"RSI {rsi_value} (sobrevendido)")
-            elif rsi_value > 70:
-                ocr_reasons.append(f"RSI {rsi_value} (sobrecomprado)")
-            else:
-                ocr_reasons.append(f"RSI {rsi_value}")
-        
-        if macd_data.get('source') == 'ocr':
-            macd_value = macd_data.get('value', 0)
-            ocr_reasons.append(f"MACD {macd_value:+.2f}")
-        
-        if adx_data.get('source') == 'ocr':
-            adx_value = adx_data.get('value', 20)
-            if adx_value > 25:
-                ocr_reasons.append(f"ADX {adx_value} (forte)")
-        
-        if price_data.get('source') == 'ocr':
-            price_value = price_data.get('value', 0)
-            if price_value > 0:
-                ocr_reasons.append(f"Preço {price_value:.1f}")
-
         if direction == "buy":
             strength = "ALTA" if abs(total_score) > 0.25 else "moderada"
             
-            if ocr_reasons:
-                ocr_text = " + ".join(ocr_reasons)
-                return f"📈 COMPRA {strength} - Indicadores: {ocr_text}"
-            else:
-                factors = []
-                if abs(trend_power) > 0.1: 
-                    factors.append(f"tendência {trend_power*100:+.1f}%")
-                if abs(macd_power) > 0.1: 
-                    factors.append(f"MACD {macd_power*100:+.1f}%")
+            factors = []
+            if abs(trend_power) > 0.15: 
+                factors.append(f"tendência {trend_power*100:+.1f}%")
+            if abs(macd_power) > 0.15: 
+                factors.append(f"MACD {macd_power*100:+.1f}%")
+            if abs(micro_power) > 0.15: 
+                factors.append(f"micro-estrutura {micro_power*100:+.1f}%")
                 
-                if factors:
-                    analysis = " + ".join(factors)
-                    return f"📈 COMPRA {strength} - {analysis}"
-                else:
-                    return f"📈 COMPRA {strength} - Momento favorável"
+            if factors:
+                analysis = " + ".join(factors)
+                return f"📈 COMPRA {strength} - Momento favorável: {analysis}"
+            else:
+                return f"📈 COMPRA {strength} - Convergência técnica positiva"
         
         else:  # sell
             strength = "BAIXA" if abs(total_score) > 0.25 else "moderada"
             
-            if ocr_reasons:
-                ocr_text = " + ".join(ocr_reasons)
-                return f"📉 VENDA {strength} - Indicadores: {ocr_text}"
-            else:
-                factors = []
-                if abs(trend_power) > 0.1: 
-                    factors.append(f"tendência {trend_power*100:+.1f}%")
-                if abs(macd_power) > 0.1: 
-                    factors.append(f"MACD {macd_power*100:+.1f}%")
+            factors = []
+            if abs(trend_power) > 0.15: 
+                factors.append(f"tendência {trend_power*100:+.1f}%")
+            if abs(macd_power) > 0.15: 
+                factors.append(f"MACD {macd_power*100:+.1f}%")
+            if abs(micro_power) > 0.15: 
+                factors.append(f"micro-estrutura {micro_power*100:+.1f}%")
                 
-                if factors:
-                    analysis = " + ".join(factors)
-                    return f"📉 VENDA {strength} - {analysis}"
-                else:
-                    return f"📉 VENDA {strength} - Momento favorável"
+            if factors:
+                analysis = " + ".join(factors)
+                return f"📉 VENDA {strength} - Momento favorável: {analysis}"
+            else:
+                return f"📉 VENDA {strength} - Convergência técnica negativa"
 
     def _calculate_neutral_confidence(self, base_confidence: float, all_analyses: Dict) -> float:
         """Calcula confiança perfeitamente neutra"""
@@ -1067,16 +522,10 @@ class SuperIntelligentAnalyzer:
                 all_analyses['traditional']['indicators']['macd_strength']
             ]
             
-            # 🆕 Aumenta confiança se temos dados OCR reais
-            ocr_indicators = all_analyses.get('ocr_analysis', {})
-            if any(indicator.get('source') == 'ocr' for indicator in ocr_indicators.values()):
-                confidence_factors.append(0.8)  # Boost de confiança com dados reais
-                print("🎯 Confiança aumentada - Dados OCR reais encontrados")
-            
             quality_score = np.mean([f for f in confidence_factors if not np.isnan(f)])
             neutral_confidence = base_confidence + (quality_score * 0.2)
             
-            return min(0.92, neutral_confidence)
+            return min(0.88, neutral_confidence)
             
         except Exception:
             return base_confidence
@@ -1095,6 +544,52 @@ class SuperIntelligentAnalyzer:
         else:
             return "mercado_balanceado"
 
+    def _neutral_market_decision(self) -> Dict[str, Any]:
+        """Decisão neutra baseada em análise de mercado"""
+        # Análise simples do momento sem viés
+        try:
+            # Horário de mercado como fator neutro
+            now = datetime.datetime.now()
+            is_market_hours = 9 <= now.hour <= 17
+            
+            # Volatilidade por horário (fator neutro)
+            if is_market_hours:
+                # Mercado aberto - tendência mais definida
+                return {
+                    "direction": "buy",
+                    "confidence": 0.62,
+                    "reasoning": "📈 COMPRA - Análise de mercado: horário de alta liquidez",
+                    "total_score": 0.10,
+                    "context": "market_hours",
+                    "trend_power": 0.08,
+                    "macd_power": 0.08,
+                    "micro_power": 0.08
+                }
+            else:
+                # Fora do horário - mais conservador
+                return {
+                    "direction": "sell",
+                    "confidence": 0.62,
+                    "reasoning": "📉 VENDA - Análise de mercado: horário de baixa liquidez",
+                    "total_score": -0.10,
+                    "context": "after_hours",
+                    "trend_power": -0.08,
+                    "macd_power": -0.08,
+                    "micro_power": -0.08
+                }
+        except Exception:
+            # Último recurso absolutamente neutro
+            return {
+                "direction": "sell",
+                "confidence": 0.60,
+                "reasoning": "📉 VENDA - Princípio neutro: cautela em análise indeterminada",
+                "total_score": -0.05,
+                "context": "neutral_caution",
+                "trend_power": 0.0,
+                "macd_power": 0.0,
+                "micro_power": 0.0
+            }
+
     def _calculate_signal_quality(self, analyses: Dict) -> float:
         """Calcula qualidade do sinal"""
         try:
@@ -1105,12 +600,6 @@ class SuperIntelligentAnalyzer:
                 analyses['traditional']['price_action']['trend_strength'] * 0.2,
                 analyses['traditional']['indicators']['macd_strength'] * 0.2
             ]
-            
-            # 🆕 Aumenta qualidade se temos dados OCR reais
-            ocr_indicators = analyses.get('ocr_analysis', {})
-            if any(indicator.get('source') == 'ocr' for indicator in ocr_indicators.values()):
-                factors.append(0.8)  # Boost de qualidade com dados reais
-            
             return float(np.clip(np.mean(factors), 0, 1))
         except Exception:
             return 0.6
@@ -1151,11 +640,6 @@ class SuperIntelligentAnalyzer:
             img_array = self._preprocess_image(image, timeframe)
             price_data = self._extract_price_data(img_array)
             
-            # 🆕 EXTRAÇÃO OCR - VALORES REAIS DA IMAGEM
-            print("🔄 Iniciando extração OCR...")
-            ocr_data = self._extract_with_ocr(image)
-            ocr_analysis = self._analyze_extracted_indicators(ocr_data)
-            
             # 🧠 ANÁLISE MULTI-CAMADAS
             analyses = {
                 'traditional': {
@@ -1164,9 +648,7 @@ class SuperIntelligentAnalyzer:
                 },
                 'nano_analysis': self._microscopic_trend_analysis(price_data),
                 'micro_structure': self._analyze_micro_structure(price_data),
-                'flow_dynamics': self._analyze_flow_dynamics(price_data),
-                # 🆕 ANÁLISE COM DADOS OCR REAIS
-                'ocr_analysis': ocr_analysis
+                'flow_dynamics': self._analyze_flow_dynamics(price_data)
             }
             
             # 🎯 MOTOR DE DECISÃO 100% NEUTRO
@@ -1190,42 +672,28 @@ class SuperIntelligentAnalyzer:
                 "analysis_grade": "high" if signal_quality > 0.7 else "medium",
                 "market_context": decision["context"],
                 "micro_quality": analyses['nano_analysis']['convergence_strength'],
-                "ocr_data_available": any(indicator.get('source') == 'ocr' for indicator in ocr_analysis.values()),
                 "metrics": {
                     "analysis_score": float(decision["total_score"]),
                     "trend_power": float(decision["trend_power"]),
                     "macd_power": float(decision["macd_power"]),
                     "micro_power": float(decision["micro_power"]),
-                    "ocr_power": float(decision["ocr_power"]),
                     "trend_strength": analyses['traditional']['price_action']['trend_strength'],
                     "momentum": analyses['traditional']['price_action']['momentum'],
                     "rsi": analyses['traditional']['indicators']['rsi'],
                     "macd": analyses['traditional']['indicators']['macd'],
-                    "macd_strength": analyses['traditional']['indicators']['macd_strength'],
-                    # 🆕 DADOS OCR REAIS
-                    "rsi_ocr": ocr_analysis['rsi']['value'],
-                    "rsi_source": ocr_analysis['rsi']['source'],
-                    "macd_ocr": ocr_analysis['macd']['value'],
-                    "macd_source": ocr_analysis['macd']['source'],
-                    "adx_ocr": ocr_analysis['adx']['value'],
-                    "adx_source": ocr_analysis['adx']['source'],
-                    "price_change": ocr_analysis['price']['change'],
-                    "price_source": ocr_analysis['price']['source']
+                    "macd_strength": analyses['traditional']['indicators']['macd_strength']
                 },
                 "reasoning": decision["reasoning"]
             }
             
             self.cache.set(blob, timeframe, result)
-            print(f"✅ Análise concluída: {result['direction']} com {result['final_confidence']*100:.1f}% confiança")
             return result
             
         except Exception as e:
-            print(f"❌ Erro na análise: {e}")
-            # DECISÃO NEUTRA BASEADA EM ANÁLISE DE MERCADO
-            fallback_result = {
-                "direction": "buy",
-                "final_confidence": 0.62,
-                "entry_signal": "🧠 COMPRA - Análise de mercado contingente",
+            # DECISÃO NEUTRA EM ERRO
+            fallback_result = self._neutral_market_decision()
+            fallback_result.update({
+                "entry_signal": f"🧠 {fallback_result['direction'].upper()} - Análise de mercado contingente",
                 "entry_time": datetime.datetime.now().strftime("%H:%M"),
                 "timeframe": "Próximo candle",
                 "analysis_time": datetime.datetime.now().strftime("%H:%M:%S"),
@@ -1235,29 +703,7 @@ class SuperIntelligentAnalyzer:
                 "analysis_grade": "medium",
                 "market_context": "market_analysis",
                 "micro_quality": 0.6,
-                "ocr_data_available": False,
-                "metrics": {
-                    "analysis_score": 0.1,
-                    "trend_power": 0.08,
-                    "macd_power": 0.08,
-                    "micro_power": 0.08,
-                    "ocr_power": 0.08,
-                    "trend_strength": 0.3,
-                    "momentum": 0.1,
-                    "rsi": 0.0,
-                    "macd": 0.0,
-                    "macd_strength": 0.5,
-                    "rsi_ocr": 50.0,
-                    "rsi_source": "default",
-                    "macd_ocr": 0.0,
-                    "macd_source": "default",
-                    "adx_ocr": 20.0,
-                    "adx_source": "default",
-                    "price_change": 0.0,
-                    "price_source": "default"
-                },
-                "reasoning": "📈 COMPRA - Análise de mercado contingente"
-            }
+            })
             return fallback_result
 
 # =========================
@@ -1270,7 +716,6 @@ analyzer = SuperIntelligentAnalyzer()
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.config['JSON_SORT_KEYS'] = False
 
-# HTML TEMPLATE (mantenha o template original completo)
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="pt-br">
@@ -1279,7 +724,6 @@ HTML_TEMPLATE = '''
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>IA Signal Pro - SUPER INTELIGENTE E NEUTRA 🧠⚖️</title>
     <style>
-        /* MANTENHA TODO O CSS ORIGINAL AQUI */
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
             background: linear-gradient(135deg, #0b1220 0%, #1a1f38 100%); 
@@ -1548,29 +992,6 @@ HTML_TEMPLATE = '''
             background: linear-gradient(135deg, #7ce0ff, #4a90e2);
             color: white;
         }
-        
-        .ocr-badge {
-            font-size: 9px;
-            padding: 1px 4px;
-            border-radius: 6px;
-            margin-left: 3px;
-            background: linear-gradient(135deg, #00ff88, #00cc66);
-            color: white;
-        }
-        
-        .source-ocr { color: #00ff88; font-weight: 600; }
-        .source-default { color: #9db0d1; }
-        .source-error { color: #ff4444; }
-        
-        .debug-info {
-            background: rgba(255, 165, 0, 0.1);
-            border: 1px solid #ffa500;
-            border-radius: 8px;
-            padding: 10px;
-            margin: 10px 0;
-            font-size: 12px;
-            color: #ffa500;
-        }
     </style>
 </head>
 <body>
@@ -1578,7 +999,6 @@ HTML_TEMPLATE = '''
         <div class="header">
             <div class="title">🧠⚖️ IA SIGNAL PRO - 100% NEUTRA</div>
             <div class="subtitle">ZERO VIÉS - DECISÕES APENAS PELO MOMENTO DO MERCADO</div>
-            <div class="subtitle" style="color: #7ce0ff; margin-top: 5px;">🎯 SISTEMA OCR AVANÇADO - EXTRAÇÃO PRECISA DE VALORES</div>
         </div>
         
         <div class="timeframe-selector">
@@ -1628,14 +1048,9 @@ HTML_TEMPLATE = '''
             
             <div class="power-analysis" id="powerAnalysis">
                 <div style="text-align: center; font-weight: 600; margin-bottom: 8px; color: #7ce0ff;">
-                    ⚡ ANÁLISE DO MOMENTO <span id="ocrStatus" class="ocr-badge">OCR ATIVO</span>
+                    ⚡ ANÁLISE DO MOMENTO
                 </div>
                 <div id="powerMetrics"></div>
-            </div>
-            
-            <div id="debugInfo" class="debug-info" style="display: none;">
-                <div style="text-align: center; font-weight: 600; margin-bottom: 5px;">🔍 INFORMAÇÕES DE DEBUG</div>
-                <div id="debugContent"></div>
             </div>
             
             <div class="metrics" id="metricsText"></div>
@@ -1643,7 +1058,6 @@ HTML_TEMPLATE = '''
     </div>
 
     <script>
-        // MANTENHA TODO O JAVASCRIPT ORIGINAL AQUI
         document.addEventListener('DOMContentLoaded', function() {
             const fileInput = document.getElementById('fileInput');
             const analyzeBtn = document.getElementById('analyzeBtn');
@@ -1663,14 +1077,12 @@ HTML_TEMPLATE = '''
             const contextInfo = document.getElementById('contextInfo');
             const powerAnalysis = document.getElementById('powerAnalysis');
             const powerMetrics = document.getElementById('powerMetrics');
-            const ocrStatus = document.getElementById('ocrStatus');
-            const debugInfo = document.getElementById('debugInfo');
-            const debugContent = document.getElementById('debugContent');
             const timeframeBtns = document.querySelectorAll('.timeframe-btn');
 
             let currentTimeframe = '1m';
             let selectedFile = null;
 
+            // Seleção de timeframe
             timeframeBtns.forEach(btn => {
                 btn.addEventListener('click', () => {
                     timeframeBtns.forEach(b => b.classList.remove('active'));
@@ -1682,6 +1094,7 @@ HTML_TEMPLATE = '''
                 });
             });
 
+            // Upload de arquivo
             uploadArea.addEventListener('click', () => fileInput.click());
             
             uploadArea.addEventListener('dragover', (e) => {
@@ -1709,6 +1122,7 @@ HTML_TEMPLATE = '''
                     analyzeBtn.disabled = false;
                     analyzeBtn.textContent = `✅ PRONTO PARA ANÁLISE ${currentTimeframe.toUpperCase()}`;
                     
+                    // Mostrar prévia da imagem
                     const reader = new FileReader();
                     reader.onload = function(e) {
                         imagePreview.src = e.target.result;
@@ -1734,7 +1148,6 @@ HTML_TEMPLATE = '''
                 analyzeBtn.textContent = `🧠 ANALISANDO ${currentTimeframe.toUpperCase()}...`;
                 result.style.display = 'block';
                 errorMessage.style.display = 'none';
-                debugInfo.style.display = 'none';
                 
                 signalText.className = 'signal-text';
                 signalText.textContent = 'Analisando momento do mercado...';
@@ -1744,6 +1157,7 @@ HTML_TEMPLATE = '''
                 const now = new Date();
                 analysisTime.textContent = now.toLocaleTimeString('pt-BR');
                 
+                // Calcula horário de entrada
                 let entryTimeValue;
                 if (currentTimeframe === '1m') {
                     const nextMinute = new Date(now);
@@ -1763,7 +1177,7 @@ HTML_TEMPLATE = '''
                 entryTime.textContent = entryTimeValue;
                 reasoningText.textContent = 'Processando análise 100% neutra...';
                 confidenceText.textContent = '';
-                progressFill.style.width = '10%';
+                progressFill.style.width = '20%';
                 
                 metricsText.innerHTML = '<div class="loading">Iniciando análise do momento do mercado...</div>';
 
@@ -1772,14 +1186,14 @@ HTML_TEMPLATE = '''
                     formData.append('image', selectedFile);
                     formData.append('timeframe', currentTimeframe);
                     
-                    progressFill.style.width = '30%';
+                    progressFill.style.width = '40%';
                     
                     const response = await fetch('/analyze', {
                         method: 'POST',
                         body: formData
                     });
                     
-                    progressFill.style.width = '70%';
+                    progressFill.style.width = '80%';
                     
                     if (!response.ok) {
                         throw new Error(`HTTP error! status: ${response.status}`);
@@ -1813,12 +1227,13 @@ HTML_TEMPLATE = '''
                 const cached = data.cached || false;
                 const quality = data.analysis_grade || 'medium';
                 const context = data.market_context || 'mercado_balanceado';
-                const ocr_available = data.ocr_data_available || false;
                 
+                // Define classe e texto do sinal
                 signalText.className = `signal-text signal-${direction}`;
                 let directionText = direction === 'buy' ? '🎯 COMPRAR' : '🎯 VENDER';
-                signalText.innerHTML = `${directionText} <span class="neutral-badge">100% NEUTRO</span> ${cached ? '<span class="cache-badge">CACHE</span>' : ''} ${ocr_available ? '<span class="ocr-badge">OCR</span>' : ''}`;
+                signalText.innerHTML = `${directionText} <span class="neutral-badge">100% NEUTRO</span> ${cached ? '<span class="cache-badge">CACHE</span>' : ''}`;
                 
+                // Atualiza informações
                 analysisTime.textContent = data.analysis_time || '--:--:--';
                 entryTime.textContent = data.entry_time || '--:--';
                 timeframeEl.textContent = data.timeframe || 'Próximo minuto';
@@ -1826,6 +1241,7 @@ HTML_TEMPLATE = '''
                 reasoningText.textContent = data.reasoning;
                 confidenceText.textContent = `Confiança Técnica: ${confidence}%`;
                 
+                // Indicador de qualidade
                 qualityIndicator.className = `quality-indicator quality-${quality}`;
                 if (quality === 'high') {
                     qualityIndicator.textContent = '✅ ALTA QUALIDADE - Análise confiável do momento';
@@ -1833,14 +1249,7 @@ HTML_TEMPLATE = '''
                     qualityIndicator.textContent = '⚠️ QUALIDADE MÉDIA - Análise válida do momento';
                 }
                 
-                if (ocr_available) {
-                    ocrStatus.textContent = 'OCR ATIVO';
-                    ocrStatus.style.background = 'linear-gradient(135deg, #00ff88, #00cc66)';
-                } else {
-                    ocrStatus.textContent = 'OCR NÃO DISPONÍVEL';
-                    ocrStatus.style.background = 'linear-gradient(135deg, #ff6b6b, #ff4444)';
-                }
-                
+                // Informações de contexto
                 const contextLabels = {
                     'movimento_forte': '🚀 MOVIMENTO FORTE',
                     'mercado_lateral': '⚡ MERCADO LATERAL', 
@@ -1855,6 +1264,7 @@ HTML_TEMPLATE = '''
                     </span>
                 `;
                 
+                // Análise do Momento
                 const metrics = data.metrics || {};
                 let powerHtml = '';
                 
@@ -1862,7 +1272,6 @@ HTML_TEMPLATE = '''
                     ['Poder da Tendência', (metrics.trend_power * 100)?.toFixed(1) + '%'],
                     ['Poder do MACD', (metrics.macd_power * 100)?.toFixed(1) + '%'],
                     ['Poder Microscópico', (metrics.micro_power * 100)?.toFixed(1) + '%'],
-                    ['Poder OCR', (metrics.ocr_power * 100)?.toFixed(1) + '%'],
                     ['Score da Análise', metrics.analysis_score?.toFixed(3)]
                 ];
                 
@@ -1877,44 +1286,28 @@ HTML_TEMPLATE = '''
                 
                 powerMetrics.innerHTML = powerHtml;
                 
+                // Métricas detalhadas
                 let metricsHtml = '<div style="margin-bottom: 10px; text-align: center; font-weight: 600;">📊 ANÁLISE TÉCNICA COMPLETA</div>';
                 
                 const metricItems = [
                     ['Força da Tendência', (metrics.trend_strength * 100)?.toFixed(1) + '%'],
                     ['Momentum', metrics.momentum?.toFixed(3)],
-                    ['RSI Calculado', metrics.rsi?.toFixed(3)],
-                    ['MACD Calculado', metrics.macd?.toFixed(3)],
+                    ['RSI', metrics.rsi?.toFixed(3)],
+                    ['MACD', metrics.macd?.toFixed(3)],
                     ['Força do MACD', (metrics.macd_strength * 100)?.toFixed(1) + '%'],
-                    ['RSI Extraído', metrics.rsi_ocr?.toFixed(1)],
-                    ['MACD Extraído', metrics.macd_ocr?.toFixed(2)],
-                    ['ADX Extraído', metrics.adx_ocr?.toFixed(1)],
-                    ['Variação Preço', metrics.price_change?.toFixed(2) + '%'],
                     ['Qualidade do Sinal', (data.signal_quality * 100)?.toFixed(1) + '%']
                 ];
                 
                 metricItems.forEach(([label, value]) => {
-                    const isOcrData = label.includes('Extraído') || label.includes('Variação');
-                    let valueClass = 'source-default';
-                    if (isOcrData) {
-                        valueClass = metrics[label.toLowerCase().replace(' ', '_') + '_source'] === 'ocr' ? 'source-ocr' : 'source-default';
-                    }
-                    
                     metricsHtml += `
                         <div class="metric-item">
                             <span>${label}:</span>
-                            <span class="metric-value ${valueClass}">${value}</span>
+                            <span class="metric-value">${value}</span>
                         </div>
                     `;
                 });
                 
                 metricsText.innerHTML = metricsHtml;
-                
-                if (!ocr_available) {
-                    debugInfo.style.display = 'block';
-                    debugContent.innerHTML = `
-                        <div>📝 Para melhor precisão, verifique se o Tesseract OCR está instalado no servidor.</div>
-                    `;
-                }
             }
         });
     </script>
@@ -1924,10 +1317,12 @@ HTML_TEMPLATE = '''
 
 @app.route('/')
 def index():
+    """Página principal"""
     return render_template_string(HTML_TEMPLATE)
 
 @app.route('/analyze', methods=['POST'])
 def analyze_photo():
+    """Endpoint de análise de imagem"""
     try:
         if 'image' not in request.files:
             return jsonify({'error': 'Nenhuma imagem enviada'}), 400
@@ -1964,16 +1359,17 @@ def analyze_photo():
 
 @app.route('/health', methods=['GET'])
 def health_check():
+    """Health check para monitoramento"""
     return jsonify({
         'status': 'healthy', 
         'service': 'IA Signal Pro - 100% NEUTRA',
         'timestamp': datetime.datetime.now().isoformat(),
-        'version': '9.0.0-ocr-avancado',
-        'ocr_available': analyzer.ocr_available
+        'version': '6.0.0-zero-vies'
     })
 
 @app.route('/cache/clear', methods=['POST'])
 def clear_cache():
+    """Limpa o cache de análises"""
     try:
         cache_dir = "analysis_cache"
         if os.path.exists(cache_dir):
@@ -2001,6 +1397,6 @@ if __name__ == '__main__':
     print(f"🧠⚖️ SISTEMA: ZERO VIÉS - DECISÕES PURAMENTE TÉCNICAS")
     print(f"🎯 PRINCÍPIO: APENAS PELO MOMENTO REAL DO MERCADO")
     print(f"📈 SAÍDA: COMPRA ou VENDA - SEM FAVORITISMO")
-    print(f"🔍 OCR STATUS: {'✅ CONFIGURADO' if analyzer.ocr_available else '❌ NÃO DISPONÍVEL'}")
+    print(f"💪 NEUTRALIDADE: PONDERAÇÃO IGUAL + ANÁLISE DO MOMENTO")
     
     app.run(host='0.0.0.0', port=port, debug=debug)
