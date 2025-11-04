@@ -741,75 +741,169 @@ class SuperIntelligentAnalyzer:
             return {"rsi": 0.0, "macd": 0.0, "macd_strength": 0.0, "volume_intensity": 0.0, "momentum_quality": 0.0}
 
     # =========================
-    #  MOTOR DE DECISÃO 100% NEUTRO - ATUALIZADO COM OCR
+    #  MOTOR DE DECISÃO CORRIGIDO - PRIORIZA DADOS OCR REAIS
     # =========================
     
     def _absolute_decision_engine(self, all_analyses: Dict, timeframe: str) -> Dict[str, Any]:
-        """MOTOR 100% NEUTRO - DECIDE APENAS PELO MOMENTO DO MERCADO"""
+        """MOTOR CORRIGIDO - PRIORIZA DADOS OCR REAIS"""
         try:
-            # Extrai todas as análises
-            nano_trend = all_analyses['nano_analysis']
-            micro_structure = all_analyses['micro_structure']
-            flow_dynamics = all_analyses['flow_dynamics']
-            traditional = all_analyses['traditional']
+            # 🆕 DADOS OCR TEM PRIORIDADE MÁXIMA
             ocr_indicators = all_analyses.get('ocr_analysis', {})
             
-            # 🎯 ANÁLISE PURAMENTE TÉCNICA - ZERO VIÉS
-            trend_direction = traditional['price_action']['trend_direction']
-            trend_strength = traditional['price_action']['trend_strength']
-            trend_power = trend_direction * trend_strength
-            
-            macd_value = traditional['indicators']['macd']
-            macd_strength = traditional['indicators']['macd_strength']
-            macd_power = macd_value * macd_strength
-            
-            nano_power = nano_trend['nano_trend'] * nano_trend['convergence_strength']
-            micro_power = micro_structure['structural_integrity'] * 0.5 + flow_dynamics['overall_flow_quality'] * 0.5
-            micro_composite = (nano_power + micro_power) / 2
-            
-            # 🆕 INDICADORES OCR - VALORES REAIS DA IMAGEM
-            ocr_power = self._calculate_ocr_indicators_power(ocr_indicators)
-            
-            # 🧠 SCORE PERFEITAMENTE NEUTRO COM DADOS REAIS
-            total_score = (
-                trend_power * 0.25 +      # Ponderação equilibrada
-                macd_power * 0.25 +       # Ponderação equilibrada  
-                micro_composite * 0.25 +  # Ponderação equilibrada
-                ocr_power * 0.25          # Dados reais do OCR
-            )
-            
-            # 💥 DECISÃO 100% NEUTRA - APENAS PELOS DADOS
-            # ZERO favorecimento - decide pelo momento real do mercado
-            if total_score > 0:
-                direction = "buy"
-                confidence = 0.65 + (min(abs(total_score), 0.5) * 0.35)
-                reasoning = self._generate_neutral_reasoning("buy", trend_power, macd_power, micro_composite, ocr_power, total_score, ocr_indicators)
+            # Se temos dados OCR reais, USAMOS ELES como principal
+            if any(indicator.get('source') == 'ocr' for indicator in ocr_indicators.values()):
+                print("🎯 USANDO DADOS OCR REAIS COMO PRINCIPAL")
+                return self._decision_based_on_real_ocr(ocr_indicators, all_analyses, timeframe)
             else:
-                direction = "sell"
-                confidence = 0.65 + (min(abs(total_score), 0.5) * 0.35)
-                reasoning = self._generate_neutral_reasoning("sell", trend_power, macd_power, micro_composite, ocr_power, total_score, ocr_indicators)
-            
-            # 🎪 CONFIANÇA NEUTRA
-            final_confidence = self._calculate_neutral_confidence(confidence, all_analyses)
-            
-            # 🎯 CONTEXTO NEUTRO
-            context = self._detect_neutral_context(trend_strength, macd_strength, micro_composite, total_score)
-            
-            return {
-                "direction": direction,
-                "confidence": final_confidence,
-                "reasoning": reasoning,
-                "total_score": total_score,
-                "context": context,
-                "trend_power": trend_power,
-                "macd_power": macd_power,
-                "micro_power": micro_composite,
-                "ocr_power": ocr_power
-            }
-            
+                # Fallback para análise tradicional
+                return self._decision_based_on_analysis(all_analyses, timeframe)
+                
         except Exception as e:
             print(f"❌ Erro no motor de decisão: {e}")
             return self._neutral_market_decision()
+
+    def _decision_based_on_real_ocr(self, ocr_indicators: Dict, all_analyses: Dict, timeframe: str) -> Dict[str, Any]:
+        """DECISÃO BASEADA NOS VALORES REAIS DO OCR"""
+        rsi_data = ocr_indicators.get('rsi', {})
+        macd_data = ocr_indicators.get('macd', {})
+        adx_data = ocr_indicators.get('adx', {})
+        price_data = ocr_indicators.get('price', {})
+        
+        rsi_value = rsi_data.get('value', 50)
+        macd_value = macd_data.get('value', 0)
+        adx_value = adx_data.get('value', 20)
+        price_change = price_data.get('change', 0)
+        
+        print(f"🎯 VALORES OCR REAIS: RSI={rsi_value}, MACD={macd_value}, ADX={adx_value}, Δ={price_change}%")
+        
+        # 🎯 LÓGICA COM VALORES REAIS
+        buy_signals = 0
+        sell_signals = 0
+        reasoning_parts = []
+        
+        # RSI - VALOR REAL
+        if rsi_value > 70:
+            sell_signals += 2
+            reasoning_parts.append(f"RSI {rsi_value} (SOBRECOMPRADO)")
+        elif rsi_value < 30:
+            buy_signals += 2
+            reasoning_parts.append(f"RSI {rsi_value} (SOBREVENDIDO)")
+        else:
+            if rsi_value > 50:
+                buy_signals += 1
+            else:
+                sell_signals += 1
+        
+        # MACD - VALOR REAL
+        if macd_value > 2.0:
+            buy_signals += 2
+            reasoning_parts.append(f"MACD {macd_value:+.2f} (FORTE)")
+        elif macd_value < -2.0:
+            sell_signals += 2
+            reasoning_parts.append(f"MACD {macd_value:+.2f} (FORTE)")
+        elif macd_value > 0:
+            buy_signals += 1
+        else:
+            sell_signals += 1
+        
+        # ADX - VALOR REAL
+        if adx_value > 25:
+            reasoning_parts.append(f"ADX {adx_value} (TENDÊNCIA FORTE)")
+        
+        # PREÇO - VALOR REAL
+        if price_change > 1.0:
+            buy_signals += 1
+            reasoning_parts.append(f"PREÇO +{price_change:.2f}%")
+        elif price_change < -1.0:
+            sell_signals += 1
+            reasoning_parts.append(f"PREÇO {price_change:.2f}%")
+        
+        # 🎯 DECISÃO FINAL COM VALORES REAIS
+        if buy_signals > sell_signals:
+            direction = "buy"
+            confidence = 0.7 + (min(buy_signals, 5) * 0.05)
+            reasoning = f"📈 COMPRA - " + " + ".join(reasoning_parts)
+        elif sell_signals > buy_signals:
+            direction = "sell" 
+            confidence = 0.7 + (min(sell_signals, 5) * 0.05)
+            reasoning = f"📉 VENDA - " + " + ".join(reasoning_parts)
+        else:
+            # Empate - usa análise tradicional
+            return self._decision_based_on_analysis(all_analyses, timeframe)
+        
+        return {
+            "direction": direction,
+            "confidence": min(confidence, 0.92),
+            "reasoning": reasoning,
+            "total_score": (buy_signals - sell_signals) / 10.0,
+            "context": "dados_reais_ocr",
+            "trend_power": (buy_signals - sell_signals) / 10.0,
+            "macd_power": macd_value / 10.0,
+            "micro_power": 0.5,
+            "ocr_power": (buy_signals - sell_signals) / 10.0
+        }
+
+    def _decision_based_on_analysis(self, all_analyses: Dict, timeframe: str) -> Dict[str, Any]:
+        """Fallback - análise tradicional quando não tem OCR"""
+        # Extrai todas as análises
+        nano_trend = all_analyses['nano_analysis']
+        micro_structure = all_analyses['micro_structure']
+        flow_dynamics = all_analyses['flow_dynamics']
+        traditional = all_analyses['traditional']
+        ocr_indicators = all_analyses.get('ocr_analysis', {})
+        
+        # 🎯 ANÁLISE PURAMENTE TÉCNICA - ZERO VIÉS
+        trend_direction = traditional['price_action']['trend_direction']
+        trend_strength = traditional['price_action']['trend_strength']
+        trend_power = trend_direction * trend_strength
+        
+        macd_value = traditional['indicators']['macd']
+        macd_strength = traditional['indicators']['macd_strength']
+        macd_power = macd_value * macd_strength
+        
+        nano_power = nano_trend['nano_trend'] * nano_trend['convergence_strength']
+        micro_power = micro_structure['structural_integrity'] * 0.5 + flow_dynamics['overall_flow_quality'] * 0.5
+        micro_composite = (nano_power + micro_power) / 2
+        
+        # 🆕 INDICADORES OCR - VALORES REAIS DA IMAGEM
+        ocr_power = self._calculate_ocr_indicators_power(ocr_indicators)
+        
+        # 🧠 SCORE PERFEITAMENTE NEUTRO COM DADOS REAIS
+        total_score = (
+            trend_power * 0.25 +      # Ponderação equilibrada
+            macd_power * 0.25 +       # Ponderação equilibrada  
+            micro_composite * 0.25 +  # Ponderação equilibrada
+            ocr_power * 0.25          # Dados reais do OCR
+        )
+        
+        # 💥 DECISÃO 100% NEUTRA - APENAS PELOS DADOS
+        # ZERO favorecimento - decide pelo momento real do mercado
+        if total_score > 0:
+            direction = "buy"
+            confidence = 0.65 + (min(abs(total_score), 0.5) * 0.35)
+            reasoning = self._generate_neutral_reasoning("buy", trend_power, macd_power, micro_composite, ocr_power, total_score, ocr_indicators)
+        else:
+            direction = "sell"
+            confidence = 0.65 + (min(abs(total_score), 0.5) * 0.35)
+            reasoning = self._generate_neutral_reasoning("sell", trend_power, macd_power, micro_composite, ocr_power, total_score, ocr_indicators)
+        
+        # 🎪 CONFIANÇA NEUTRA
+        final_confidence = self._calculate_neutral_confidence(confidence, all_analyses)
+        
+        # 🎯 CONTEXTO NEUTRO
+        context = self._detect_neutral_context(trend_strength, macd_strength, micro_composite, total_score)
+        
+        return {
+            "direction": direction,
+            "confidence": final_confidence,
+            "reasoning": reasoning,
+            "total_score": total_score,
+            "context": context,
+            "trend_power": trend_power,
+            "macd_power": macd_power,
+            "micro_power": micro_composite,
+            "ocr_power": ocr_power
+        }
 
     def _calculate_ocr_indicators_power(self, ocr_indicators: Dict) -> float:
         """Calcula o poder dos indicadores extraídos via OCR"""
@@ -1116,7 +1210,7 @@ class SuperIntelligentAnalyzer:
                 'ocr_analysis': ocr_analysis
             }
             
-            # 🎯 MOTOR DE DECISÃO 100% NEUTRO
+            # 🎯 MOTOR DE DECISÃO CORRIGIDO - PRIORIZA DADOS OCR
             decision = self._absolute_decision_engine(analyses, timeframe)
             time_info = self._get_entry_timeframe(timeframe)
             
@@ -1777,7 +1871,8 @@ HTML_TEMPLATE = '''
                     'mercado_lateral': '⚡ MERCADO LATERAL', 
                     'tendencia_estabelecida': '📈 TENDÊNCIA ESTABELECIDA',
                     'momentum_tecnico': '🎯 MOMENTUM TÉCNICO',
-                    'mercado_balanceado': '⚖️ MERCADO BALANCEADO'
+                    'mercado_balanceado': '⚖️ MERCADO BALANCEADO',
+                    'dados_reais_ocr': '🎯 DADOS OCR REAIS'
                 };
                 
                 contextInfo.innerHTML = `
@@ -1825,7 +1920,7 @@ HTML_TEMPLATE = '''
                     ['Qualidade do Sinal', (data.signal_quality * 100)?.toFixed(1) + '%']
                 ];
                 
-                               metricItems.forEach(([label, value]) => {
+                metricItems.forEach(([label, value]) => {
                     // Destaca dados OCR reais
                     const isOcrData = label.includes('Extraído') || label.includes('Variação');
                     let valueClass = 'source-default';
@@ -1910,7 +2005,7 @@ def health_check():
         'status': 'healthy', 
         'service': 'IA Signal Pro - 100% NEUTRA',
         'timestamp': datetime.datetime.now().isoformat(),
-        'version': '9.0.0-ocr-avancado'
+        'version': '9.0.0-ocr-corrigido'
     })
 
 @app.route('/cache/clear', methods=['POST'])
@@ -1943,7 +2038,7 @@ if __name__ == '__main__':
     print(f"🧠⚖️ SISTEMA: ZERO VIÉS - DECISÕES PURAMENTE TÉCNICAS")
     print(f"🎯 PRINCÍPIO: APENAS PELO MOMENTO REAL DO MERCADO")
     print(f"📈 SAÍDA: COMPRA ou VENDA - SEM FAVORITISMO")
-    print(f"🔍 OCR AVANÇADO: 4 ESTRATÉGIAS DE EXTRAÇÃO")
+    print(f"🔍 OCR AVANÇADO: PRIORIZA DADOS REAIS")
     print(f"💪 INSTALAÇÃO OCR: pip install pytesseract")
     print(f"📝 Configure o Tesseract OCR no seu sistema")
     
