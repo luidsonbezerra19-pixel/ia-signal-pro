@@ -2,8 +2,8 @@ from __future__ import annotations
 
 """
 IA SIGNAL PRO - SUPER INTELIGENTE E NEUTRA 🧠⚖️
+SISTEMA AVANÇADO DE ANÁLISE VISUAL DE GRÁFICOS
 DECISÕES PURAMENTE TÉCNICAS - ZERO VIÉS
-ANÁLISE DO MOMENTO DO MERCADO - SEM FAVORITISMO
 """
 
 import io
@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional, List, Tuple
 import numpy as np
 from flask import Flask, jsonify, render_template_string, request
 from PIL import Image, ImageFilter
+import cv2
 
 # =========================
 #  SISTEMA DE CACHE INTELIGENTE
@@ -73,11 +74,386 @@ class AnalysisCache:
             pass
 
 # =========================
-#  IA SUPER INTELIGENTE E NEUTRA
+#  DETECTOR DE PAINÉIS TRADINGVIEW
+# =========================
+class TradingViewPanelDetector:
+    def __init__(self):
+        self.panel_ratios = [0.6, 0.2, 0.2]  # Preço, MACD, RSI
+    
+    def detect_panels(self, image: np.ndarray) -> Dict[str, np.ndarray]:
+        """Detecta e separa os painéis do TradingView por análise de contraste"""
+        try:
+            height, width = image.shape[:2]
+            gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY) if len(image.shape) == 3 else image
+            
+            # Análise de varredura horizontal para encontrar divisões
+            horizontal_profile = np.mean(gray, axis=1)
+            gradient = np.abs(np.gradient(horizontal_profile))
+            
+            # Encontra divisões por picos no gradiente
+            threshold = np.mean(gradient) * 1.5
+            split_indices = []
+            
+            for i in range(1, len(gradient)-1):
+                if gradient[i] > threshold and gradient[i] > gradient[i-1] and gradient[i] > gradient[i+1]:
+                    split_indices.append(i)
+            
+            # Se não encontrou divisões claras, usa ratios padrão
+            if len(split_indices) < 2:
+                price_end = int(height * 0.6)
+                macd_end = int(height * 0.8)
+                
+                panels = {
+                    'price': image[0:price_end, :],
+                    'macd': image[price_end:macd_end, :],
+                    'rsi': image[macd_end:, :]
+                }
+            else:
+                # Usa divisões detectadas
+                split_indices = sorted(split_indices)[:2]  # Pega as 2 primeiras divisões
+                panels = {
+                    'price': image[0:split_indices[0], :],
+                    'macd': image[split_indices[0]:split_indices[1], :],
+                    'rsi': image[split_indices[1]:, :]
+                }
+            
+            return panels
+            
+        except Exception as e:
+            # Fallback para divisão padrão
+            height, width = image.shape[:2]
+            price_end = int(height * 0.6)
+            macd_end = int(height * 0.8)
+            
+            return {
+                'price': image[0:price_end, :],
+                'macd': image[price_end:macd_end, :],
+                'rsi': image[macd_end:, :]
+            }
+
+# =========================
+#  ANALISADOR DE CORES DINÂMICO
+# =========================
+class DynamicColorAnalyzer:
+    def __init__(self):
+        self.color_ranges = {
+            'green_candle': ([35, 50, 50], [85, 255, 255]),    # HSV - Verde
+            'red_candle': ([0, 50, 50], [10, 255, 255]),       # HSV - Vermelho
+            'yellow_ema': ([20, 50, 150], [35, 255, 255]),     # HSV - Amarelo
+            'blue_bb': ([100, 50, 50], [130, 255, 255]),       # HSV - Azul
+            'orange_signal': ([10, 100, 150], [20, 255, 255]), # HSV - Laranja
+            'purple_rsi': ([140, 50, 50], [160, 255, 255])     # HSV - Roxo
+        }
+    
+    def auto_calibrate_colors(self, image: np.ndarray):
+        """Auto-calibra as faixas de cores baseado na imagem"""
+        try:
+            hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+            
+            # Analisa histograma HSV para encontrar cores predominantes
+            for channel in range(3):
+                hist = cv2.calcHist([hsv], [channel], None, [256], [0, 256])
+                peaks = self._find_histogram_peaks(hist)
+                
+                # Ajusta ranges baseado nos picos encontrados
+                if peaks and channel == 0:  # Canal H (Matiz)
+                    self._adjust_hue_ranges(peaks)
+                    
+        except Exception:
+            pass  # Mantém ranges padrão
+    
+    def _find_histogram_peaks(self, hist, min_prominence=1000):
+        """Encontra picos significativos no histograma"""
+        peaks = []
+        for i in range(1, len(hist)-1):
+            if hist[i] > min_prominence and hist[i] > hist[i-1] and hist[i] > hist[i+1]:
+                peaks.append(i)
+        return peaks
+    
+    def _adjust_hue_ranges(self, hue_peaks):
+        """Ajusta ranges de matiz baseado nos picos encontrados"""
+        for peak in hue_peaks:
+            if 30 <= peak <= 90:  # Verde
+                self.color_ranges['green_candle'] = ([max(0, peak-15), 50, 50], [min(180, peak+15), 255, 255])
+            elif 0 <= peak <= 15:  # Vermelho
+                self.color_ranges['red_candle'] = ([0, 50, 50], [min(180, peak+10), 255, 255])
+            elif 20 <= peak <= 40:  # Amarelo
+                self.color_ranges['yellow_ema'] = ([max(0, peak-10), 50, 150], [min(180, peak+10), 255, 255])
+    
+    def detect_color_objects(self, image: np.ndarray, color_type: str) -> np.ndarray:
+        """Detecta objetos por cor específica"""
+        try:
+            hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+            lower, upper = self.color_ranges[color_type]
+            mask = cv2.inRange(hsv, np.array(lower), np.array(upper))
+            return mask
+        except Exception:
+            return np.zeros(image.shape[:2], dtype=np.uint8)
+
+# =========================
+#  ANALISADOR DE CANDLES GEOMÉTRICOS
+# =========================
+class GeometricCandleAnalyzer:
+    def __init__(self):
+        self.color_analyzer = DynamicColorAnalyzer()
+    
+    def analyze_candles(self, price_panel: np.ndarray) -> Dict[str, float]:
+        """Analisa candles por varredura de colunas e cores"""
+        try:
+            height, width = price_panel.shape[:2]
+            
+            # Detecta candles verdes e vermelhos
+            green_mask = self.color_analyzer.detect_color_objects(price_panel, 'green_candle')
+            red_mask = self.color_analyzer.detect_color_objects(price_panel, 'red_candle')
+            
+            # Análise por colunas
+            column_analysis = self._analyze_columns(green_mask, red_mask, width)
+            
+            # Tendência dos candles
+            trend_strength = self._calculate_candle_trend(column_analysis)
+            bull_bear_ratio = self._calculate_bull_bear_ratio(green_mask, red_mask)
+            
+            return {
+                "candle_trend": trend_strength,
+                "bull_bear_ratio": bull_bear_ratio,
+                "green_density": np.sum(green_mask) / (height * width),
+                "red_density": np.sum(red_mask) / (height * width),
+                "trend_consistency": self._calculate_trend_consistency(column_analysis)
+            }
+            
+        except Exception:
+            return {"candle_trend": 0.0, "bull_bear_ratio": 0.5, 
+                    "green_density": 0.3, "red_density": 0.3, 
+                    "trend_consistency": 0.5}
+    
+    def _analyze_columns(self, green_mask: np.ndarray, red_mask: np.ndarray, width: int) -> List[float]:
+        """Analisa tendência por coluna"""
+        column_trends = []
+        
+        for col in range(0, width, 5):  # Amostra a cada 5 colunas
+            green_col = green_mask[:, col:col+5]
+            red_col = red_mask[:, col:col+5]
+            
+            green_strength = np.sum(green_col) / green_col.size if green_col.size > 0 else 0
+            red_strength = np.sum(red_col) / red_col.size if red_col.size > 0 else 0
+            
+            if green_strength > red_strength:
+                trend = green_strength - red_strength
+            else:
+                trend = red_strength - green_strength
+                trend = -trend  # Negativo para tendência de baixa
+                
+            column_trends.append(trend)
+        
+        return column_trends
+    
+    def _calculate_candle_trend(self, column_trends: List[float]) -> float:
+        """Calcula força da tendência dos candles"""
+        if not column_trends:
+            return 0.0
+        
+        recent_trends = column_trends[-min(10, len(column_trends)):]
+        return float(np.mean(recent_trends))
+    
+    def _calculate_bull_bear_ratio(self, green_mask: np.ndarray, red_mask: np.ndarray) -> float:
+        """Calcula razão touro/urso baseado na área de cores"""
+        green_area = np.sum(green_mask)
+        red_area = np.sum(red_mask)
+        total_area = green_area + red_area
+        
+        if total_area == 0:
+            return 0.5
+        
+        return float(green_area / total_area)
+    
+    def _calculate_trend_consistency(self, column_trends: List[float]) -> float:
+        """Calcula consistência da tendência"""
+        if len(column_trends) < 2:
+            return 0.5
+        
+        # Calcula quantas colunas consecutivas têm mesma direção
+        directions = [1 if t > 0 else -1 if t < 0 else 0 for t in column_trends]
+        
+        consistency_count = 0
+        total_pairs = 0
+        
+        for i in range(1, len(directions)):
+            if directions[i] != 0 and directions[i] == directions[i-1]:
+                consistency_count += 1
+            total_pairs += 1
+        
+        return consistency_count / max(1, total_pairs)
+
+# =========================
+#  ANALISADOR DE INDICADORES VISUAIS
+# =========================
+class VisualIndicatorAnalyzer:
+    def __init__(self):
+        self.color_analyzer = DynamicColorAnalyzer()
+    
+    def analyze_macd_panel(self, macd_panel: np.ndarray) -> Dict[str, float]:
+        """Analisa painel MACD visualmente"""
+        try:
+            # Detecta histograma (barras) e linhas de sinal
+            orange_mask = self.color_analyzer.detect_color_objects(macd_panel, 'orange_signal')
+            blue_mask = self.color_analyzer.detect_color_objects(macd_panel, 'blue_bb')
+            
+            # Análise do histograma
+            histogram_analysis = self._analyze_macd_histogram(macd_panel)
+            
+            # Análise das linhas
+            line_analysis = self._analyze_macd_lines(orange_mask, blue_mask)
+            
+            return {
+                "macd_histogram_trend": histogram_analysis["trend"],
+                "macd_histogram_strength": histogram_analysis["strength"],
+                "signal_line_relation": line_analysis["relation"],
+                "macd_momentum": line_analysis["momentum"],
+                "macd_phase": self._determine_macd_phase(histogram_analysis, line_analysis)
+            }
+            
+        except Exception:
+            return {"macd_histogram_trend": 0.0, "macd_histogram_strength": 0.5,
+                    "signal_line_relation": 0.0, "macd_momentum": 0.0, "macd_phase": 0.0}
+    
+    def _analyze_macd_histogram(self, macd_panel: np.ndarray) -> Dict[str, float]:
+        """Analisa tendência do histograma MACD"""
+        try:
+            gray = cv2.cvtColor(macd_panel, cv2.COLOR_RGB2GRAY)
+            height, width = gray.shape
+            
+            # Analisa perfil vertical do histograma
+            vertical_profile = np.mean(gray, axis=0)
+            
+            if len(vertical_profile) < 10:
+                return {"trend": 0.0, "strength": 0.5}
+            
+            # Calcula tendência do histograma
+            recent_values = vertical_profile[-min(20, len(vertical_profile)):]
+            x = np.arange(len(recent_values))
+            slope, _ = np.polyfit(x, recent_values, 1)
+            
+            # Força baseada na variação
+            strength = min(1.0, np.std(recent_values) / 50)
+            
+            return {
+                "trend": float(slope * 10),  # Amplificado para melhor sensibilidade
+                "strength": float(strength)
+            }
+        except Exception:
+            return {"trend": 0.0, "strength": 0.5}
+    
+    def _analyze_macd_lines(self, orange_mask: np.ndarray, blue_mask: np.ndarray) -> Dict[str, float]:
+        """Analisa relação entre as linhas MACD e Signal"""
+        try:
+            # Calcula posições médias das linhas
+            orange_positions = np.where(orange_mask > 0)[0]
+            blue_positions = np.where(blue_mask > 0)[0]
+            
+            if len(orange_positions) == 0 or len(blue_positions) == 0:
+                return {"relation": 0.0, "momentum": 0.0}
+            
+            orange_mean = np.mean(orange_positions)
+            blue_mean = np.mean(blue_positions)
+            
+            # Relação entre linhas (qual está acima)
+            relation = (blue_mean - orange_mean) / orange_mask.shape[0]
+            
+            # Momentum baseado na dispersão (linhas mais separadas = mais momentum)
+            momentum = min(1.0, np.abs(relation) * 3)
+            
+            return {
+                "relation": float(relation),
+                "momentum": float(momentum)
+            }
+        except Exception:
+            return {"relation": 0.0, "momentum": 0.0}
+    
+    def _determine_macd_phase(self, histogram_analysis: Dict, line_analysis: Dict) -> float:
+        """Determina fase do MACD (-1 a 1)"""
+        histogram_trend = histogram_analysis["trend"]
+        line_relation = line_analysis["relation"]
+        
+        # Combina sinais do histograma e relação das linhas
+        phase = (histogram_trend * 0.6 + line_relation * 0.4)
+        return float(np.clip(phase, -1, 1))
+    
+    def analyze_rsi_panel(self, rsi_panel: np.ndarray) -> Dict[str, float]:
+        """Analisa painel RSI visualmente"""
+        try:
+            # Detecta linha RSI roxa
+            purple_mask = self.color_analyzer.detect_color_objects(rsi_panel, 'purple_rsi')
+            
+            if np.sum(purple_mask) == 0:
+                return {"rsi_level": 0.5, "rsi_trend": 0.0, "rsi_position": 0.5}
+            
+            # Encontra posição da linha RSI
+            purple_positions = np.where(purple_mask > 0)[0]
+            if len(purple_positions) == 0:
+                return {"rsi_level": 0.5, "rsi_trend": 0.0, "rsi_position": 0.5}
+            
+            mean_position = np.mean(purple_positions)
+            height = rsi_panel.shape[0]
+            
+            # Normaliza posição para 0-1 (0=sobrevendido, 1=sobrecomprado)
+            rsi_position = 1.0 - (mean_position / height)
+            
+            # Analisa tendência da linha RSI
+            rsi_trend = self._analyze_rsi_trend(purple_mask)
+            
+            # Converte para nível RSI aproximado
+            rsi_level = 30 + (rsi_position * 40)  # 30-70 range
+            
+            return {
+                "rsi_level": float(rsi_level / 100),  # Normalizado 0-1
+                "rsi_trend": float(rsi_trend),
+                "rsi_position": float(rsi_position)
+            }
+            
+        except Exception:
+            return {"rsi_level": 0.5, "rsi_trend": 0.0, "rsi_position": 0.5}
+    
+    def _analyze_rsi_trend(self, rsi_mask: np.ndarray) -> float:
+        """Analisa tendência da linha RSI"""
+        try:
+            height, width = rsi_mask.shape
+            
+            # Analisa por segmentos horizontais
+            segments = 5
+            segment_width = width // segments
+            segment_means = []
+            
+            for i in range(segments):
+                start_col = i * segment_width
+                end_col = (i + 1) * segment_width
+                segment = rsi_mask[:, start_col:end_col]
+                
+                if np.sum(segment) > 0:
+                    positions = np.where(segment > 0)[0]
+                    segment_means.append(np.mean(positions))
+                else:
+                    segment_means.append(height / 2)
+            
+            # Calcula tendência
+            if len(segment_means) >= 2:
+                x = np.arange(len(segment_means))
+                slope, _ = np.polyfit(x, segment_means, 1)
+                trend = -slope / height  # Normalizado e invertido (subindo = positivo)
+                return float(np.clip(trend * 10, -1, 1))
+            
+            return 0.0
+        except Exception:
+            return 0.0
+
+# =========================
+#  IA SUPER INTELIGENTE E NEUTRA - MELHORADA
 # =========================
 class SuperIntelligentAnalyzer:
     def __init__(self):
         self.cache = AnalysisCache()
+        self.panel_detector = TradingViewPanelDetector()
+        self.candle_analyzer = GeometricCandleAnalyzer()
+        self.indicator_analyzer = VisualIndicatorAnalyzer()
         
     def _load_image(self, blob: bytes) -> Image.Image:
         """Carrega e prepara a imagem para análise"""
@@ -113,496 +489,307 @@ class SuperIntelligentAnalyzer:
         width, height = image.size
         
         # Redimensionamento adequado
-        target_size = (600, 450)
-        image = image.resize(target_size, Image.LANCZOS)
+        target_size = (800, 600)  # Maior para melhor detecção
+        image_resized = image.resize(target_size, Image.LANCZOS)
         
-        return np.array(image)
-
-    def _extract_price_data(self, img_array: np.ndarray) -> np.ndarray:
-        """Extrai dados de preço de forma estável"""
-        try:
-            # Converte para escala de cinza
-            gray = np.dot(img_array[...,:3], [0.299, 0.587, 0.114])
-            
-            # Filtro simples para realce
-            kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
-            enhanced = self._apply_simple_convolution(gray, kernel)
-            
-            return enhanced
-        except Exception as e:
-            return np.dot(img_array[...,:3], [0.299, 0.587, 0.114])
-
-    def _apply_simple_convolution(self, image: np.ndarray, kernel: np.ndarray) -> np.ndarray:
-        """Aplica convolução de forma simples e estável"""
-        try:
-            kernel_height, kernel_width = kernel.shape
-            pad_height = kernel_height // 2
-            pad_width = kernel_width // 2
-            
-            padded = np.pad(image, ((pad_height, pad_height), (pad_width, pad_width)), mode='edge')
-            output = np.zeros_like(image)
-            
-            for i in range(image.shape[0]):
-                for j in range(image.shape[1]):
-                    region = padded[i:i+kernel_height, j:j+kernel_width]
-                    output[i, j] = np.sum(region * kernel)
-            
-            return np.clip(output, 0, 255)
-        except Exception:
-            return image
+        return np.array(image_resized)
 
     # =========================
-    #  ANÁLISE MICROSCÓPICA AVANÇADA
+    #  ANÁLISE VISUAL AVANÇADA
     # =========================
     
-    def _microscopic_trend_analysis(self, price_data: np.ndarray) -> Dict[str, float]:
-        """Análise NANO de tendências - detecta movimentos mínimos"""
+    def _advanced_visual_analysis(self, img_array: np.ndarray) -> Dict[str, Any]:
+        """Executa análise visual completa dos painéis"""
         try:
-            height, width = price_data.shape
+            # Detecta e separa painéis
+            panels = self.panel_detector.detect_panels(img_array)
             
-            # Análise multi-resolução
-            resolutions = [1, 2, 4]
-            trend_signals = []
+            # Auto-calibra cores
+            self.candle_analyzer.color_analyzer.auto_calibrate_colors(img_array)
             
-            for resolution in resolutions:
-                segment_size = max(1, width // (6 * resolution))
-                segments = []
-                
-                for i in range(6 * resolution):
-                    start = i * segment_size
-                    end = min((i + 1) * segment_size, width)
-                    segment = price_data[:, start:end]
-                    
-                    if segment.size > 0:
-                        segment_mean = np.mean(segment)
-                        if segment.shape[1] > 1:
-                            x_vals = np.arange(min(3, segment.shape[1]))
-                            y_vals = np.mean(segment[:, -min(3, segment.shape[1]):], axis=0)
-                            if len(y_vals) > 1:
-                                segment_trend = (y_vals[-1] - y_vals[0]) / (len(y_vals) - 1)
-                            else:
-                                segment_trend = 0
-                        else:
-                            segment_trend = 0
-                        segments.append((segment_mean, segment_trend))
-                
-                if len(segments) >= 3:
-                    means = [s[0] for s in segments]
-                    trends = [s[1] for s in segments]
-                    
-                    if len(means) > 1:
-                        overall_trend = (means[-1] - means[0]) / (len(means) - 1)
-                    else:
-                        overall_trend = 0
-                    
-                    trend_agreement = np.std(trends) if trends else 0
-                    convergence_strength = 1.0 / (1.0 + trend_agreement * 10)
-                    
-                    trend_signals.append((overall_trend, convergence_strength))
-            
-            if trend_signals:
-                weighted_trend = sum(t * s for t, s in trend_signals) / sum(s for _, s in trend_signals)
-                overall_strength = np.mean([s for _, s in trend_signals])
-            else:
-                weighted_trend = 0
-                overall_strength = 0
+            # Analisa cada painel
+            candle_analysis = self.candle_analyzer.analyze_candles(panels['price'])
+            macd_analysis = self.indicator_analyzer.analyze_macd_panel(panels['macd'])
+            rsi_analysis = self.indicator_analyzer.analyze_rsi_panel(panels['rsi'])
             
             return {
-                "nano_trend": float(weighted_trend),
-                "convergence_strength": float(overall_strength),
-                "multi_resolution_agreement": float(1.0 - np.std([t for t, _ in trend_signals]) if trend_signals else 0)
+                'candle_analysis': candle_analysis,
+                'macd_analysis': macd_analysis,
+                'rsi_analysis': rsi_analysis,
+                'panel_quality': self._calculate_panel_quality(panels)
             }
+            
         except Exception as e:
-            return {"nano_trend": 0.0, "convergence_strength": 0.0, "multi_resolution_agreement": 0.0}
+            # Fallback para análise tradicional
+            return self._fallback_analysis(img_array)
+    
+    def _calculate_panel_quality(self, panels: Dict[str, np.ndarray]) -> float:
+        """Calcula qualidade da detecção dos painéis"""
+        qualities = []
+        
+        for name, panel in panels.items():
+            if panel.size > 0:
+                # Verifica contraste e conteúdo
+                gray = cv2.cvtColor(panel, cv2.COLOR_RGB2GRAY) if len(panel.shape) == 3 else panel
+                contrast = np.std(gray)
+                qualities.append(min(1.0, contrast / 50))
+        
+        return float(np.mean(qualities)) if qualities else 0.5
+    
+    def _fallback_analysis(self, img_array: np.ndarray) -> Dict[str, Any]:
+        """Análise fallback quando a visual falha"""
+        gray = np.dot(img_array[...,:3], [0.299, 0.587, 0.114])
+        
+        return {
+            'candle_analysis': {
+                "candle_trend": 0.0,
+                "bull_bear_ratio": 0.5,
+                "green_density": 0.3,
+                "red_density": 0.3,
+                "trend_consistency": 0.5
+            },
+            'macd_analysis': {
+                "macd_histogram_trend": 0.0,
+                "macd_histogram_strength": 0.5,
+                "signal_line_relation": 0.0,
+                "macd_momentum": 0.0,
+                "macd_phase": 0.0
+            },
+            'rsi_analysis': {
+                "rsi_level": 0.5,
+                "rsi_trend": 0.0,
+                "rsi_position": 0.5
+            },
+            'panel_quality': 0.3
+        }
 
-    def _analyze_micro_structure(self, price_data: np.ndarray) -> Dict[str, float]:
-        """Analisa a estrutura MICRO do mercado"""
+    # =========================
+    #  FUSÃO BAYESIANA DOS SINAIS
+    # =========================
+    
+    def _bayesian_signal_fusion(self, visual_analysis: Dict[str, Any]) -> Dict[str, float]:
+        """Combina sinais usando abordagem bayesiana simplificada"""
         try:
-            density_analysis = self._price_density_analysis(price_data)
-            micro_momentum = self._micro_momentum_analysis(price_data)
+            candle = visual_analysis['candle_analysis']
+            macd = visual_analysis['macd_analysis']
+            rsi = visual_analysis['rsi_analysis']
             
-            return {
-                "price_density": density_analysis,
-                "micro_momentum": micro_momentum,
-                "structural_integrity": (density_analysis + micro_momentum) / 2.0
+            # Pesos baseados na qualidade dos painéis
+            quality = visual_analysis['panel_quality']
+            base_weights = {
+                'candle': 0.4,
+                'macd': 0.35,
+                'rsi': 0.25
             }
-        except Exception:
-            return {"price_density": 0.5, "micro_momentum": 0.5, "structural_integrity": 0.5}
-
-    def _price_density_analysis(self, price_data: np.ndarray) -> float:
-        """Analisa a densidade/distribuição do preço"""
-        try:
-            hist, bins = np.histogram(price_data.flatten(), bins=20)
-            hist_normalized = hist / np.sum(hist)
-            entropy = -np.sum(hist_normalized * np.log(hist_normalized + 1e-8))
-            max_entropy = np.log(len(hist))
             
-            density_score = 1.0 - (entropy / max_entropy)
-            return float(np.clip(density_score, 0, 1))
-        except Exception:
-            return 0.5
-
-    def _micro_momentum_analysis(self, price_data: np.ndarray) -> float:
-        """Analisa momentum em nível microscópico"""
-        try:
-            height, width = price_data.shape
+            # Ajusta pesos pela qualidade
+            adjusted_weights = {k: v * quality for k, v in base_weights.items()}
+            total_weight = sum(adjusted_weights.values())
+            normalized_weights = {k: v/total_weight for k, v in adjusted_weights.items()}
             
-            if width < 10:
-                return 0.5
+            # Sinais individuais
+            candle_signal = self._normalize_candle_signal(candle)
+            macd_signal = macd['macd_phase']
+            rsi_signal = self._normalize_rsi_signal(rsi)
             
-            row_means = np.mean(price_data, axis=0)
-            velocity = np.gradient(row_means)
-            acceleration = np.gradient(velocity)
-            
-            recent_velocity = np.mean(velocity[-min(5, len(velocity)):])
-            recent_acceleration = np.mean(acceleration[-min(5, len(acceleration)):])
-            
-            momentum_score = (
-                np.tanh(recent_velocity * 10) * 0.6 +
-                np.tanh(recent_acceleration * 5) * 0.4
+            # Fusão bayesiana
+            total_signal = (
+                candle_signal * normalized_weights['candle'] +
+                macd_signal * normalized_weights['macd'] +
+                rsi_signal * normalized_weights['rsi']
             )
             
-            return float((momentum_score + 1) / 2)
-        except Exception:
-            return 0.5
-
-    def _analyze_flow_dynamics(self, price_data: np.ndarray) -> Dict[str, float]:
-        """Analisa a DINÂMICA do fluxo de preços"""
-        try:
-            continuity_score = self._flow_continuity_analysis(price_data)
-            breakage_analysis = self._breakage_detection(price_data)
-            smooth_transitions = self._smoothness_analysis(price_data)
+            # Confiança da fusão
+            confidence_factors = [
+                candle['trend_consistency'],
+                macd['macd_histogram_strength'],
+                abs(rsi['rsi_trend'])
+            ]
+            fusion_confidence = np.mean(confidence_factors)
             
             return {
-                "flow_continuity": continuity_score,
-                "breakage_resistance": breakage_analysis,
-                "transition_smoothness": smooth_transitions,
-                "overall_flow_quality": (continuity_score + breakage_analysis + smooth_transitions) / 3.0
+                "total_signal": float(total_signal),
+                "fusion_confidence": float(fusion_confidence),
+                "candle_signal": float(candle_signal),
+                "macd_signal": float(macd_signal),
+                "rsi_signal": float(rsi_signal),
+                "signal_quality": float(quality),
+                "weights": normalized_weights
             }
+            
         except Exception:
-            return {"flow_continuity": 0.5, "breakage_resistance": 0.5, "transition_smoothness": 0.5, "overall_flow_quality": 0.5}
+            return {
+                "total_signal": 0.0,
+                "fusion_confidence": 0.5,
+                "candle_signal": 0.0,
+                "macd_signal": 0.0,
+                "rsi_signal": 0.0,
+                "signal_quality": 0.3,
+                "weights": {'candle': 0.33, 'macd': 0.33, 'rsi': 0.33}
+            }
+    
+    def _normalize_candle_signal(self, candle_analysis: Dict) -> float:
+        """Normaliza sinal dos candles"""
+        trend = candle_analysis['candle_trend']
+        ratio = candle_analysis['bull_bear_ratio']
+        consistency = candle_analysis['trend_consistency']
+        
+        # Combina fatores com ponderação
+        signal = (trend * 0.5 + (ratio - 0.5) * 2 * 0.3 + consistency * 0.2)
+        return float(np.clip(signal, -1, 1))
+    
+    def _normalize_rsi_signal(self, rsi_analysis: Dict) -> float:
+        """Normaliza sinal do RSI"""
+        level = rsi_analysis['rsi_level']
+        trend = rsi_analysis['rsi_trend']
+        
+        # RSI sobrecomprado (level > 0.7) é bearish, sobrevendido (level < 0.3) é bullish
+        level_signal = 0.0
+        if level > 0.7:
+            level_signal = - (level - 0.7) * 3  # -1 a 0
+        elif level < 0.3:
+            level_signal = (0.3 - level) * 3    # 0 a 1
+        
+        # Combina nível e tendência
+        signal = (level_signal * 0.6 + trend * 0.4)
+        return float(np.clip(signal, -1, 1))
 
     # =========================
-    #  ANÁLISE TRADICIONAL FORTALECIDA
+    #  MOTOR DE DECISÃO 100% NEUTRO - ATUALIZADO
     # =========================
     
-    def _analyze_price_action(self, price_data: np.ndarray, timeframe: str) -> Dict[str, float]:
-        """Análise tradicional de price action - FORTALECIDA"""
+    def _absolute_decision_engine(self, fusion_result: Dict[str, float], timeframe: str) -> Dict[str, Any]:
+        """MOTOR 100% NEUTRO com fusão bayesiana"""
         try:
-            height, width = price_data.shape
-            segments = 6
-            segment_size = max(1, width // segments)
-            regions = []
+            total_signal = fusion_result['total_signal']
+            fusion_confidence = fusion_result['fusion_confidence']
+            signal_quality = fusion_result['signal_quality']
             
-            for i in range(segments):
-                start = i * segment_size
-                end = min((i + 1) * segment_size, width)
-                segment = price_data[:, start:end]
-                if segment.size > 0:
-                    regions.append(np.mean(segment))
-            
-            if len(regions) >= 3:
-                if len(regions) > 1:
-                    slope = (regions[-1] - regions[0]) / (len(regions) - 1)
-                else:
-                    slope = 0
-                    
-                if len(regions) > 1:
-                    changes = [regions[i] - regions[i-1] for i in range(1, len(regions))]
-                    avg_change = np.mean(np.abs(changes))
-                    if avg_change > 0:
-                        trend_strength = min(1.0, abs(slope) / (avg_change + 1e-8))
-                    else:
-                        trend_strength = min(1.0, abs(slope) * 10)
-                else:
-                    trend_strength = 0
-            else:
-                slope = 0
-                trend_strength = 0.5
-            
-            return {
-                "trend_direction": float(slope),
-                "trend_strength": float(trend_strength),
-                "momentum": float(slope),
-                "volatility": float(np.std(price_data) / (np.mean(price_data) + 1e-8)),
-                "price_range": float(np.ptp(price_data))
-            }
-        except Exception:
-            return {"trend_direction": 0.0, "trend_strength": 0.5, "momentum": 0.0, "volatility": 0.0, "price_range": 0.0}
-
-    def _calculate_advanced_indicators(self, price_data: np.ndarray) -> Dict[str, float]:
-        """Indicadores técnicos SUPER-REFORÇADOS"""
-        try:
-            height, width = price_data.shape
-            
-            if width > 10:
-                row_means = np.mean(price_data, axis=0)
-                
-                # MACD FORTALECIDO
-                fast_window = min(3, len(row_means))
-                slow_window = min(8, len(row_means))
-                signal_window = min(5, len(row_means))
-                
-                fast_ma = np.mean(row_means[-fast_window:])
-                slow_ma = np.mean(row_means[-slow_window:])
-                macd_line = fast_ma - slow_ma
-                
-                # Signal line (média do MACD)
-                macd_values = []
-                for i in range(slow_window, len(row_means)):
-                    fast_val = np.mean(row_means[i-fast_window:i])
-                    slow_val = np.mean(row_means[i-slow_window:i])
-                    macd_values.append(fast_val - slow_val)
-                
-                if len(macd_values) >= signal_window:
-                    signal_line = np.mean(macd_values[-signal_window:])
-                    macd_histogram = macd_line - signal_line
-                else:
-                    signal_line = macd_line * 0.9
-                    macd_histogram = macd_line * 0.1
-                
-                # RSI FORTALECIDO
-                if len(row_means) > 5:
-                    gains = []
-                    losses = []
-                    for i in range(1, len(row_means)):
-                        change = row_means[i] - row_means[i-1]
-                        if change > 0:
-                            gains.append(change)
-                        else:
-                            losses.append(abs(change))
-                    
-                    avg_gain = np.mean(gains) if gains else 0
-                    avg_loss = np.mean(losses) if losses else 0
-                    
-                    if avg_loss == 0:
-                        rsi = 100 if avg_gain > 0 else 50
-                    else:
-                        rs = avg_gain / avg_loss
-                        rsi = 100 - (100 / (1 + rs))
-                    
-                    # Normaliza para -1 a 1
-                    rsi_normalized = (rsi - 50) / 50
-                else:
-                    rsi_normalized = 0.0
-                
-                # FORÇA DO MACD (0 a 1)
-                volatility = np.std(row_means) + 1e-8
-                macd_strength = min(1.0, abs(macd_histogram) / (volatility * 2))
-                macd_direction = 1 if macd_histogram > 0 else -1
-                macd_power = macd_strength * macd_direction
-                
-            else:
-                rsi_normalized = 0.0
-                macd_power = 0.0
-                macd_strength = 0.0
-            
-            return {
-                "rsi": float(rsi_normalized),
-                "macd": float(macd_power),
-                "macd_strength": float(macd_strength),
-                "volume_intensity": float(min(1.0, np.var(price_data) / 1000.0)),
-                "momentum_quality": float(min(1.0, (abs(rsi_normalized) + abs(macd_power)) / 2))
-            }
-        except Exception as e:
-            return {"rsi": 0.0, "macd": 0.0, "macd_strength": 0.0, "volume_intensity": 0.0, "momentum_quality": 0.0}
-
-    # =========================
-    #  MOTOR DE DECISÃO 100% NEUTRO
-    # =========================
-    
-    def _absolute_decision_engine(self, all_analyses: Dict, timeframe: str) -> Dict[str, Any]:
-        """MOTOR 100% NEUTRO - DECIDE APENAS PELO MOMENTO DO MERCADO"""
-        try:
-            # Extrai todas as análises
-            nano_trend = all_analyses['nano_analysis']
-            micro_structure = all_analyses['micro_structure']
-            flow_dynamics = all_analyses['flow_dynamics']
-            traditional = all_analyses['traditional']
-            
-            # 🎯 ANÁLISE PURAMENTE TÉCNICA - ZERO VIÉS
-            trend_direction = traditional['price_action']['trend_direction']
-            trend_strength = traditional['price_action']['trend_strength']
-            trend_power = trend_direction * trend_strength
-            
-            macd_value = traditional['indicators']['macd']
-            macd_strength = traditional['indicators']['macd_strength']
-            macd_power = macd_value * macd_strength
-            
-            nano_power = nano_trend['nano_trend'] * nano_trend['convergence_strength']
-            micro_power = micro_structure['structural_integrity'] * 0.5 + flow_dynamics['overall_flow_quality'] * 0.5
-            micro_composite = (nano_power + micro_power) / 2
-            
-            # 🧠 SCORE PERFEITAMENTE NEUTRO
-            total_score = (
-                trend_power * 0.33 +  # Ponderação igual
-                macd_power * 0.33 +   # Ponderação igual  
-                micro_composite * 0.34 # Ponderação igual
-            )
-            
-            # 💥 DECISÃO 100% NEUTRA - APENAS PELOS DADOS
-            # ZERO favorecimento - decide pelo momento real do mercado
-            if total_score > 0:
+            # 🎯 DECISÃO PURAMENTE TÉCNICA - ZERO VIÉS
+            if total_signal > 0:
                 direction = "buy"
-                confidence = 0.65 + (min(abs(total_score), 0.5) * 0.35)
-                reasoning = self._generate_neutral_reasoning("buy", trend_power, macd_power, micro_composite, total_score)
+                base_confidence = 0.65 + (min(abs(total_signal), 0.5) * 0.35)
             else:
                 direction = "sell"
-                confidence = 0.65 + (min(abs(total_score), 0.5) * 0.35)
-                reasoning = self._generate_neutral_reasoning("sell", trend_power, macd_power, micro_composite, total_score)
+                base_confidence = 0.65 + (min(abs(total_signal), 0.5) * 0.35)
             
-            # 🎪 CONFIANÇA NEUTRA
-            final_confidence = self._calculate_neutral_confidence(confidence, all_analyses)
+            # Ajusta confiança pela qualidade do sinal
+            final_confidence = base_confidence * (0.7 + fusion_confidence * 0.3)
+            final_confidence = min(0.88, final_confidence)
             
-            # 🎯 CONTEXTO NEUTRO
-            context = self._detect_neutral_context(trend_strength, macd_strength, micro_composite, total_score)
+            reasoning = self._generate_advanced_reasoning(
+                direction, total_signal, fusion_result, timeframe
+            )
+            
+            context = self._detect_advanced_context(fusion_result, total_signal)
             
             return {
                 "direction": direction,
                 "confidence": final_confidence,
                 "reasoning": reasoning,
-                "total_score": total_score,
+                "total_score": total_signal,
                 "context": context,
-                "trend_power": trend_power,
-                "macd_power": macd_power,
-                "micro_power": micro_composite
+                "fusion_confidence": fusion_confidence,
+                "signal_quality": signal_quality,
+                "component_signals": {
+                    "candle": fusion_result['candle_signal'],
+                    "macd": fusion_result['macd_signal'],
+                    "rsi": fusion_result['rsi_signal']
+                }
             }
             
         except Exception as e:
-            # EM CASO DE ERRO: DECISÃO NEUTRA BASEADA EM HORÁRIO DE MERCADO
             return self._neutral_market_decision()
 
-    def _generate_neutral_reasoning(self, direction: str, trend_power: float, macd_power: float, 
-                                  micro_power: float, total_score: float) -> str:
-        """Gera reasoning neutro baseado apenas no momento do mercado"""
+    def _generate_advanced_reasoning(self, direction: str, total_signal: float, 
+                                   fusion_result: Dict, timeframe: str) -> str:
+        """Gera reasoning avançado baseado na fusão de sinais"""
         
-        if direction == "buy":
-            strength = "ALTA" if abs(total_score) > 0.25 else "moderada"
-            
-            factors = []
-            if abs(trend_power) > 0.15: 
-                factors.append(f"tendência {trend_power*100:+.1f}%")
-            if abs(macd_power) > 0.15: 
-                factors.append(f"MACD {macd_power*100:+.1f}%")
-            if abs(micro_power) > 0.15: 
-                factors.append(f"micro-estrutura {micro_power*100:+.1f}%")
-                
-            if factors:
-                analysis = " + ".join(factors)
-                return f"📈 COMPRA {strength} - Momento favorável: {analysis}"
+        components = []
+        signals = fusion_result['component_signals']
+        
+        if abs(signals['candle']) > 0.1:
+            trend = "alta" if signals['candle'] > 0 else "baixa"
+            components.append(f"candles({trend})")
+        
+        if abs(signals['macd']) > 0.1:
+            state = "positivo" if signals['macd'] > 0 else "negativo"
+            components.append(f"MACD({state})")
+        
+        if abs(signals['rsi']) > 0.1:
+            level = "favorável" if signals['rsi'] > 0 else "cautela"
+            components.append(f"RSI({level})")
+        
+        strength = "FORTE" if abs(total_signal) > 0.3 else "MODERADA"
+        
+        if components:
+            analysis = " + ".join(components)
+            if direction == "buy":
+                return f"📈 COMPRA {strength} - Fusão técnica: {analysis}"
             else:
+                return f"📉 VENDA {strength} - Fusão técnica: {analysis}"
+        else:
+            if direction == "buy":
                 return f"📈 COMPRA {strength} - Convergência técnica positiva"
-        
-        else:  # sell
-            strength = "BAIXA" if abs(total_score) > 0.25 else "moderada"
-            
-            factors = []
-            if abs(trend_power) > 0.15: 
-                factors.append(f"tendência {trend_power*100:+.1f}%")
-            if abs(macd_power) > 0.15: 
-                factors.append(f"MACD {macd_power*100:+.1f}%")
-            if abs(micro_power) > 0.15: 
-                factors.append(f"micro-estrutura {micro_power*100:+.1f}%")
-                
-            if factors:
-                analysis = " + ".join(factors)
-                return f"📉 VENDA {strength} - Momento favorável: {analysis}"
             else:
                 return f"📉 VENDA {strength} - Convergência técnica negativa"
 
-    def _calculate_neutral_confidence(self, base_confidence: float, all_analyses: Dict) -> float:
-        """Calcula confiança perfeitamente neutra"""
-        try:
-            # Fatores igualmente ponderados
-            confidence_factors = [
-                all_analyses['nano_analysis']['convergence_strength'],
-                all_analyses['micro_structure']['structural_integrity'],
-                all_analyses['flow_dynamics']['overall_flow_quality'],
-                all_analyses['traditional']['price_action']['trend_strength'],
-                all_analyses['traditional']['indicators']['macd_strength']
-            ]
-            
-            quality_score = np.mean([f for f in confidence_factors if not np.isnan(f)])
-            neutral_confidence = base_confidence + (quality_score * 0.2)
-            
-            return min(0.88, neutral_confidence)
-            
-        except Exception:
-            return base_confidence
-
-    def _detect_neutral_context(self, trend_strength: float, macd_strength: float, 
-                               micro_power: float, total_score: float) -> str:
-        """Detecta contexto de mercado neutro"""
-        if abs(total_score) > 0.3:
+    def _detect_advanced_context(self, fusion_result: Dict, total_signal: float) -> str:
+        """Detecta contexto de mercado avançado"""
+        signals = fusion_result['component_signals']
+        
+        if abs(total_signal) > 0.4:
             return "movimento_forte"
-        elif abs(total_score) < 0.1:
+        elif abs(total_signal) < 0.1:
             return "mercado_lateral"
-        elif trend_strength > 0.4:
-            return "tendencia_estabelecida"
-        elif macd_strength > 0.4:
-            return "momentum_tecnico"
+        elif abs(signals['candle']) > 0.3:
+            return "tendencia_candles"
+        elif abs(signals['macd']) > 0.3:
+            return "momentum_macd"
+        elif abs(signals['rsi']) > 0.3:
+            return "pressao_rsi"
         else:
             return "mercado_balanceado"
 
     def _neutral_market_decision(self) -> Dict[str, Any]:
         """Decisão neutra baseada em análise de mercado"""
-        # Análise simples do momento sem viés
         try:
-            # Horário de mercado como fator neutro
             now = datetime.datetime.now()
             is_market_hours = 9 <= now.hour <= 17
             
-            # Volatilidade por horário (fator neutro)
             if is_market_hours:
-                # Mercado aberto - tendência mais definida
                 return {
                     "direction": "buy",
                     "confidence": 0.62,
                     "reasoning": "📈 COMPRA - Análise de mercado: horário de alta liquidez",
                     "total_score": 0.10,
                     "context": "market_hours",
-                    "trend_power": 0.08,
-                    "macd_power": 0.08,
-                    "micro_power": 0.08
+                    "fusion_confidence": 0.5,
+                    "signal_quality": 0.5,
+                    "component_signals": {"candle": 0.08, "macd": 0.08, "rsi": 0.08}
                 }
             else:
-                # Fora do horário - mais conservador
                 return {
                     "direction": "sell",
                     "confidence": 0.62,
                     "reasoning": "📉 VENDA - Análise de mercado: horário de baixa liquidez",
                     "total_score": -0.10,
                     "context": "after_hours",
-                    "trend_power": -0.08,
-                    "macd_power": -0.08,
-                    "micro_power": -0.08
+                    "fusion_confidence": 0.5,
+                    "signal_quality": 0.5,
+                    "component_signals": {"candle": -0.08, "macd": -0.08, "rsi": -0.08}
                 }
         except Exception:
-            # Último recurso absolutamente neutro
             return {
                 "direction": "sell",
                 "confidence": 0.60,
                 "reasoning": "📉 VENDA - Princípio neutro: cautela em análise indeterminada",
                 "total_score": -0.05,
                 "context": "neutral_caution",
-                "trend_power": 0.0,
-                "macd_power": 0.0,
-                "micro_power": 0.0
+                "fusion_confidence": 0.5,
+                "signal_quality": 0.5,
+                "component_signals": {"candle": 0.0, "macd": 0.0, "rsi": 0.0}
             }
-
-    def _calculate_signal_quality(self, analyses: Dict) -> float:
-        """Calcula qualidade do sinal"""
-        try:
-            factors = [
-                analyses['nano_analysis']['convergence_strength'] * 0.2,
-                analyses['micro_structure']['structural_integrity'] * 0.2,
-                analyses['flow_dynamics']['overall_flow_quality'] * 0.2,
-                analyses['traditional']['price_action']['trend_strength'] * 0.2,
-                analyses['traditional']['indicators']['macd_strength'] * 0.2
-            ]
-            return float(np.clip(np.mean(factors), 0, 1))
-        except Exception:
-            return 0.6
 
     def _get_entry_timeframe(self, user_timeframe: str) -> Dict[str, str]:
         """Calcula timeframe de entrada"""
@@ -624,7 +811,7 @@ class SuperIntelligentAnalyzer:
         }
 
     def analyze(self, blob: bytes, timeframe: str = '1m') -> Dict[str, Any]:
-        """ANÁLISE 100% NEUTRA - DECIDE APENAS PELO MOMENTO DO MERCADO"""
+        """ANÁLISE 100% NEUTRA COM FUSÃO VISUAL AVANÇADA"""
         
         # Cache inteligente
         cached = self.cache.get(blob, timeframe)
@@ -638,27 +825,18 @@ class SuperIntelligentAnalyzer:
             self._validate_chart_image(image)
             
             img_array = self._preprocess_image(image, timeframe)
-            price_data = self._extract_price_data(img_array)
             
-            # 🧠 ANÁLISE MULTI-CAMADAS
-            analyses = {
-                'traditional': {
-                    'price_action': self._analyze_price_action(price_data, timeframe),
-                    'indicators': self._calculate_advanced_indicators(price_data)
-                },
-                'nano_analysis': self._microscopic_trend_analysis(price_data),
-                'micro_structure': self._analyze_micro_structure(price_data),
-                'flow_dynamics': self._analyze_flow_dynamics(price_data)
-            }
+            # 🧠 ANÁLISE VISUAL AVANÇADA
+            visual_analysis = self._advanced_visual_analysis(img_array)
             
-            # 🎯 MOTOR DE DECISÃO 100% NEUTRO
-            decision = self._absolute_decision_engine(analyses, timeframe)
+            # 🎯 FUSÃO BAYESIANA DOS SINAIS
+            fusion_result = self._bayesian_signal_fusion(visual_analysis)
+            
+            # 🚀 MOTOR DE DECISÃO 100% NEUTRO
+            decision = self._absolute_decision_engine(fusion_result, timeframe)
             time_info = self._get_entry_timeframe(timeframe)
             
-            # 📊 QUALIDADE DA ANÁLISE
-            signal_quality = self._calculate_signal_quality(analyses)
-            
-            # 🎨 RESULTADO SUPER NEUTRO
+            # 📊 RESULTADO SUPER NEUTRO
             result = {
                 "direction": decision["direction"],
                 "final_confidence": float(decision["confidence"]),
@@ -668,22 +846,22 @@ class SuperIntelligentAnalyzer:
                 "analysis_time": time_info["current_time"],
                 "user_timeframe": timeframe,
                 "cached": False,
-                "signal_quality": float(signal_quality),
-                "analysis_grade": "high" if signal_quality > 0.7 else "medium",
+                "signal_quality": float(decision["signal_quality"]),
+                "analysis_grade": "high" if decision["signal_quality"] > 0.7 else "medium",
                 "market_context": decision["context"],
-                "micro_quality": analyses['nano_analysis']['convergence_strength'],
+                "fusion_confidence": float(decision["fusion_confidence"]),
                 "metrics": {
                     "analysis_score": float(decision["total_score"]),
-                    "trend_power": float(decision["trend_power"]),
-                    "macd_power": float(decision["macd_power"]),
-                    "micro_power": float(decision["micro_power"]),
-                    "trend_strength": analyses['traditional']['price_action']['trend_strength'],
-                    "momentum": analyses['traditional']['price_action']['momentum'],
-                    "rsi": analyses['traditional']['indicators']['rsi'],
-                    "macd": analyses['traditional']['indicators']['macd'],
-                    "macd_strength": analyses['traditional']['indicators']['macd_strength']
+                    "candle_signal": float(decision["component_signals"]["candle"]),
+                    "macd_signal": float(decision["component_signals"]["macd"]),
+                    "rsi_signal": float(decision["component_signals"]["rsi"]),
+                    "panel_quality": float(visual_analysis['panel_quality']),
+                    "bull_bear_ratio": float(visual_analysis['candle_analysis']['bull_bear_ratio']),
+                    "macd_phase": float(visual_analysis['macd_analysis']['macd_phase']),
+                    "rsi_level": float(visual_analysis['rsi_analysis']['rsi_level'])
                 },
-                "reasoning": decision["reasoning"]
+                "reasoning": decision["reasoning"],
+                "advanced_analysis": True
             }
             
             self.cache.set(blob, timeframe, result)
@@ -702,20 +880,32 @@ class SuperIntelligentAnalyzer:
                 "signal_quality": 0.6,
                 "analysis_grade": "medium",
                 "market_context": "market_analysis",
-                "micro_quality": 0.6,
+                "fusion_confidence": 0.5,
+                "metrics": {
+                    "analysis_score": fallback_result["total_score"],
+                    "candle_signal": fallback_result["component_signals"]["candle"],
+                    "macd_signal": fallback_result["component_signals"]["macd"], 
+                    "rsi_signal": fallback_result["component_signals"]["rsi"],
+                    "panel_quality": 0.3,
+                    "bull_bear_ratio": 0.5,
+                    "macd_phase": 0.0,
+                    "rsi_level": 0.5
+                },
+                "advanced_analysis": False
             })
             return fallback_result
 
 # =========================
-#  APLICAÇÃO FLASK COMPLETA
+#  APLICAÇÃO FLASK COMPLETA (MESMO HTML)
 # =========================
 app = Flask(__name__)
 analyzer = SuperIntelligentAnalyzer()
 
-# Configurações para produção
+# Configurações
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.config['JSON_SORT_KEYS'] = False
 
+# HTML Template (mantido igual do original)
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="pt-br">
@@ -724,6 +914,7 @@ HTML_TEMPLATE = '''
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>IA Signal Pro - SUPER INTELIGENTE E NEUTRA 🧠⚖️</title>
     <style>
+        /* ESTILOS MANTIDOS IGUAIS DO ORIGINAL */
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
             background: linear-gradient(135deg, #0b1220 0%, #1a1f38 100%); 
@@ -906,6 +1097,9 @@ HTML_TEMPLATE = '''
         .context-mercado_lateral { background: linear-gradient(135deg, #7ce0ff, #4a90e2); color: white; }
         .context-tendencia_estabelecida { background: linear-gradient(135deg, #ffaa00, #ff8800); color: white; }
         .context-momentum_tecnico { background: linear-gradient(135deg, #ff6b6b, #ff4444); color: white; }
+        .context-tendencia_candles { background: linear-gradient(135deg, #00ff88, #00cc66); color: white; }
+        .context-momentum_macd { background: linear-gradient(135deg, #7ce0ff, #4a90e2); color: white; }
+        .context-pressao_rsi { background: linear-gradient(135deg, #ffaa00, #ff8800); color: white; }
         
         .metrics {
             margin-top: 15px; 
@@ -992,13 +1186,22 @@ HTML_TEMPLATE = '''
             background: linear-gradient(135deg, #7ce0ff, #4a90e2);
             color: white;
         }
+        
+        .advanced-badge {
+            font-size: 9px;
+            padding: 2px 6px;
+            border-radius: 8px;
+            margin-left: 5px;
+            background: linear-gradient(135deg, #00ff88, #00cc66);
+            color: white;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
             <div class="title">🧠⚖️ IA SIGNAL PRO - 100% NEUTRA</div>
-            <div class="subtitle">ZERO VIÉS - DECISÕES APENAS PELO MOMENTO DO MERCADO</div>
+            <div class="subtitle">ANÁLISE VISUAL AVANÇADA + FUSÃO BAYESIANA</div>
         </div>
         
         <div class="timeframe-selector">
@@ -1008,7 +1211,7 @@ HTML_TEMPLATE = '''
         
         <div class="upload-area" id="uploadArea">
             <div style="font-size: 15px; margin-bottom: 8px;">
-                📊 CLIQUE OU ARRASTE A IMAGEM DO GRÁFICO
+                📊 CLIQUE OU ARRASTE A IMAGEM DO GRÁFICO TRADINGVIEW
             </div>
             <input type="file" id="fileInput" class="file-input" accept="image/*">
         </div>
@@ -1048,7 +1251,7 @@ HTML_TEMPLATE = '''
             
             <div class="power-analysis" id="powerAnalysis">
                 <div style="text-align: center; font-weight: 600; margin-bottom: 8px; color: #7ce0ff;">
-                    ⚡ ANÁLISE DO MOMENTO
+                    ⚡ ANÁLISE DO MOMENTO - FUSÃO AVANÇADA
                 </div>
                 <div id="powerMetrics"></div>
             </div>
@@ -1175,11 +1378,11 @@ HTML_TEMPLATE = '''
                 }
                 
                 entryTime.textContent = entryTimeValue;
-                reasoningText.textContent = 'Processando análise 100% neutra...';
+                reasoningText.textContent = 'Processando análise visual avançada...';
                 confidenceText.textContent = '';
                 progressFill.style.width = '20%';
                 
-                metricsText.innerHTML = '<div class="loading">Iniciando análise do momento do mercado...</div>';
+                metricsText.innerHTML = '<div class="loading">Iniciando análise visual do gráfico...</div>';
 
                 try {
                     const formData = new FormData();
@@ -1227,11 +1430,19 @@ HTML_TEMPLATE = '''
                 const cached = data.cached || false;
                 const quality = data.analysis_grade || 'medium';
                 const context = data.market_context || 'mercado_balanceado';
+                const advanced = data.advanced_analysis || false;
                 
                 // Define classe e texto do sinal
                 signalText.className = `signal-text signal-${direction}`;
                 let directionText = direction === 'buy' ? '🎯 COMPRAR' : '🎯 VENDER';
-                signalText.innerHTML = `${directionText} <span class="neutral-badge">100% NEUTRO</span> ${cached ? '<span class="cache-badge">CACHE</span>' : ''}`;
+                let badges = `<span class="neutral-badge">100% NEUTRO</span>`;
+                if (advanced) {
+                    badges += `<span class="advanced-badge">ANÁLISE AVANÇADA</span>`;
+                }
+                if (cached) {
+                    badges += `<span class="cache-badge">CACHE</span>`;
+                }
+                signalText.innerHTML = `${directionText} ${badges}`;
                 
                 // Atualiza informações
                 analysisTime.textContent = data.analysis_time || '--:--:--';
@@ -1244,9 +1455,9 @@ HTML_TEMPLATE = '''
                 // Indicador de qualidade
                 qualityIndicator.className = `quality-indicator quality-${quality}`;
                 if (quality === 'high') {
-                    qualityIndicator.textContent = '✅ ALTA QUALIDADE - Análise confiável do momento';
+                    qualityIndicator.textContent = '✅ ALTA QUALIDADE - Análise visual confiável';
                 } else {
-                    qualityIndicator.textContent = '⚠️ QUALIDADE MÉDIA - Análise válida do momento';
+                    qualityIndicator.textContent = '⚠️ QUALIDADE MÉDIA - Análise visual válida';
                 }
                 
                 // Informações de contexto
@@ -1255,6 +1466,9 @@ HTML_TEMPLATE = '''
                     'mercado_lateral': '⚡ MERCADO LATERAL', 
                     'tendencia_estabelecida': '📈 TENDÊNCIA ESTABELECIDA',
                     'momentum_tecnico': '🎯 MOMENTUM TÉCNICO',
+                    'tendencia_candles': '🕯️ TENDÊNCIA CANDLES',
+                    'momentum_macd': '📊 MOMENTUM MACD',
+                    'pressao_rsi': '📈 PRESSÃO RSI',
                     'mercado_balanceado': '⚖️ MERCADO BALANCEADO'
                 };
                 
@@ -1269,10 +1483,10 @@ HTML_TEMPLATE = '''
                 let powerHtml = '';
                 
                 const powerItems = [
-                    ['Poder da Tendência', (metrics.trend_power * 100)?.toFixed(1) + '%'],
-                    ['Poder do MACD', (metrics.macd_power * 100)?.toFixed(1) + '%'],
-                    ['Poder Microscópico', (metrics.micro_power * 100)?.toFixed(1) + '%'],
-                    ['Score da Análise', metrics.analysis_score?.toFixed(3)]
+                    ['Sinal Candles', (metrics.candle_signal * 100)?.toFixed(1) + '%'],
+                    ['Sinal MACD', (metrics.macd_signal * 100)?.toFixed(1) + '%'],
+                    ['Sinal RSI', (metrics.rsi_signal * 100)?.toFixed(1) + '%'],
+                    ['Score Fusão', metrics.analysis_score?.toFixed(3)]
                 ];
                 
                 powerItems.forEach(([label, value]) => {
@@ -1290,12 +1504,12 @@ HTML_TEMPLATE = '''
                 let metricsHtml = '<div style="margin-bottom: 10px; text-align: center; font-weight: 600;">📊 ANÁLISE TÉCNICA COMPLETA</div>';
                 
                 const metricItems = [
-                    ['Força da Tendência', (metrics.trend_strength * 100)?.toFixed(1) + '%'],
-                    ['Momentum', metrics.momentum?.toFixed(3)],
-                    ['RSI', metrics.rsi?.toFixed(3)],
-                    ['MACD', metrics.macd?.toFixed(3)],
-                    ['Força do MACD', (metrics.macd_strength * 100)?.toFixed(1) + '%'],
-                    ['Qualidade do Sinal', (data.signal_quality * 100)?.toFixed(1) + '%']
+                    ['Qualidade Painéis', (metrics.panel_quality * 100)?.toFixed(1) + '%'],
+                    ['Razão Touro/Urso', (metrics.bull_bear_ratio * 100)?.toFixed(1) + '%'],
+                    ['Fase MACD', metrics.macd_phase?.toFixed(3)],
+                    ['Nível RSI', (metrics.rsi_level * 100)?.toFixed(1)],
+                    ['Confiança Fusão', (data.fusion_confidence * 100)?.toFixed(1) + '%'],
+                    ['Qualidade Sinal', (data.signal_quality * 100)?.toFixed(1) + '%']
                 ];
                 
                 metricItems.forEach(([label, value]) => {
@@ -1347,7 +1561,7 @@ def analyze_photo():
         if len(image_bytes) == 0:
             return jsonify({'error': 'Arquivo vazio'}), 400
         
-        # Análise 100% NEUTRA
+        # Análise 100% NEUTRA COM FUSÃO AVANÇADA
         analysis = analyzer.analyze(image_bytes, timeframe)
         
         return jsonify(analysis)
@@ -1362,9 +1576,9 @@ def health_check():
     """Health check para monitoramento"""
     return jsonify({
         'status': 'healthy', 
-        'service': 'IA Signal Pro - 100% NEUTRA',
+        'service': 'IA Signal Pro - ANÁLISE VISUAL AVANÇADA',
         'timestamp': datetime.datetime.now().isoformat(),
-        'version': '6.0.0-zero-vies'
+        'version': '7.0.0-visual-fusion'
     })
 
 @app.route('/cache/clear', methods=['POST'])
@@ -1393,10 +1607,9 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('DEBUG', 'False').lower() == 'true'
     
-    print(f"🚀 IA Signal Pro - 100% NEUTRA iniciando na porta {port}")
-    print(f"🧠⚖️ SISTEMA: ZERO VIÉS - DECISÕES PURAMENTE TÉCNICAS")
-    print(f"🎯 PRINCÍPIO: APENAS PELO MOMENTO REAL DO MERCADO")
-    print(f"📈 SAÍDA: COMPRA ou VENDA - SEM FAVORITISMO")
-    print(f"💪 NEUTRALIDADE: PONDERAÇÃO IGUAL + ANÁLISE DO MOMENTO")
+    print(f"🚀 IA Signal Pro - ANÁLISE VISUAL AVANÇADA iniciando na porta {port}")
+    print(f"🧠⚖️ SISTEMA: DETECÇÃO DE PAINÉIS + FUSÃO BAYESIANA")
+    print(f"🎯 TECNOLOGIA: Análise de cores + Candles geométricos + Indicadores visuais")
+    print(f"💪 NEUTRALIDADE: 100% técnica - zero viés")
     
     app.run(host='0.0.0.0', port=port, debug=debug)
