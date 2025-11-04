@@ -76,12 +76,6 @@ class AnalysisCache:
             pass
 
 # =========================
-#  FASE 1: SISTEMA DE OCR AVANÇADO
-# =========================
-# =========================
-#  FASE 1: SISTEMA DE OCR AVANÇADO - CORRIGIDO
-# =========================
-# =========================
 #  FASE 1: SISTEMA DE OCR AVANÇADO - TOTALMENTE CORRIGIDO
 # =========================
 class TextDataExtractor:
@@ -100,132 +94,97 @@ class TextDataExtractor:
         }
     
     def preprocess_for_ocr(self, image: Image.Image) -> Image.Image:
-        """Pré-processamento ESPECÍFICO para gráficos de trading"""
+        """Pré-processamento ESPECÍFICO para gráficos de trading - CORRIGIDO"""
         try:
             # Converte para numpy array para processamento avançado
             img_array = np.array(image)
             
-            # 🔥 CORREÇÃO: Para gráficos escuros, inverte cores
-            if np.mean(img_array) < 128:  # Imagem escura
-                img_array = 255 - img_array  # Inverte cores
+            # 🔥 CORREÇÃO CRÍTICA: Detecta se é gráfico escuro e inverte
+            gray_mean = np.mean(cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY))
+            if gray_mean < 100:  # Gráfico escuro
+                img_array = 255 - img_array
                 image = Image.fromarray(img_array.astype('uint8'))
             
             # Converte para escala de cinza
             if image.mode != 'L':
                 image = image.convert('L')
             
-            # 🔥 CORREÇÃO: Aumenta drasticamente o tamanho para melhor reconhecimento
+            # 🔥 CORREÇÃO: Aumenta tamanho para melhor reconhecimento
             width, height = image.size
-            if width < 800:  # Aumenta limite mínimo
-                new_width = max(800, width * 2)
+            if width < 1000:  # Aumenta limite
+                new_width = max(1000, width * 2)
                 new_height = int(height * (new_width / width))
                 image = image.resize((new_width, new_height), Image.LANCZOS)
             
-            # 🔥 CORREÇÃO: Aplica filtro mais agressivo
-            # Aumenta contraste
-            enhancer = ImageEnhance.Contrast(image)
-            image = enhancer.enhance(3.5)  # Mais agressivo
-            
-            # Aumenta nitidez
-            enhancer = ImageEnhance.Sharpness(image)
-            image = enhancer.enhance(3.0)
-            
-            # Ajusta brilho
-            enhancer = ImageEnhance.Brightness(image)
-            image = enhancer.enhance(1.3)
-            
-            # 🔥 CORREÇÃO: Aplica threshold para binarização
+            # 🔥 CORREÇÃO: Processamento mais agressivo
+            # Aplica filtro para realçar texto
             img_array = np.array(image)
-            _, binary_img = cv2.threshold(img_array, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            image = Image.fromarray(binary_img)
             
+            # Realce de contraste
+            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+            enhanced = clahe.apply(img_array)
+            
+            # Filtro para suavizar ruídos mantendo bordas
+            enhanced = cv2.bilateralFilter(enhanced, 9, 75, 75)
+            
+            # Threshold adaptativo para lidar com iluminação irregular
+            binary = cv2.adaptiveThreshold(
+                enhanced, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                cv2.THRESH_BINARY, 11, 2
+            )
+            
+            image = Image.fromarray(binary)
             return image
             
         except Exception as e:
             print(f"⚠️ Erro no pré-processamento: {e}")
             return image
-    
+
     def extract_text_data(self, image: Image.Image) -> Dict[str, Any]:
-        """Extrai textos do gráfico - VERSÃO CORRIGIDA"""
+        """Extrai textos do gráfico - VERSÃO TOTALMENTE CORRIGIDA"""
         try:
-            # 🔥 CORREÇÃO: Tenta múltiplas estratégias de OCR
+            # 🔥 NOVA ESTRATÉGIA: Tenta múltiplas configurações do Tesseract
             strategies = [
-                self._ocr_strategy_aggressive,
-                self._ocr_strategy_conservative,
-                self._ocr_strategy_fallback
+                {'psm': 6, 'whitelist': '0123456789.,RSI MACD :=-', 'name': 'balanced'},
+                {'psm': 8, 'whitelist': '0123456789.,-', 'name': 'numbers_only'},
+                {'psm': 4, 'whitelist': '', 'name': 'aggressive'},
+                {'psm': 11, 'whitelist': '0123456789.,RSI MACD', 'name': 'sparse'},
             ]
             
             best_result = None
             best_confidence = 0
             
             for strategy in strategies:
-                result = strategy(image)
-                if result['confidence'] > best_confidence:
-                    best_result = result
-                    best_confidence = result['confidence']
-                
-                # Se já tem boa confiança, para aqui
-                if best_confidence > 0.7:
-                    break
+                try:
+                    config = f'--oem 3 --psm {strategy["psm"]}'
+                    if strategy['whitelist']:
+                        config += f' -c tessedit_char_whitelist={strategy["whitelist"]}'
+                    
+                    processed_image = self.preprocess_for_ocr(image)
+                    text = pytesseract.image_to_string(processed_image, config=config)
+                    
+                    print(f"🎯 TEXTO ({strategy['name']}): {text[:100]}...")
+                    
+                    result = self._parse_extracted_text(text, strategy['name'])
+                    
+                    if result['confidence'] > best_confidence:
+                        best_result = result
+                        best_confidence = result['confidence']
+                    
+                    # Se já tem boa confiança, para aqui
+                    if best_confidence > 0.8:
+                        break
+                        
+                except Exception as e:
+                    print(f"❌ Estratégia {strategy['name']} falhou: {e}")
+                    continue
             
             print(f"🔍 MELHOR RESULTADO OCR - Confiança: {best_confidence:.1%}")
-            print(f"📊 RSI: {best_result.get('rsi_value')}, MACD: {best_result.get('macd_value')}")
             
-            return best_result
+            return best_result if best_result else self._get_fallback_text_data()
             
         except Exception as e:
             print(f"❌ ERRO CRÍTICO NO OCR: {e}")
-            return self._get_fallback_text_data()
-    
-    def _ocr_strategy_aggressive(self, image: Image.Image) -> Dict[str, Any]:
-        """Estratégia agressiva - máximo de texto"""
-        try:
-            # 🔥 CORREÇÃO: Whitelist expandida com TODOS os caracteres necessários
-            custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789.,:-/RSI MACD BIS USDT ADL EMA %()'
-            
-            processed_image = self.preprocess_for_ocr(image)
-            text = pytesseract.image_to_string(processed_image, config=custom_config)
-            
-            print(f"🎯 TEXTO EXTRAÍDO (Agressivo): {text[:200]}...")
-            
-            return self._parse_extracted_text(text, strategy="aggressive")
-            
-        except Exception as e:
-            print(f"❌ Estratégia agressiva falhou: {e}")
-            return self._get_fallback_text_data()
-    
-    def _ocr_strategy_conservative(self, image: Image.Image) -> Dict[str, Any]:
-        """Estratégia conservativa - foco em números"""
-        try:
-            # 🔥 CORREÇÃO: PSM 8 para tratamento de palavra única
-            custom_config = r'--oem 3 --psm 8 -c tessedit_char_whitelist=0123456789.,-'
-            
-            processed_image = self.preprocess_for_ocr(image)
-            text = pytesseract.image_to_string(processed_image, config=custom_config)
-            
-            print(f"🎯 TEXTO EXTRAÍDO (Conservativo): {text[:200]}...")
-            
-            return self._parse_extracted_text(text, strategy="conservative")
-            
-        except Exception as e:
-            print(f"❌ Estratégia conservativa falhou: {e}")
-            return self._get_fallback_text_data()
-    
-    def _ocr_strategy_fallback(self, image: Image.Image) -> Dict[str, Any]:
-        """Estratégia fallback - sem restrições"""
-        try:
-            # Sem whitelist, pega tudo
-            custom_config = r'--oem 3 --psm 6'
-            
-            processed_image = self.preprocess_for_ocr(image)
-            text = pytesseract.image_to_string(processed_image, config=custom_config)
-            
-            print(f"🎯 TEXTO EXTRAÍDO (Fallback): {text[:200]}...")
-            
-            return self._parse_extracted_text(text, strategy="fallback")
-            
-        except Exception as e:
-            print(f"❌ Estratégia fallback falhou: {e}")
             return self._get_fallback_text_data()
     
     def _parse_extracted_text(self, text: str, strategy: str = "aggressive") -> Dict[str, Any]:
@@ -525,7 +484,7 @@ class IndicatorChartAnalyzer:
             return {'macd_normalized': 0.0, 'macd_strength': 0.5, 'macd_signal': 'neutral', 'confidence': 0.0}
 
 # =========================
-#  FASE 4: SISTEMA DE FUSÃO DE DADOS
+#  FASE 4: SISTEMA DE FUSÃO DE DADOS - CORRIGIDO
 # =========================
 class DataFusionEngine:
     def __init__(self):
@@ -541,7 +500,7 @@ class DataFusionEngine:
                      chart_analysis: Dict, 
                      indicator_analysis: Dict,
                      traditional_analysis: Dict) -> Dict[str, Any]:
-        """Combina todas as fontes de dados para decisão final"""
+        """Combina todas as fontes de dados para decisão final - CORRIGIDO"""
         
         # 🎯 ANÁLISE DE PRICE ACTION (25%)
         price_action_score = self._analyze_price_action(chart_analysis, traditional_analysis)
@@ -555,13 +514,28 @@ class DataFusionEngine:
         # 🚀 MOMENTUM (25%)
         momentum_score = self._analyze_momentum(indicator_analysis, traditional_analysis)
         
-        # 🧮 SCORE FINAL PERFEITAMENTE EQUILIBRADO
-        total_score = (
-            price_action_score * self.weights['price_action'] +
-            technical_score * self.weights['technical_indicators'] +
-            structure_score * self.weights['market_structure'] +
-            momentum_score * self.weights['momentum']
-        )
+        # 🔥 CORREÇÃO CRÍTICA: Garante que nenhum componente fique zerado
+        scores = [price_action_score, technical_score, structure_score, momentum_score]
+        valid_scores = [s for s in scores if abs(s) > 0.01]  # Filtra scores muito baixos
+        
+        if len(valid_scores) < 2:  # Se menos de 2 componentes válidos
+            # Distribui peso igualmente entre os disponíveis
+            available_weights = 1.0 / max(1, len(valid_scores))
+            weighted_scores = [s * available_weights for s in valid_scores]
+        else:
+            # Usa pesos normais
+            weighted_scores = [
+                price_action_score * self.weights['price_action'],
+                technical_score * self.weights['technical_indicators'],
+                structure_score * self.weights['market_structure'],
+                momentum_score * self.weights['momentum']
+            ]
+        
+        # 🧮 SCORE FINAL CORRIGIDO
+        total_score = sum(weighted_scores)
+        
+        # 🔥 CORREÇÃO: Limita o score para evitar extremos
+        total_score = np.clip(total_score, -0.5, 0.5)
         
         return {
             'total_score': float(total_score),
@@ -589,27 +563,37 @@ class DataFusionEngine:
         return combined_trend * strength_factor
     
     def _analyze_technical_indicators(self, text_data: Dict, indicator_analysis: Dict) -> float:
-        """Analisa indicadores técnicos com dados OCR"""
+        """Analisa indicadores técnicos com dados OCR - CORRIGIDO"""
         rsi_analysis = indicator_analysis.get('rsi', {})
         macd_analysis = indicator_analysis.get('macd', {})
         
         rsi_score = rsi_analysis.get('rsi_normalized', 0.0)
         macd_score = macd_analysis.get('macd_normalized', 0.0)
         
-        # Confiança baseada na qualidade dos dados OCR
-        rsi_confidence = rsi_analysis.get('confidence', 0.5)
-        macd_confidence = macd_analysis.get('confidence', 0.5)
+        # 🔥 CORREÇÃO: Se OCR falhou, usa análise tradicional como fallback
+        rsi_confidence = rsi_analysis.get('confidence', 0.0)
+        macd_confidence = macd_analysis.get('confidence', 0.0)
+        
+        # Se ambos têm baixa confiança, retorna neutro em vez de zero
+        if rsi_confidence < 0.3 and macd_confidence < 0.3:
+            return 0.05  # Pequeno bias neutro em vez de zero absoluto
         
         # Score ponderado pela confiança
-        if rsi_confidence > 0.7 or macd_confidence > 0.7:
-            # Dados confiáveis disponíveis
-            if rsi_confidence > macd_confidence:
-                return rsi_score
-            else:
-                return macd_score
+        if rsi_confidence > macd_confidence and rsi_confidence > 0.5:
+            return rsi_score
+        elif macd_confidence > 0.5:
+            return macd_score
         else:
-            # Dados limitados, retorna neutro
-            return 0.0
+            # Média dos dois se ambos têm alguma confiança
+            if rsi_confidence > 0.3 or macd_confidence > 0.3:
+                scores = []
+                if rsi_confidence > 0.3:
+                    scores.append(rsi_score)
+                if macd_confidence > 0.3:
+                    scores.append(macd_score)
+                return np.mean(scores) if scores else 0.05
+            else:
+                return 0.05  # Fallback neutro
     
     def _analyze_market_structure(self, chart_analysis: Dict) -> float:
         """Analisa estrutura de mercado (suportes/resistências)"""
@@ -668,7 +652,7 @@ class DataFusionEngine:
             return "Análise Balanceada"
 
 # =========================
-#  IA SUPER INTELIGENTE E NEUTRA - ATUALIZADA
+#  IA SUPER INTELIGENTE E NEUTRA - TOTALMENTE CORRIGIDA
 # =========================
 class SuperIntelligentAnalyzer:
     def __init__(self):
@@ -1007,11 +991,38 @@ class SuperIntelligentAnalyzer:
             return {"rsi": 0.0, "macd": 0.0, "macd_strength": 0.0, "volume_intensity": 0.0, "momentum_quality": 0.0}
 
     # =========================
-    #  MOTOR DE DECISÃO 100% NEUTRO - ATUALIZADO
+    #  MOTOR DE DECISÃO 100% NEUTRO - TOTALMENTE CORRIGIDO
     # =========================
     
+    def _balance_extreme_components(self, component_scores: Dict) -> Dict:
+        """Balanceia componentes para evitar extremos - NOVA FUNÇÃO"""
+        balanced = component_scores.copy()
+        
+        # Se um componente é muito extremo e outros são zero, redistribui
+        extreme_components = []
+        zero_components = []
+        
+        for name, score in component_scores.items():
+            if abs(score) > 0.3:  # Componente extremo
+                extreme_components.append(name)
+            elif abs(score) < 0.05:  # Componente zerado
+                zero_components.append(name)
+        
+        # Se há componentes extremos e zerados, suaviza
+        if extreme_components and zero_components:
+            for extreme in extreme_components:
+                # Reduz um pouco o componente extremo
+                balanced[extreme] = component_scores[extreme] * 0.7
+                
+            # Distribui o excesso entre os zerados
+            excess = sum(abs(component_scores[e]) * 0.3 for e in extreme_components) / len(zero_components)
+            for zero in zero_components:
+                balanced[zero] = excess * 0.5  # Pequeno valor positivo
+        
+        return balanced
+
     def _absolute_decision_engine(self, all_analyses: Dict, timeframe: str) -> Dict[str, Any]:
-        """MOTOR 100% NEUTRO ATUALIZADO - COM FUSÃO DE DADOS"""
+        """MOTOR 100% NEUTRO CORRIGIDO - EVITA EXTREMOS"""
         try:
             # 🎯 FUSÃO DE TODOS OS DADOS
             fusion_result = self.data_fusion.fuse_all_data(
@@ -1024,21 +1035,29 @@ class SuperIntelligentAnalyzer:
             total_score = fusion_result['total_score']
             component_scores = fusion_result['component_scores']
             
+            # 🔥 CORREÇÃO CRÍTICA: Balanceia componentes extremos
+            balanced_scores = self._balance_extreme_components(component_scores)
+            
             # 💥 DECISÃO 100% NEUTRA - APENAS PELOS DADOS
-            if total_score > 0:
+            if total_score > 0.02:  # Threshold mínimo para evitar ruído
                 direction = "buy"
-                base_confidence = 0.65 + (min(abs(total_score), 0.5) * 0.35)
-                reasoning = self._generate_enhanced_reasoning("buy", component_scores, fusion_result['weighted_analysis'])
-            else:
+                base_confidence = 0.65 + (min(abs(total_score), 0.3) * 0.35)  # Mais conservador
+                reasoning = self._generate_enhanced_reasoning("buy", balanced_scores, fusion_result['weighted_analysis'])
+            elif total_score < -0.02:
                 direction = "sell"
-                base_confidence = 0.65 + (min(abs(total_score), 0.5) * 0.35)
-                reasoning = self._generate_enhanced_reasoning("sell", component_scores, fusion_result['weighted_analysis'])
+                base_confidence = 0.65 + (min(abs(total_score), 0.3) * 0.35)
+                reasoning = self._generate_enhanced_reasoning("sell", balanced_scores, fusion_result['weighted_analysis'])
+            else:
+                # 🔥 NOVO: Decisão neutra para scores muito próximos de zero
+                direction = "hold"
+                base_confidence = 0.60
+                reasoning = "⚖️ MANTER - Mercado lateral sem direção clara"
             
             # 🎪 CONFIANÇA NEUTRA MELHORADA
             final_confidence = self._calculate_enhanced_confidence(base_confidence, all_analyses, fusion_result)
             
             # 🎯 CONTEXTO NEUTRO ATUALIZADO
-            context = self._detect_enhanced_context(component_scores, total_score, all_analyses)
+            context = self._detect_enhanced_context(balanced_scores, total_score, all_analyses)
             
             return {
                 "direction": direction,
@@ -1046,15 +1065,15 @@ class SuperIntelligentAnalyzer:
                 "reasoning": reasoning,
                 "total_score": total_score,
                 "context": context,
-                "component_scores": component_scores,
+                "component_scores": balanced_scores,
                 "fusion_analysis": fusion_result['weighted_analysis'],
-                "trend_power": component_scores['price_action'],
-                "macd_power": component_scores['technical_indicators'],
-                "micro_power": component_scores['momentum']
+                "trend_power": balanced_scores['price_action'],
+                "macd_power": balanced_scores['technical_indicators'],
+                "micro_power": balanced_scores['momentum']
             }
             
         except Exception as e:
-            # EM CASO DE ERRO: DECISÃO NEUTRA BASEADA EM HORÁRIO DE MERCADO
+            print(f"❌ Erro no motor de decisão: {e}")
             return self._neutral_market_decision()
 
     def _generate_enhanced_reasoning(self, direction: str, component_scores: Dict, weighted_analysis: str) -> str:
@@ -1232,7 +1251,7 @@ class SuperIntelligentAnalyzer:
         }
 
     def analyze(self, blob: bytes, timeframe: str = '1m') -> Dict[str, Any]:
-        """ANÁLISE 100% NEUTRA ATUALIZADA - COM 4 FASES DE ANÁLISE"""
+        """ANÁLISE 100% NEUTRA ATUALIZADA - COM 4 FASES DE ANÁLISE E DEBUG"""
         
         # Cache inteligente
         cached = self.cache.get(blob, timeframe)
@@ -1248,20 +1267,24 @@ class SuperIntelligentAnalyzer:
             img_array = self._preprocess_image(image, timeframe)
             price_data = self._extract_price_data(img_array)
             
-            # 🎯 FASE 1: EXTRAÇÃO DE TEXTO (OCR)
+            # 🎯 FASE 1: EXTRAÇÃO DE TEXTO (OCR) - COM DEBUG
+            print("🔍 INICIANDO OCR...")
             text_data = self.text_extractor.extract_text_data(image)
+            print(f"📊 RESULTADO OCR: RSI={text_data.get('rsi_value')}, MACD={text_data.get('macd_value')}, Confiança={text_data.get('confidence', 0):.1%}")
             
             # 🎯 FASE 2: ANÁLISE VISUAL DO GRÁFICO
             chart_analysis = {
                 'price_levels': self.chart_analyzer.detect_price_levels(price_data),
                 'trend_analysis': self.chart_analyzer.analyze_trend_strength(price_data)
             }
+            print(f"📈 ANÁLISE VISUAL: Tendência={chart_analysis['trend_analysis'].get('trend_direction', 0):.3f}")
             
             # 🎯 FASE 3: ANÁLISE DE INDICADORES
             indicator_analysis = {
                 'rsi': self.indicator_analyzer.analyze_rsi_position(text_data),
                 'macd': self.indicator_analyzer.analyze_macd_signal(text_data)
             }
+            print(f"🎯 INDICADORES: RSI={indicator_analysis['rsi'].get('rsi_normalized', 0):.3f}, MACD={indicator_analysis['macd'].get('macd_normalized', 0):.3f}")
             
             # 🧠 ANÁLISE MULTI-CAMADAS ORIGINAL
             traditional_analyses = {
@@ -1273,6 +1296,10 @@ class SuperIntelligentAnalyzer:
                 'micro_structure': self._analyze_micro_structure(price_data),
                 'flow_dynamics': self._analyze_flow_dynamics(price_data)
             }
+            
+            # DEBUG das análises tradicionais
+            trad = traditional_analyses['traditional']
+            print(f"🧠 ANÁLISE TRADICIONAL: PriceAction={trad['price_action'].get('trend_direction', 0):.3f}, RSI={trad['indicators'].get('rsi', 0):.3f}")
             
             # 🎯 FASE 4: FUSÃO DE TODOS OS DADOS
             all_analyses = {
@@ -1287,7 +1314,9 @@ class SuperIntelligentAnalyzer:
             time_info = self._get_entry_timeframe(timeframe)
             
             # 📊 QUALIDADE DA ANÁLISE MELHORADA
-            signal_quality = self._calculate_signal_quality(all_analyses)
+            signal_quality = self._calculate_signal_quality({'decision': decision, **all_analyses})
+            
+            print(f"🎯 DECISÃO FINAL: {decision['direction']}, Score={decision['total_score']:.3f}, Confiança={decision['confidence']:.1%}")
             
             # 🎨 RESULTADO SUPER NEUTRO ATUALIZADO
             result = {
@@ -1313,7 +1342,7 @@ class SuperIntelligentAnalyzer:
                     "trend_strength": all_analyses['traditional']['price_action']['trend_strength'],
                     "momentum": all_analyses['traditional']['price_action']['momentum'],
                     "rsi": all_analyses['traditional']['indicators']['rsi'],
-                    "macd": all_analyses['traditional']['indicators']['macd'],
+                    "macd": all_analyses['traditional']['indicators']['macd"],
                     "macd_strength": all_analyses['traditional']['indicators']['macd_strength'],
                     "component_scores": decision.get('component_scores', {})
                 },
@@ -1330,6 +1359,7 @@ class SuperIntelligentAnalyzer:
             return result
             
         except Exception as e:
+            print(f"❌ ERRO NA ANÁLISE: {e}")
             # DECISÃO NEUTRA EM ERRO
             fallback_result = self._neutral_market_decision()
             fallback_result.update({
@@ -1900,6 +1930,11 @@ HTML_TEMPLATE = '''
                 // Define classe e texto do sinal
                 signalText.className = `signal-text signal-${direction}`;
                 let directionText = direction === 'buy' ? '🎯 COMPRAR' : '🎯 VENDER';
+                if (direction === 'hold') {
+                    directionText = '⚖️ MANTER';
+                    signalText.className = 'signal-text';
+                    signalText.style.color = '#7ce0ff';
+                }
                 signalText.innerHTML = `${directionText} <span class="neutral-badge">100% NEUTRO</span> ${cached ? '<span class="cache-badge">CACHE</span>' : ''}`;
                 
                 // Atualiza informações
@@ -2065,8 +2100,8 @@ def health_check():
         'status': 'healthy', 
         'service': 'IA Signal Pro - 100% NEUTRA - SISTEMA ATUALIZADO',
         'timestamp': datetime.datetime.now().isoformat(),
-        'version': '7.0.0-fusao-dados',
-        'features': ['OCR', 'Análise Visual', 'Fusão de Dados', '4 Fases']
+        'version': '7.0.0-fusao-dados-corrigida',
+        'features': ['OCR Corrigido', 'Análise Visual', 'Fusão de Dados Balanceada', '4 Fases']
     })
 
 @app.route('/cache/clear', methods=['POST'])
