@@ -247,8 +247,7 @@ def extract_text_data(self, image: Image.Image) -> Dict[str, Any]:
     # Primeira tentativa: OCR focal nos painéis
     txt_mid = self._ocr_text(mid, psm=6)
     txt_bot = self._ocr_text(bot, psm=6)
-    combined = (txt_mid or "") + "
-" + (txt_bot or "")
+    combined = (txt_mid or "") + "\\n" + (txt_bot or "")
 
     # Se vazio/curto, faz varredura adaptativa no rodapé e meio
     if len(combined.strip()) < 5:
