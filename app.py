@@ -200,197 +200,289 @@ class SuperIntelligentAnalyzer:
     #  SISTEMA OCR OTIMIZADO PARA RAILWAY
     # =========================
 
-    def _extract_with_ocr(self, image: Image.Image) -> Dict[str, Any]:
-        """Extrai valores numéricos com OCR otimizado"""
-        if not self.ocr_available:
-            print("❌ OCR não disponível")
-            return {}
-            
-        try:
-            import pytesseract
-            
-            print("🔍 Iniciando análise OCR...")
-            
-            # Estratégias múltiplas para melhor precisão
-            strategies = [
-                self._ocr_strategy_high_contrast(image),
-                self._ocr_strategy_grayscale_enhanced(image),
-                self._ocr_strategy_inverted(image),
-                self._ocr_strategy_segmented(image)
-            ]
-            
-            # Combina resultados
-            all_numbers = []
-            for i, numbers in enumerate(strategies):
-                print(f"🎯 Estratégia {i+1}: {len(numbers)} números")
-                all_numbers.extend(numbers)
-            
-            # Processa resultados
-            if all_numbers:
-                results = self._classify_ocr_numbers(all_numbers)
-                print(f"✅ OCR finalizado: {len(results)} valores")
-                return results
-            else:
-                print("❌ Nenhum número encontrado via OCR")
-                return {}
-                
-        except Exception as e:
-            print(f"❌ Erro no OCR: {e}")
-            return {}
+    # =========================
+#  SISTEMA OCR ESPECIALIZADO PARA GRÁFICOS TRADING
+# =========================
 
-    def _ocr_strategy_high_contrast(self, image: Image.Image) -> List[float]:
-        """Estratégia 1: Alto contraste"""
-        try:
-            import pytesseract
-            
-            gray = image.convert('L')
-            
-            # Otimiza tamanho
-            width, height = gray.size
-            if width > 1000:
-                new_height = int((800 / width) * height)
-                gray = gray.resize((800, new_height), Image.LANCZOS)
-            
-            # Contraste moderado
-            enhancer = ImageEnhance.Contrast(gray)
-            high_contrast = enhancer.enhance(2.0)
-            
-            config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789.-'
-            text = pytesseract.image_to_string(high_contrast, config=config)
-            return self._extract_numbers_from_text(text)
-            
-        except Exception:
-            return []
-
-    def _ocr_strategy_grayscale_enhanced(self, image: Image.Image) -> List[float]:
-        """Estratégia 2: Escala de cinza com realce"""
-        try:
-            import pytesseract
-            
-            gray = image.convert('L')
-            
-            # Realce de bordas
-            edge_enhanced = gray.filter(ImageFilter.EDGE_ENHANCE_MORE)
-            
-            # Nitidez
-            sharp_enhancer = ImageEnhance.Sharpness(edge_enhanced)
-            sharp = sharp_enhancer.enhance(2.0)
-            
-            config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789.-'
-            text = pytesseract.image_to_string(sharp, config=config)
-            return self._extract_numbers_from_text(text)
-            
-        except Exception:
-            return []
-
-    def _ocr_strategy_inverted(self, image: Image.Image) -> List[float]:
-        """Estratégia 3: Imagem invertida"""
-        try:
-            import pytesseract
-            
-            gray = image.convert('L')
-            inverted = ImageOps.invert(gray)
-            
-            # Contraste
-            enhancer = ImageEnhance.Contrast(inverted)
-            high_contrast = enhancer.enhance(3.0)
-            
-            config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789.-'
-            text = pytesseract.image_to_string(high_contrast, config=config)
-            return self._extract_numbers_from_text(text)
-            
-        except Exception:
-            return []
-
-    def _ocr_strategy_segmented(self, image: Image.Image) -> List[float]:
-        """Estratégia 4: Análise por regiões"""
-        try:
-            import pytesseract
-            
-            width, height = image.size
-            
-            # Regiões onde indicadores aparecem
-            regions = [
-                (0, 0, width, height // 4),           # Topo
-                (0, height // 4, width // 2, height // 2),  # Esquerda
-                (width // 2, height // 4, width, height // 2),  # Direita
-                (0, 3 * height // 4, width, height)   # Rodapé
-            ]
-            
-            all_numbers = []
-            
-            for i, (left, top, right, bottom) in enumerate(regions):
-                try:
-                    region = image.crop((left, top, right, bottom))
-                    gray_region = region.convert('L')
-                    
-                    # Contraste para região
-                    enhancer = ImageEnhance.Contrast(gray_region)
-                    high_contrast = enhancer.enhance(2.5)
-                    
-                    config = r'--oem 3 --psm 8 -c tessedit_char_whitelist=0123456789.-'
-                    text = pytesseract.image_to_string(high_contrast, config=config)
-                    numbers = self._extract_numbers_from_text(text)
-                    all_numbers.extend(numbers)
-                        
-                except Exception:
-                    continue
-            
-            return all_numbers
-            
-        except Exception:
-            return []
-
-    def _extract_numbers_from_text(self, text: str) -> List[float]:
-        """Extrai números do texto OCR"""
-        numbers = []
+def _extract_with_ocr(self, image: Image.Image) -> Dict[str, Any]:
+    """Extrai valores EXATOS do gráfico com OCR especializado"""
+    if not self.ocr_available:
+        print("❌ OCR não disponível")
+        return {}
         
-        # Encontra padrões numéricos
-        matches = re.findall(r'-?\d+\.?\d*', text)
-        for match in matches:
+    try:
+        import pytesseract
+        
+        print("🔍 Iniciando OCR especializado para gráficos trading...")
+        
+        # Estratégias específicas para gráficos
+        strategies_results = []
+        
+        # 1. OCR na imagem original (muitas vezes funciona melhor)
+        original_text = self._ocr_original_image(image)
+        strategies_results.append(original_text)
+        
+        # 2. OCR com foco em regiões específicas
+        regions_text = self._ocr_trading_regions(image)
+        strategies_results.append(regions_text)
+        
+        # 3. OCR com alto contraste
+        high_contrast_text = self._ocr_high_contrast_focused(image)
+        strategies_results.append(high_contrast_text)
+        
+        # 4. OCR com imagem limpa
+        clean_text = self._ocr_clean_image(image)
+        strategies_results.append(clean_text)
+        
+        # Combina todos os resultados
+        all_numbers = []
+        for i, result in enumerate(strategies_results):
+            numbers = self._extract_trading_numbers(result)
+            print(f"🎯 Estratégia {i+1}: {len(numbers)} números -> {numbers}")
+            all_numbers.extend(numbers)
+        
+        # Processa e classifica números
+        if all_numbers:
+            results = self._classify_trading_numbers_advanced(all_numbers)
+            print(f"✅ OCR finalizado: {results}")
+            return results
+        else:
+            print("❌ Nenhum número encontrado via OCR")
+            return {}
+            
+    except Exception as e:
+        print(f"❌ Erro no OCR: {e}")
+        return {}
+
+def _ocr_original_image(self, image: Image.Image) -> str:
+    """OCR na imagem original - muitas vezes a mais precisa"""
+    try:
+        import pytesseract
+        
+        # Usa a imagem original sem modificações
+        config = '--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789.,- '
+        text = pytesseract.image_to_string(image, config=config)
+        print(f"📝 Original: {text.strip()}")
+        return text
+    except Exception:
+        return ""
+
+def _ocr_trading_regions(self, image: Image.Image) -> str:
+    """OCR focado nas regiões onde estão os indicadores"""
+    try:
+        import pytesseract
+        
+        width, height = image.size
+        all_text = ""
+        
+        # Regiões específicas para gráficos trading
+        regions = [
+            # Topo direito - geralmente preço atual
+            (width * 2 // 3, 0, width, height // 6),
+            # Centro direito - indicadores
+            (width * 2 // 3, height // 6, width, height // 2),
+            # Rodapé - RSI, MACD, etc
+            (0, height * 3 // 4, width, height),
+            # Topo esquerdo - título/par
+            (0, 0, width // 3, height // 6)
+        ]
+        
+        for i, (left, top, right, bottom) in enumerate(regions):
             try:
-                num = float(match)
-                # Filtra números válidos
-                if 0.001 <= abs(num) <= 1000000 and num != 0:
-                    numbers.append(num)
-            except ValueError:
+                region = image.crop((left, top, right, bottom))
+                
+                # Pré-processamento específico para região
+                processed_region = self._preprocess_region_for_ocr(region)
+                
+                config = '--oem 3 --psm 8'
+                text = pytesseract.image_to_string(processed_region, config=config)
+                if text.strip():
+                    all_text += f" | Região {i+1}: {text.strip()}"
+                    
+            except Exception:
                 continue
         
-        return numbers
+        print(f"📍 Regiões: {all_text}")
+        return all_text
+        
+    except Exception:
+        return ""
 
-    def _classify_ocr_numbers(self, numbers: List[float]) -> Dict[str, float]:
-        """Classifica números por indicadores"""
-        results = {}
+def _ocr_high_contrast_focused(self, image: Image.Image) -> str:
+    """OCR com contraste otimizado para números"""
+    try:
+        import pytesseract
         
-        if not numbers:
-            return results
+        # Converte para escala de cinza
+        gray = image.convert('L')
         
-        # RSI: 0-100
-        rsi_candidates = [n for n in numbers if 0 <= n <= 100]
-        if rsi_candidates:
-            results['rsi'] = float(np.median(rsi_candidates))
+        # Redimensiona para melhor reconhecimento
+        if gray.size[0] > 1000:
+            gray = gray.resize((800, int(800 * gray.size[1] / gray.size[0])), Image.LANCZOS)
         
-        # Preços: números maiores
-        price_candidates = [n for n in numbers if n > 100 and n < 100000]
-        if price_candidates:
-            results['price'] = float(np.median(price_candidates))
+        # Contraste inteligente - não muito agressivo
+        enhancer = ImageEnhance.Contrast(gray)
+        enhanced = enhancer.enhance(2.0)
         
-        # MACD: números pequenos com sinal
-        macd_candidates = [n for n in numbers if -10 <= n <= 10 and n != 0]
-        if macd_candidates:
-            results['macd'] = float(np.median(macd_candidates))
+        # Brilho moderado
+        brightness_enhancer = ImageEnhance.Brightness(enhanced)
+        final_image = brightness_enhancer.enhance(1.1)
         
-        # Variação percentual
-        change_candidates = [n for n in numbers if -50 <= n <= 50 and n != 0]
-        if change_candidates:
-            results['change'] = float(np.median(change_candidates))
+        config = '--oem 3 --psm 6'
+        text = pytesseract.image_to_string(final_image, config=config)
+        print(f"⚡ Alto contraste: {text.strip()}")
+        return text
         
-        # ADX: 0-100
-        adx_candidates = [n for n in numbers if 0 <= n <= 100 and n not in rsi_candidates]
-        if adx_candidates:
-            results['adx'] = float(np.median(adx_candidates))
+    except Exception:
+        return ""
+
+def _ocr_clean_image(self, image: Image.Image) -> str:
+    """OCR com imagem limpa e suavizada"""
+    try:
+        import pytesseract
         
+        gray = image.convert('L')
+        
+        # Suaviza a imagem para reduzir ruído
+        smoothed = gray.filter(ImageFilter.SMOOTH)
+        
+        # Realce de bordas suave
+        edges = smoothed.filter(ImageFilter.EDGE_ENHANCE)
+        
+        # Configuração para texto de trading
+        config = '--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789.,- '
+        text = pytesseract.image_to_string(edges, config=config)
+        print(f"🧹 Limpa: {text.strip()}")
+        return text
+        
+    except Exception:
+        return ""
+
+def _preprocess_region_for_ocr(self, region: Image.Image) -> Image.Image:
+    """Pré-processamento específico para regiões"""
+    try:
+        # Converte para escala de cinza
+        gray = region.convert('L')
+        
+        # Aumenta o tamanho se muito pequeno
+        if gray.size[0] < 100:
+            gray = gray.resize((gray.size[0] * 2, gray.size[1] * 2), Image.LANCZOS)
+        
+        # Contraste moderado
+        enhancer = ImageEnhance.Contrast(gray)
+        enhanced = enhancer.enhance(2.5)
+        
+        return enhanced
+        
+    except Exception:
+        return region
+
+def _extract_trading_numbers(self, text: str) -> List[float]:
+    """Extrai números de trading de forma avançada"""
+    numbers = []
+    
+    if not text:
+        return numbers
+    
+    # Padrões específicos para trading
+    patterns = [
+        r'\d{1,4}\.\d{2,4}',  # Preços: 1234.56, 123.4567
+        r'\d{1,3}\,\d{2}',     # European format: 123,45
+        r'\d{1,4}\.\d{1,2}',   # Valores simples: 1234.5
+        r'-?\d{1,4}\.\d{1,4}', # Números com sinal: -123.45
+        r'\d{1,3}\.\d{1,4}',   # Valores menores: 12.3456
+        r'-?\d{1,5}',          # Inteiros: -12345
+        r'\d{1,2}\,\d{1,2}',   # Percentuais: 12,34
+    ]
+    
+    for pattern in patterns:
+        matches = re.findall(pattern, text)
+        for match in matches:
+            try:
+                # Substitui vírgula por ponto para conversão
+                normalized = match.replace(',', '.')
+                num = float(normalized)
+                
+                # Filtra números plausíveis para trading
+                if self._is_valid_trading_number(num):
+                    numbers.append(num)
+                    
+            except ValueError:
+                continue
+    
+    # Remove duplicatas próximas
+    unique_numbers = []
+    for num in numbers:
+        if not any(abs(num - existing) < 0.01 for existing in unique_numbers):
+            unique_numbers.append(num)
+    
+    return unique_numbers
+
+def _is_valid_trading_number(self, number: float) -> bool:
+    """Verifica se o número é válido para trading"""
+    # Filtra números extremos mas mantém uma faixa ampla
+    if abs(number) > 1000000:  # Números muito grandes
+        return False
+    if number == 0:
+        return False
+    
+    # Permite números negativos (MACD, variações)
+    return True
+
+def _classify_trading_numbers_advanced(self, numbers: List[float]) -> Dict[str, float]:
+    """Classifica números com lógica específica para trading"""
+    results = {}
+    
+    if not numbers:
         return results
+    
+    print(f"🔢 Números para classificar: {numbers}")
+    
+    # Ordena por frequência de ocorrência (mais comum = mais provável de ser correto)
+    from collections import Counter
+    number_counts = Counter(numbers)
+    common_numbers = [num for num, count in number_counts.most_common()]
+    
+    # RSI: geralmente entre 0-100, valores como 59.76
+    rsi_candidates = [n for n in common_numbers if 0 <= n <= 100 and n != 50]
+    if rsi_candidates:
+        # Pega o mais comum que não seja 50 (valor padrão)
+        results['rsi'] = rsi_candidates[0]
+        print(f"🎯 RSI identificado: {results['rsi']}")
+    
+    # Preços: geralmente os maiores números, excluindo outliers
+    price_candidates = [n for n in common_numbers if n > 10 and n < 100000]
+    if price_candidates:
+        # Pega o número mais comum na faixa de preço
+        results['price'] = price_candidates[0]
+        print(f"🎯 Preço identificado: {results['price']}")
+    
+    # MACD: pode ser positivo ou negativo, geralmente pequeno
+    macd_candidates = [n for n in common_numbers if -20 <= n <= 20 and n != 0]
+    if macd_candidates:
+        results['macd'] = macd_candidates[0]
+        print(f"🎯 MACD identificado: {results['macd']}")
+    
+    # Variações percentuais: números pequenos
+    change_candidates = [n for n in common_numbers if -100 <= n <= 100 and n != 0 and abs(n) < 20]
+    if change_candidates:
+        results['change'] = change_candidates[0]
+        print(f"🎯 Variação identificada: {results['change']}")
+    
+    # ADX: entre 0-100, diferente do RSI
+    adx_candidates = [n for n in common_numbers if 0 <= n <= 100 and n not in rsi_candidates]
+    if adx_candidates:
+        results['adx'] = adx_candidates[0]
+        print(f"🎯 ADX identificado: {results['adx']}")
+    
+    # Bandas de Bollinger: geralmente próximas ao preço
+    bollinger_candidates = [n for n in common_numbers if n > 100 and abs(n - results.get('price', 0)) < 1000]
+    if len(bollinger_candidates) >= 2:
+        results['bollinger_upper'] = max(bollinger_candidates[:2])
+        results['bollinger_lower'] = min(bollinger_candidates[:2])
+        print(f"🎯 Bollinger: {results['bollinger_upper']} / {results['bollinger_lower']}")
+    
+    return results
 
     def _analyze_extracted_indicators(self, ocr_data: Dict) -> Dict[str, Any]:
         """Analisa os indicadores extraídos via OCR"""
