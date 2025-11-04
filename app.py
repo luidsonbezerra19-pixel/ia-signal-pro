@@ -76,7 +76,13 @@ class AnalysisCache:
             pass
 
 # =========================
-#  FASE 1: SISTEMA DE OCR AVANÇADO - CORREÇÃO COMPLETA
+#  FASE 1: SISTEMA DE OCR AVANÇADO
+# =========================
+# =========================
+#  FASE 1: SISTEMA DE OCR AVANÇADO - CORRIGIDO
+# =========================
+# =========================
+#  FASE 1: SISTEMA DE OCR AVANÇADO - TOTALMENTE CORRIGIDO
 # =========================
 class TextDataExtractor:
     def __init__(self):
@@ -84,16 +90,12 @@ class TextDataExtractor:
             'rsi': [
                 r'RSI\s*\d*\s*[:=-]?\s*(\d+[.,]\d+)',  # RSI 14: 56.46
                 r'RSI[:=]?\s*(\d+[.,]\d+)',            # RSI: 56.46
-                r'(\d+[.,]\d+)\s*RSI',                 # 56.46 RSI
-                r'RSI\s+is\s+(\d+[.,]\d+)',            # RSI is 56.46
-                r'RSI\s+(\d+)[^\d]*(\d+)[.,](\d+)',    # RSI 14 56.46
+                r'(\d+[.,]\d+)\s*RSI'                  # 56.46 RSI
             ],
             'macd': [
                 r'MACD\s*[:=-]?\s*([\d.,-]+)',         # MACD: 12.74
                 r'MACD\s+([\d.,-]+)',                  # MACD 12.74
-                r'([\d.,-]+)\s*MACD',                  # 12.74 MACD
-                r'MACD\s+is\s+([\d.,-]+)',             # MACD is 12.74
-                r'MACD[^\d]*-?\d+[.,]\d+',             # MACD seguido de número
+                r'([\d.,-]+)\s*MACD'                   # 12.74 MACD
             ]
         }
     
@@ -114,23 +116,23 @@ class TextDataExtractor:
             
             # 🔥 CORREÇÃO: Aumenta drasticamente o tamanho para melhor reconhecimento
             width, height = image.size
-            if width < 1000:  # Aumenta limite mínimo
-                new_width = max(1000, width * 2)
+            if width < 800:  # Aumenta limite mínimo
+                new_width = max(800, width * 2)
                 new_height = int(height * (new_width / width))
                 image = image.resize((new_width, new_height), Image.LANCZOS)
             
             # 🔥 CORREÇÃO: Aplica filtro mais agressivo
             # Aumenta contraste
             enhancer = ImageEnhance.Contrast(image)
-            image = enhancer.enhance(3.0)
+            image = enhancer.enhance(3.5)  # Mais agressivo
             
             # Aumenta nitidez
             enhancer = ImageEnhance.Sharpness(image)
-            image = enhancer.enhance(2.5)
+            image = enhancer.enhance(3.0)
             
             # Ajusta brilho
             enhancer = ImageEnhance.Brightness(image)
-            image = enhancer.enhance(1.2)
+            image = enhancer.enhance(1.3)
             
             # 🔥 CORREÇÃO: Aplica threshold para binarização
             img_array = np.array(image)
@@ -150,7 +152,6 @@ class TextDataExtractor:
             strategies = [
                 self._ocr_strategy_aggressive,
                 self._ocr_strategy_conservative,
-                self._ocr_strategy_balanced,
                 self._ocr_strategy_fallback
             ]
             
@@ -159,14 +160,12 @@ class TextDataExtractor:
             
             for strategy in strategies:
                 result = strategy(image)
-                print(f"🎯 Estratégia {strategy.__name__}: Confiança {result['confidence']:.1%}")
-                
                 if result['confidence'] > best_confidence:
                     best_result = result
                     best_confidence = result['confidence']
                 
                 # Se já tem boa confiança, para aqui
-                if best_confidence > 0.8:
+                if best_confidence > 0.7:
                     break
             
             print(f"🔍 MELHOR RESULTADO OCR - Confiança: {best_confidence:.1%}")
@@ -182,7 +181,7 @@ class TextDataExtractor:
         """Estratégia agressiva - máximo de texto"""
         try:
             # 🔥 CORREÇÃO: Whitelist expandida com TODOS os caracteres necessários
-            custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789.,:-/RSI MACD BIS USDT ADL EMA %()[]'
+            custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789.,:-/RSI MACD BIS USDT ADL EMA %()'
             
             processed_image = self.preprocess_for_ocr(image)
             text = pytesseract.image_to_string(processed_image, config=custom_config)
@@ -210,22 +209,6 @@ class TextDataExtractor:
             
         except Exception as e:
             print(f"❌ Estratégia conservativa falhou: {e}")
-            return self._get_fallback_text_data()
-    
-    def _ocr_strategy_balanced(self, image: Image.Image) -> Dict[str, Any]:
-        """Estratégia balanceada - melhor dos dois mundos"""
-        try:
-            custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789.,:-/RSI MACD'
-            
-            processed_image = self.preprocess_for_ocr(image)
-            text = pytesseract.image_to_string(processed_image, config=custom_config)
-            
-            print(f"🎯 TEXTO EXTRAÍDO (Balanceado): {text[:200]}...")
-            
-            return self._parse_extracted_text(text, strategy="balanced")
-            
-        except Exception as e:
-            print(f"❌ Estratégia balanceada falhou: {e}")
             return self._get_fallback_text_data()
     
     def _ocr_strategy_fallback(self, image: Image.Image) -> Dict[str, Any]:
@@ -258,7 +241,6 @@ class TextDataExtractor:
         
         # 🔥 CORREÇÃO: Limpa e normaliza o texto
         text_clean = re.sub(r'\s+', ' ', text.strip())  # Remove espaços múltiplos
-        text_clean = text_clean.upper()  # Converte para maiúsculas
         
         print(f"🧹 TEXTO LIMPO: {text_clean}")
         
@@ -267,7 +249,6 @@ class TextDataExtractor:
             r'RSI\s*\d*\s*[:=-]?\s*(\d+[.,]\d+)',  # RSI 14: 56.46
             r'RSI[:=]?\s*(\d+[.,]\d+)',            # RSI: 56.46  
             r'(\d+[.,]\d+)\s*RSI',                 # 56.46 RSI
-            r'RSI\s+IS\s+(\d+[.,]\d+)',            # RSI IS 56.46
             r'RSI\s+(\d+)[^\d]*(\d+)[.,](\d+)',    # RSI 14 56.46
         ]
         
@@ -298,7 +279,6 @@ class TextDataExtractor:
             r'MACD\s*[:=-]?\s*([\d.,-]+)',         # MACD: 12.74
             r'MACD\s+([\d.,-]+)',                  # MACD 12.74
             r'([\d.,-]+)\s*MACD',                  # 12.74 MACD
-            r'MACD\s+IS\s+([\d.,-]+)',             # MACD IS 12.74
             r'MACD[^\d]*-?\d+[.,]\d+',             # MACD seguido de número
         ]
         
@@ -348,34 +328,14 @@ class TextDataExtractor:
                 except ValueError:
                     pass
         
-        # 🔥 CORREÇÃO: Busca por números isolados que podem ser indicadores
-        if not extracted_data['rsi_value'] or not extracted_data['macd_value']:
-            all_numbers = re.findall(r'\d+[.,]\d+', text_clean)
-            valid_numbers = []
-            
-            for num_str in all_numbers:
-                try:
-                    num = float(num_str.replace(',', '.'))
-                    # Classifica baseado na faixa típica
-                    if 0 <= num <= 100:  # Provável RSI
-                        if not extracted_data['rsi_value']:
-                            extracted_data['rsi_value'] = num
-                            print(f"✅ RSI INFERIDO: {num}")
-                    elif -20 <= num <= 20:  # Provável MACD
-                        if not extracted_data['macd_value']:
-                            extracted_data['macd_value'] = num
-                            print(f"✅ MACD INFERIDO: {num}")
-                except ValueError:
-                    continue
-        
         # 🔥 CORREÇÃO: Cálculo de confiança MELHORADO
         confidence_factors = []
         
-        if extracted_data['rsi_value'] is not None:
+        if extracted_data['rsi_value']:
             confidence_factors.append(0.4)
             print(f"🎯 RSI adiciona 0.4 à confiança")
         
-        if extracted_data['macd_value'] is not None:
+        if extracted_data['macd_value']:
             confidence_factors.append(0.4) 
             print(f"🎯 MACD adiciona 0.4 à confiança")
         
@@ -386,17 +346,8 @@ class TextDataExtractor:
             confidence_factors.append(number_confidence)
             print(f"🎯 {len(all_numbers)} números adicionam {number_confidence:.2f} à confiança")
         
-        # Confiança base baseada na estratégia
-        strategy_confidence = {
-            'aggressive': 0.1,
-            'balanced': 0.05,
-            'conservative': 0.05,
-            'fallback': 0.0
-        }.get(strategy, 0.0)
-        confidence_factors.append(strategy_confidence)
-        
         if confidence_factors:
-            extracted_data['confidence'] = min(1.0, sum(confidence_factors))
+            extracted_data['confidence'] = sum(confidence_factors)
         else:
             extracted_data['confidence'] = 0.0
         
@@ -574,15 +525,15 @@ class IndicatorChartAnalyzer:
             return {'macd_normalized': 0.0, 'macd_strength': 0.5, 'macd_signal': 'neutral', 'confidence': 0.0}
 
 # =========================
-#  FASE 4: SISTEMA DE FUSÃO DE DADOS - CORRIGIDO
+#  FASE 4: SISTEMA DE FUSÃO DE DADOS
 # =========================
 class DataFusionEngine:
     def __init__(self):
         self.weights = {
-            'price_action': 0.30,
-            'technical_indicators': 0.30,
-            'market_structure': 0.20,
-            'momentum': 0.20
+            'price_action': 0.25,
+            'technical_indicators': 0.25,
+            'market_structure': 0.25,
+            'momentum': 0.25
         }
     
     def fuse_all_data(self, 
@@ -592,16 +543,16 @@ class DataFusionEngine:
                      traditional_analysis: Dict) -> Dict[str, Any]:
         """Combina todas as fontes de dados para decisão final"""
         
-        # 🎯 ANÁLISE DE PRICE ACTION (30%)
+        # 🎯 ANÁLISE DE PRICE ACTION (25%)
         price_action_score = self._analyze_price_action(chart_analysis, traditional_analysis)
         
-        # 📊 INDICADORES TÉCNICOS (30%)
+        # 📊 INDICADORES TÉCNICOS (25%)
         technical_score = self._analyze_technical_indicators(text_data, indicator_analysis)
         
-        # 🏗️ ESTRUTURA DE MERCADO (20%)
+        # 🏗️ ESTRUTURA DE MERCADO (25%)
         structure_score = self._analyze_market_structure(chart_analysis)
         
-        # 🚀 MOMENTUM (20%)
+        # 🚀 MOMENTUM (25%)
         momentum_score = self._analyze_momentum(indicator_analysis, traditional_analysis)
         
         # 🧮 SCORE FINAL PERFEITAMENTE EQUILIBRADO
@@ -627,94 +578,84 @@ class DataFusionEngine:
     
     def _analyze_price_action(self, chart_analysis: Dict, traditional: Dict) -> float:
         """Analisa price action combinando dados visuais e tradicionais"""
-        try:
-            trend_direction = chart_analysis.get('trend_analysis', {}).get('trend_direction', 0.0)
-            trend_strength = chart_analysis.get('trend_analysis', {}).get('trend_strength', 0.0)
-            traditional_trend = traditional.get('price_action', {}).get('trend_direction', 0.0)
-            
-            # Combina análise visual e tradicional
-            combined_trend = (trend_direction + traditional_trend) / 2.0
-            strength_factor = trend_strength
-            
-            return combined_trend * strength_factor
-        except Exception:
-            return 0.0
+        # ✅ Corrige: extrai da subchave 'trend_analysis'
+        trend_dict = chart_analysis.get('trend_analysis', {})
+        trend_direction = trend_dict.get('trend_direction', 0.0)
+        trend_strength = trend_dict.get('trend_strength', 0.0)
+        traditional_trend = traditional.get('price_action', {}).get('trend_direction', 0.0)
+
+        # Combina análise visual e tradicional
+        combined_trend = (trend_direction + traditional_trend) / 2.0
+        strength_factor = trend_strength
+
+        return combined_trend * strength_factor
+
     
     def _analyze_technical_indicators(self, text_data: Dict, indicator_analysis: Dict) -> float:
         """Analisa indicadores técnicos com dados OCR"""
-        try:
-            rsi_analysis = indicator_analysis.get('rsi', {})
-            macd_analysis = indicator_analysis.get('macd', {})
-            
-            rsi_score = rsi_analysis.get('rsi_normalized', 0.0)
-            macd_score = macd_analysis.get('macd_normalized', 0.0)
-            
-            # Confiança baseada na qualidade dos dados OCR
-            rsi_confidence = rsi_analysis.get('confidence', 0.5)
-            macd_confidence = macd_analysis.get('confidence', 0.5)
-            
-            # Se temos dados OCR confiáveis, usa eles
-            if rsi_confidence > 0.7:
+        rsi_analysis = indicator_analysis.get('rsi', {})
+        macd_analysis = indicator_analysis.get('macd', {})
+        
+        rsi_score = rsi_analysis.get('rsi_normalized', 0.0)
+        macd_score = macd_analysis.get('macd_normalized', 0.0)
+        
+        # Confiança baseada na qualidade dos dados OCR
+        rsi_confidence = rsi_analysis.get('confidence', 0.5)
+        macd_confidence = macd_analysis.get('confidence', 0.5)
+        
+        # Score ponderado pela confiança
+        if rsi_confidence > 0.7 or macd_confidence > 0.7:
+            # Dados confiáveis disponíveis
+            if rsi_confidence > macd_confidence:
                 return rsi_score
-            elif macd_confidence > 0.7:
-                return macd_score
-            elif text_data.get('confidence', 0) > 0.5:
-                # Dados OCR medianos
-                if rsi_score != 0 and macd_score != 0:
-                    return (rsi_score + macd_score) / 2
-                elif rsi_score != 0:
-                    return rsi_score
-                elif macd_score != 0:
-                    return macd_score
-                else:
-                    return 0.0
             else:
-                # Dados limitados, retorna neutro
-                return 0.0
-        except Exception:
+                return macd_score
+        else:
+            # Fallback: usar valores do OCR se existirem
+            rsi_ocr = text_data.get('rsi_value')
+            macd_ocr = text_data.get('macd_value')
+            if rsi_ocr is not None:
+                return float(np.clip((rsi_ocr - 50) / 50.0, -1.0, 1.0))
+            if macd_ocr is not None:
+                return float(np.clip(macd_ocr / 5.0, -1.0, 1.0))
             return 0.0
+
     
     def _analyze_market_structure(self, chart_analysis: Dict) -> float:
         """Analisa estrutura de mercado (suportes/resistências)"""
-        try:
-            levels_data = chart_analysis.get('price_levels', {})
-            supports = levels_data.get('supports', [])
-            resistances = levels_data.get('resistances', [])
-            level_strength = levels_data.get('level_strength', 0.0)
-            
-            if not supports and not resistances:
-                return 0.0
-            
-            # Analisa proximidade a níveis chave (simplificado)
-            # Em uma análise real, isso seria mais complexo
-            if len(supports) > len(resistances):
-                return 0.1 * level_strength  # Mais suportes = leve positivo
-            elif len(resistances) > len(supports):
-                return -0.1 * level_strength  # Mais resistências = leve negativo
-            else:
-                return 0.0
-        except Exception:
+        levels_data = chart_analysis.get('price_levels', {})
+        supports = levels_data.get('supports', [])
+        resistances = levels_data.get('resistances', [])
+        level_strength = levels_data.get('level_strength', 0.0)
+
+        if level_strength <= 0:
             return 0.0
-    
+
+        # Heurística estável: sinal leva em conta quantidade de níveis
+        score = 0.0
+        if resistances and (not supports or len(resistances) >= len(supports)):
+            score -= 0.3 * level_strength
+        if supports and (not resistances or len(supports) > len(resistances)):
+            score += 0.3 * level_strength
+
+        return float(np.clip(score, -1.0, 1.0))
+
     def _analyze_momentum(self, indicator_analysis: Dict, traditional: Dict) -> float:
         """Analisa momentum combinado"""
-        try:
-            rsi_strength = indicator_analysis.get('rsi', {}).get('rsi_strength', 0.5)
-            macd_strength = indicator_analysis.get('macd', {}).get('macd_strength', 0.5)
-            traditional_momentum = traditional.get('price_action', {}).get('momentum', 0.0)
-            
-            momentum_components = [
-                rsi_strength * traditional_momentum,
-                macd_strength * traditional_momentum
-            ]
-            
-            valid_components = [c for c in momentum_components if abs(c) > 0.1]
-            if valid_components:
-                return np.mean(valid_components)
-            else:
-                return traditional_momentum
-        except Exception:
-            return 0.0
+        rsi_strength = indicator_analysis.get('rsi', {}).get('rsi_strength', 0.5)
+        macd_strength = indicator_analysis.get('macd', {}).get('macd_strength', 0.5)
+        traditional_momentum = traditional.get('price_action', {}).get('momentum', 0.0)
+        
+        momentum_components = [
+            rsi_strength * traditional_momentum,
+            macd_strength * traditional_momentum
+        ]
+        
+        valid_components = [c for c in momentum_components if abs(c) > 0.1]
+        if valid_components:
+            return np.mean(valid_components)
+        else:
+            return traditional_momentum
     
     def _get_weighted_analysis(self, price_action: float, technical: float, 
                               structure: float, momentum: float) -> str:
@@ -736,7 +677,7 @@ class DataFusionEngine:
             return "Análise Balanceada"
 
 # =========================
-#  IA SUPER INTELIGENTE E NEUTRA - CORREÇÃO COMPLETA
+#  IA SUPER INTELIGENTE E NEUTRA - ATUALIZADA
 # =========================
 class SuperIntelligentAnalyzer:
     def __init__(self):
@@ -819,7 +760,7 @@ class SuperIntelligentAnalyzer:
             return image
 
     # =========================
-    #  ANÁLISE MULTI-CAMADAS CORRIGIDA
+    #  ANÁLISE MULTI-CAMADAS ATUALIZADA
     # =========================
     
     def _microscopic_trend_analysis(self, price_data: np.ndarray) -> Dict[str, float]:
@@ -1075,11 +1016,11 @@ class SuperIntelligentAnalyzer:
             return {"rsi": 0.0, "macd": 0.0, "macd_strength": 0.0, "volume_intensity": 0.0, "momentum_quality": 0.0}
 
     # =========================
-    #  MOTOR DE DECISÃO 100% NEUTRO - CORRIGIDO
+    #  MOTOR DE DECISÃO 100% NEUTRO - ATUALIZADO
     # =========================
     
     def _absolute_decision_engine(self, all_analyses: Dict, timeframe: str) -> Dict[str, Any]:
-        """MOTOR 100% NEUTRO CORRIGIDO - COM FUSÃO DE DADOS"""
+        """MOTOR 100% NEUTRO ATUALIZADO - COM FUSÃO DE DADOS"""
         try:
             # 🎯 FUSÃO DE TODOS OS DADOS
             fusion_result = self.data_fusion.fuse_all_data(
@@ -1092,22 +1033,15 @@ class SuperIntelligentAnalyzer:
             total_score = fusion_result['total_score']
             component_scores = fusion_result['component_scores']
             
-            print(f"🎯 SCORE FINAL: {total_score:.3f}")
-            print(f"📊 COMPONENTES: {component_scores}")
-            
             # 💥 DECISÃO 100% NEUTRA - APENAS PELOS DADOS
-            if total_score > 0.01:  # Threshold pequeno para evitar oscilações
+            if total_score > 0:
                 direction = "buy"
-                base_confidence = 0.60 + (min(abs(total_score), 0.5) * 0.35)
+                base_confidence = 0.65 + (min(abs(total_score), 0.5) * 0.35)
                 reasoning = self._generate_enhanced_reasoning("buy", component_scores, fusion_result['weighted_analysis'])
-            elif total_score < -0.01:
-                direction = "sell"
-                base_confidence = 0.60 + (min(abs(total_score), 0.5) * 0.35)
-                reasoning = self._generate_enhanced_reasoning("sell", component_scores, fusion_result['weighted_analysis'])
             else:
-                direction = "hold"
-                base_confidence = 0.55
-                reasoning = "⚖️ HOLD - Mercado em equilíbrio técnico"
+                direction = "sell"
+                base_confidence = 0.65 + (min(abs(total_score), 0.5) * 0.35)
+                reasoning = self._generate_enhanced_reasoning("sell", component_scores, fusion_result['weighted_analysis'])
             
             # 🎪 CONFIANÇA NEUTRA MELHORADA
             final_confidence = self._calculate_enhanced_confidence(base_confidence, all_analyses, fusion_result)
@@ -1129,7 +1063,6 @@ class SuperIntelligentAnalyzer:
             }
             
         except Exception as e:
-            print(f"❌ Erro no motor de decisão: {e}")
             # EM CASO DE ERRO: DECISÃO NEUTRA BASEADA EM HORÁRIO DE MERCADO
             return self._neutral_market_decision()
 
@@ -1142,7 +1075,7 @@ class SuperIntelligentAnalyzer:
             # Analisa componentes mais fortes
             strong_components = []
             for comp_name, score in component_scores.items():
-                if abs(score) > 0.1:  # Threshold mais baixo para capturar mais sinais
+                if abs(score) > 0.15:
                     comp_label = {
                         'price_action': 'Tendência',
                         'technical_indicators': 'Indicadores',
@@ -1157,12 +1090,12 @@ class SuperIntelligentAnalyzer:
             else:
                 return f"📈 COMPRA {strength} - Convergência técnica positiva"
         
-        elif direction == "sell":
+        else:  # sell
             strength = "FORTE" if abs(component_scores['price_action']) > 0.2 else "moderada"
             
             strong_components = []
             for comp_name, score in component_scores.items():
-                if abs(score) > 0.1:
+                if abs(score) > 0.15:
                     comp_label = {
                         'price_action': 'Tendência',
                         'technical_indicators': 'Indicadores', 
@@ -1176,9 +1109,6 @@ class SuperIntelligentAnalyzer:
                 return f"📉 VENDA {strength} - {weighted_analysis}: {analysis}"
             else:
                 return f"📉 VENDA {strength} - Convergência técnica negativa"
-        
-        else:  # hold
-            return "⚖️ HOLD - Mercado em equilíbrio técnico"
 
     def _calculate_enhanced_confidence(self, base_confidence: float, all_analyses: Dict, fusion_result: Dict) -> float:
         """Calcula confiança melhorada considerando todas as fontes"""
@@ -1218,7 +1148,7 @@ class SuperIntelligentAnalyzer:
         # Contexto baseado em scores
         if abs(total_score) > 0.3:
             return "movimento_forte"
-        elif abs(total_score) < 0.05:
+        elif abs(total_score) < 0.1:
             return "mercado_lateral"
         elif component_scores['price_action'] > 0.2:
             return "tendencia_de_alta"
@@ -1237,36 +1167,36 @@ class SuperIntelligentAnalyzer:
             
             if is_market_hours:
                 return {
-                    "direction": "hold",
-                    "confidence": 0.58,
-                    "reasoning": "⚖️ HOLD - Análise de mercado: horário de alta liquidez",
-                    "total_score": 0.05,
+                    "direction": "buy",
+                    "confidence": 0.62,
+                    "reasoning": "📈 COMPRA - Análise de mercado: horário de alta liquidez",
+                    "total_score": 0.10,
                     "context": "market_hours",
-                    "component_scores": {"price_action": 0.03, "technical_indicators": 0.03, "market_structure": 0.03, "momentum": 0.03},
+                    "component_scores": {"price_action": 0.08, "technical_indicators": 0.08, "market_structure": 0.08, "momentum": 0.08},
                     "fusion_analysis": "Horário de Mercado",
-                    "trend_power": 0.03,
-                    "macd_power": 0.03,
-                    "micro_power": 0.03
+                    "trend_power": 0.08,
+                    "macd_power": 0.08,
+                    "micro_power": 0.08
                 }
             else:
                 return {
-                    "direction": "hold", 
-                    "confidence": 0.58,
-                    "reasoning": "⚖️ HOLD - Análise de mercado: horário de baixa liquidez",
-                    "total_score": 0.0,
+                    "direction": "sell", 
+                    "confidence": 0.62,
+                    "reasoning": "📉 VENDA - Análise de mercado: horário de baixa liquidez",
+                    "total_score": -0.10,
                     "context": "after_hours",
-                    "component_scores": {"price_action": 0.0, "technical_indicators": 0.0, "market_structure": 0.0, "momentum": 0.0},
+                    "component_scores": {"price_action": -0.08, "technical_indicators": -0.08, "market_structure": -0.08, "momentum": -0.08},
                     "fusion_analysis": "Horário de Mercado",
-                    "trend_power": 0.0,
-                    "macd_power": 0.0,
-                    "micro_power": 0.0
+                    "trend_power": -0.08,
+                    "macd_power": -0.08,
+                    "micro_power": -0.08
                 }
         except Exception:
             return {
-                "direction": "hold",
-                "confidence": 0.55,
-                "reasoning": "⚖️ HOLD - Princípio neutro: cautela em análise indeterminada",
-                "total_score": 0.0,
+                "direction": "sell",
+                "confidence": 0.60,
+                "reasoning": "📉 VENDA - Princípio neutro: cautela em análise indeterminada",
+                "total_score": -0.05,
                 "context": "neutral_caution",
                 "component_scores": {"price_action": 0.0, "technical_indicators": 0.0, "market_structure": 0.0, "momentum": 0.0},
                 "fusion_analysis": "Análise Conservadora",
@@ -1311,7 +1241,7 @@ class SuperIntelligentAnalyzer:
         }
 
     def analyze(self, blob: bytes, timeframe: str = '1m') -> Dict[str, Any]:
-        """ANÁLISE 100% NEUTRA CORRIGIDA - COM 4 FASES DE ANÁLISE"""
+        """ANÁLISE 100% NEUTRA ATUALIZADA - COM 4 FASES DE ANÁLISE"""
         
         # Cache inteligente
         cached = self.cache.get(blob, timeframe)
@@ -1327,26 +1257,32 @@ class SuperIntelligentAnalyzer:
             img_array = self._preprocess_image(image, timeframe)
             price_data = self._extract_price_data(img_array)
             
-            # 🎯 FASE 1: EXTRAÇÃO DE TEXTO (OCR) - CORRIGIDA
-            print("🔍 Iniciando extração de texto OCR...")
+            # 🎯 FASE 1: EXTRAÇÃO DE TEXTO (OCR)
             text_data = self.text_extractor.extract_text_data(image)
             
             # 🎯 FASE 2: ANÁLISE VISUAL DO GRÁFICO
-            print("📊 Iniciando análise visual do gráfico...")
             chart_analysis = {
                 'price_levels': self.chart_analyzer.detect_price_levels(price_data),
                 'trend_analysis': self.chart_analyzer.analyze_trend_strength(price_data)
             }
             
             # 🎯 FASE 3: ANÁLISE DE INDICADORES
-            print("📈 Iniciando análise de indicadores...")
             indicator_analysis = {
                 'rsi': self.indicator_analyzer.analyze_rsi_position(text_data),
                 'macd': self.indicator_analyzer.analyze_macd_signal(text_data)
             }
             
-            # 🧠 ANÁLISE MULTI-CAMADAS ORIGINAL
-            print("🧠 Iniciando análise multi-camadas...")
+            
+
+            # 🔥 Integra valores OCR diretamente e reforça confiança
+            if text_data.get('rsi_value') is not None:
+                indicator_analysis['rsi']['rsi_value_ocr'] = float(text_data['rsi_value'])
+            if text_data.get('macd_value') is not None:
+                indicator_analysis['macd']['macd_value_ocr'] = float(text_data['macd_value'])
+            if text_data.get('confidence', 0) > 0.6:
+                indicator_analysis['rsi']['confidence'] = max(indicator_analysis['rsi'].get('confidence', 0), text_data['confidence'])
+                indicator_analysis['macd']['confidence'] = max(indicator_analysis['macd'].get('confidence', 0), text_data['confidence'])
+# 🧠 ANÁLISE MULTI-CAMADAS ORIGINAL
             traditional_analyses = {
                 'traditional': {
                     'price_action': self._analyze_price_action(price_data, timeframe),
@@ -1358,7 +1294,6 @@ class SuperIntelligentAnalyzer:
             }
             
             # 🎯 FASE 4: FUSÃO DE TODOS OS DADOS
-            print("⚡ Iniciando fusão de dados...")
             all_analyses = {
                 'text_data': text_data,
                 'chart_analysis': chart_analysis,
@@ -1366,15 +1301,14 @@ class SuperIntelligentAnalyzer:
                 **traditional_analyses
             }
             
-            # 🎯 MOTOR DE DECISÃO 100% NEUTRO CORRIGIDO
-            print("🎯 Executando motor de decisão...")
+            # 🎯 MOTOR DE DECISÃO 100% NEUTRO ATUALIZADO
             decision = self._absolute_decision_engine(all_analyses, timeframe)
             time_info = self._get_entry_timeframe(timeframe)
             
             # 📊 QUALIDADE DA ANÁLISE MELHORADA
-            signal_quality = self._calculate_signal_quality({'decision': decision, **all_analyses})
+            signal_quality = self._calculate_signal_quality(all_analyses)
             
-            # 🎨 RESULTADO SUPER NEUTRO CORRIGIDO
+            # 🎨 RESULTADO SUPER NEUTRO ATUALIZADO
             result = {
                 "direction": decision["direction"],
                 "final_confidence": float(decision["confidence"]),
@@ -1406,15 +1340,32 @@ class SuperIntelligentAnalyzer:
                 "text_data": {
                     "rsi_value": text_data.get('rsi_value'),
                     "macd_value": text_data.get('macd_value'),
+                    "ema_value": text_data.get('ema_value'),
                     "has_technical_data": text_data.get('confidence', 0) > 0.5
                 }
             }
             
+            
+            # 🔋 Exporta poderes (0–100%) para a UI
+            comp = decision.get("component_scores", {})
+            def _to_pct(x):
+                try:
+                    return float(round(abs(x) * 100.0, 1))
+                except Exception:
+                    return 0.0
+            result.update({
+                "powers": {
+                    "trend_power_pct": _to_pct(comp.get("price_action", 0.0)),
+                    "indicators_power_pct": _to_pct(comp.get("technical_indicators", 0.0)),
+                    "structure_power_pct": _to_pct(comp.get("market_structure", 0.0)),
+                    "momentum_power_pct": _to_pct(comp.get("momentum", 0.0))
+                }
+            })
+
             self.cache.set(blob, timeframe, result)
             return result
             
         except Exception as e:
-            print(f"❌ Erro na análise: {e}")
             # DECISÃO NEUTRA EM ERRO
             fallback_result = self._neutral_market_decision()
             fallback_result.update({
@@ -1573,7 +1524,6 @@ HTML_TEMPLATE = '''
         
         .signal-buy { color: #00ff88; }
         .signal-sell { color: #ff4444; }
-        .signal-hold { color: #7ce0ff; }
         
         .signal-text {
             font-weight: 800; 
@@ -1640,7 +1590,6 @@ HTML_TEMPLATE = '''
         .context-tendencia_de_alta { background: linear-gradient(135deg, #00ff88, #00cc66); color: white; }
         .context-tendencia_de_baixa { background: linear-gradient(135deg, #ff4444, #cc0000); color: white; }
         .context-indicadores_favoraveis { background: linear-gradient(135deg, #7ce0ff, #4a90e2); color: white; }
-        .context-mercado_balanceado { background: linear-gradient(135deg, #7ce0ff, #4a90e2); color: white; }
         
         .metrics {
             margin-top: 15px; 
@@ -1736,17 +1685,6 @@ HTML_TEMPLATE = '''
             margin: 10px 0;
             font-size: 12px;
         }
-        
-        .hold-indicator {
-            background: rgba(124, 224, 255, 0.1);
-            border: 1px solid #7ce0ff;
-            border-radius: 8px;
-            padding: 10px;
-            margin: 10px 0;
-            text-align: center;
-            color: #7ce0ff;
-            font-weight: 600;
-        }
     </style>
 </head>
 <body>
@@ -1754,7 +1692,7 @@ HTML_TEMPLATE = '''
         <div class="header">
             <div class="title">🧠⚖️ IA SIGNAL PRO - 100% NEUTRA</div>
             <div class="subtitle">ZERO VIÉS - DECISÕES APENAS PELO MOMENTO DO MERCADO</div>
-            <div class="subtitle" style="color: #7ce0ff; font-size: 11px;">🎯 SISTEMA CORRIGIDO: OCR OTIMIZADO + FUSÃO DE DADOS</div>
+            <div class="subtitle" style="color: #7ce0ff; font-size: 11px;">🎯 SISTEMA ATUALIZADO: OCR + ANÁLISE VISUAL + FUSÃO DE DADOS</div>
         </div>
         
         <div class="timeframe-selector">
@@ -1997,15 +1935,7 @@ HTML_TEMPLATE = '''
                 
                 // Define classe e texto do sinal
                 signalText.className = `signal-text signal-${direction}`;
-                let directionText = '';
-                if (direction === 'buy') {
-                    directionText = '🎯 COMPRAR';
-                } else if (direction === 'sell') {
-                    directionText = '🎯 VENDER';
-                } else {
-                    directionText = '⚖️ HOLD';
-                }
-                
+                let directionText = direction === 'buy' ? '🎯 COMPRAR' : '🎯 VENDER';
                 signalText.innerHTML = `${directionText} <span class="neutral-badge">100% NEUTRO</span> ${cached ? '<span class="cache-badge">CACHE</span>' : ''}`;
                 
                 // Atualiza informações
@@ -2026,6 +1956,9 @@ HTML_TEMPLATE = '''
                     }
                     if (textData.macd_value) {
                         technicalHtml += `<div class="metric-item"><span>MACD:</span><span class="metric-value">${textData.macd_value}</span></div>`;
+                    }
+                    if (textData.ema_value) {
+                        technicalHtml += `<div class="metric-item"><span>EMA:</span><span class="metric-value">${textData.ema_value}</span></div>`;
                     }
                     
                     if (technicalHtml) {
@@ -2151,7 +2084,7 @@ def analyze_photo():
         if len(image_bytes) == 0:
             return jsonify({'error': 'Arquivo vazio'}), 400
         
-        # Análise 100% NEUTRA CORRIGIDA
+        # Análise 100% NEUTRA ATUALIZADA
         analysis = analyzer.analyze(image_bytes, timeframe)
         
         return jsonify(analysis)
@@ -2166,10 +2099,10 @@ def health_check():
     """Health check para monitoramento"""
     return jsonify({
         'status': 'healthy', 
-        'service': 'IA Signal Pro - 100% NEUTRA - SISTEMA CORRIGIDO',
+        'service': 'IA Signal Pro - 100% NEUTRA - SISTEMA ATUALIZADO',
         'timestamp': datetime.datetime.now().isoformat(),
-        'version': '7.1.0-ocr-corrigido',
-        'features': ['OCR OTIMIZADO', 'Análise Visual', 'Fusão de Dados', '4 Fases']
+        'version': '7.0.0-fusao-dados',
+        'features': ['OCR', 'Análise Visual', 'Fusão de Dados', '4 Fases']
     })
 
 @app.route('/cache/clear', methods=['POST'])
@@ -2198,11 +2131,11 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('DEBUG', 'False').lower() == 'true'
     
-    print(f"🚀 IA Signal Pro - 100% NEUTRA CORRIGIDA iniciando na porta {port}")
-    print(f"🧠⚖️ SISTEMA: ZERO VIÉS - OCR OTIMIZADO")
-    print(f"🎯 PRINCÍPIO: DETECÇÃO MELHORADA DE RSI/MACD")
-    print(f"📈 SAÍDA: COMPRA/VENDA/HOLD - SEM FAVORITISMO")
-    print(f"💪 NEUTRALIDADE: PONDERAÇÃO EQUILIBRADA")
-    print(f"🔍 RECURSOS: OCR Multi-estratégia + Análise Visual + Fusão de Dados")
+    print(f"🚀 IA Signal Pro - 100% NEUTRA ATUALIZADA iniciando na porta {port}")
+    print(f"🧠⚖️ SISTEMA: ZERO VIÉS - 4 FASES DE ANÁLISE")
+    print(f"🎯 PRINCÍPIO: OCR + ANÁLISE VISUAL + FUSÃO DE DADOS")
+    print(f"📈 SAÍDA: COMPRA ou VENDA - SEM FAVORITISMO")
+    print(f"💪 NEUTRALIDADE: PONDERAÇÃO IGUAL + ANÁLISE DO MOMENTO")
+    print(f"🔍 RECURSOS: Detecção de RSI/MACD + Suportes/Resistências + Tendências")
     
     app.run(host='0.0.0.0', port=port, debug=debug)
