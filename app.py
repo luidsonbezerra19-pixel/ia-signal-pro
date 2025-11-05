@@ -1370,7 +1370,7 @@ HTML_TEMPLATE = '''
         
         <img id="imagePreview" class="image-preview" alt="Prévia da imagem">
         
-        <!-- NOVO: INDICADORES DO USUÁRIO -->
+        <!-- SEÇÃO DOS INDICADORES DO USUÁRIO -->
         <div class="user-indicators">
             <div style="text-align: center; font-weight: 600; margin-bottom: 10px; color: #7ce0ff;">
                 🔢 DADOS TÉCNICOS <span class="optional-badge">OPCIONAL</span>
@@ -1462,7 +1462,7 @@ HTML_TEMPLATE = '''
             const powerMetrics = document.getElementById('powerMetrics');
             const timeframeBtns = document.querySelectorAll('.timeframe-btn');
             
-            // NOVO: Inputs dos indicadores
+            // Inputs dos indicadores do usuário
             const macdInput = document.getElementById('macdInput');
             const rsiInput = document.getElementById('rsiInput');
             const adxInput = document.getElementById('adxInput');
@@ -1575,7 +1575,7 @@ HTML_TEMPLATE = '''
                     formData.append('image', selectedFile);
                     formData.append('timeframe', currentTimeframe);
                     
-                    // NOVO: Adiciona indicadores do usuário ao formData
+                    // Adiciona indicadores do usuário ao formData
                     const userIndicators = {};
                     if (macdInput.value) userIndicators.macd = parseFloat(macdInput.value);
                     if (rsiInput.value) userIndicators.rsi = parseFloat(rsiInput.value);
@@ -1748,7 +1748,7 @@ def analyze_photo():
         if timeframe not in ['1m', '5m']:
             timeframe = '1m'
         
-        # NOVO: Processa indicadores do usuário
+        # Processa indicadores do usuário
         user_indicators = {}
         user_indicators_str = request.form.get('user_indicators')
         if user_indicators_str:
