@@ -350,11 +350,11 @@ class SuperIntelligentAnalyzer:
             return {"flow_continuity": 0.5, "breakage_resistance": 0.5, "transition_smoothness": 0.5, "overall_flow_quality": 0.5}
 
     # =========================
-    #  ANÁLISE TRADICIONAL FORTALECIDA
+    #  ANÁLISE TRADICIONAL FORTALECIDA - CORRIGIDA!
     # =========================
     
     def _analyze_price_action(self, price_data: np.ndarray, timeframe: str) -> Dict[str, float]:
-        """Análise tradicional de price action - FORTALECIDA"""
+        """Análise tradicional de price action - CORRIGIDA"""
         try:
             height, width = price_data.shape
             segments = 6
@@ -370,27 +370,34 @@ class SuperIntelligentAnalyzer:
             
             if len(regions) >= 3:
                 if len(regions) > 1:
+                    # ✅ CORREÇÃO: Normalizar o slope para evitar valores extremos
+                    price_range = max(regions) - min(regions) if max(regions) != min(regions) else 1
                     slope = (regions[-1] - regions[0]) / (len(regions) - 1)
+                    slope_normalized = slope / (price_range + 1e-8)  # Normalizado para -1 a 1
                 else:
-                    slope = 0
+                    slope_normalized = 0
                     
                 if len(regions) > 1:
                     changes = [regions[i] - regions[i-1] for i in range(1, len(regions))]
                     avg_change = np.mean(np.abs(changes))
                     if avg_change > 0:
-                        trend_strength = min(1.0, abs(slope) / (avg_change + 1e-8))
+                        trend_strength = min(1.0, abs(slope_normalized) / (avg_change + 1e-8))
                     else:
-                        trend_strength = min(1.0, abs(slope) * 10)
+                        trend_strength = min(1.0, abs(slope_normalized) * 10)
                 else:
                     trend_strength = 0
             else:
-                slope = 0
+                slope_normalized = 0
                 trend_strength = 0.5
             
+            # ✅ CORREÇÃO: Garantir valores dentro de limites razoáveis
+            trend_strength = min(1.0, max(0.0, trend_strength))
+            slope_normalized = max(-1.0, min(1.0, slope_normalized))  # Limite de -100% a +100%
+            
             return {
-                "trend_direction": float(slope),
+                "trend_direction": float(slope_normalized),
                 "trend_strength": float(trend_strength),
-                "momentum": float(slope),
+                "momentum": float(slope_normalized),
                 "volatility": float(np.std(price_data) / (np.mean(price_data) + 1e-8)),
                 "price_range": float(np.ptp(price_data))
             }
@@ -549,6 +556,9 @@ class SuperIntelligentAnalyzer:
         trend_direction = traditional['price_action']['trend_direction']
         trend_strength = traditional['price_action']['trend_strength']
         trend_power = trend_direction * trend_strength
+        
+        # ✅ CORREÇÃO: Limitar trend_power para evitar dominância excessiva
+        trend_power = np.clip(trend_power, -1.0, 1.0)  # Máximo ±100%
         
         # MACD: 20%
         macd_value = traditional['indicators']['macd']
@@ -1759,7 +1769,7 @@ def health_check():
         'status': 'healthy', 
         'service': 'IA Signal Pro - 100% NEUTRA',
         'timestamp': datetime.datetime.now().isoformat(),
-        'version': '8.0.0-zero-vies'
+        'version': '8.0.0-valores-normalizados'
     })
 
 @app.route('/cache/clear', methods=['POST'])
@@ -1790,8 +1800,8 @@ if __name__ == '__main__':
     
     print(f"🚀 IA Signal Pro - 100% NEUTRA iniciando na porta {port}")
     print(f"🧠⚖️ SISTEMA: ZERO VIÉS - DECISÕES PURAMENTE TÉCNICAS")
-    print(f"🎯 VERSÃO: ZERO FALLBACK - SEM CHUTES ALEATÓRIOS")
+    print(f"🎯 VERSÃO: VALORES NORMALIZADOS - SEM DISTORÇÕES")
     print(f"📈 SAÍDA: COMPRA ou VENDA - BASEADO APENAS NOS DADOS")
-    print(f"💪 NEUTRALIDADE: RSI SIMÉTRICO + PESOS IGUAIS + CONFIANÇA BASE 0%")
+    print(f"💪 NEUTRALIDADE: RSI SIMÉTRICO + PESOS IGUAIS + VALORES LIMITADOS")
     
     app.run(host='0.0.0.0', port=port, debug=debug)
