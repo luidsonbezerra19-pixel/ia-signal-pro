@@ -8,8 +8,8 @@ except Exception as _e:
     print('[WARN] OpenCV (cv2) not available. Visual analysis will be skipped.', str(_e))
 
 """
-IA SIGNAL PRO - SUPER ESPECIALISTA DAY TRADE CRYPTO 🧠⚡
-ANÁLISE MINUCIOSA - ZERO CHUTES - PRECISÃO ABSOLUTA
+IA SIGNAL PRO - SUPER INTELIGENTE 🧠⚡
+ANÁLISE DE CONFLITOS - DECISÕES CONTEXTUAIS - ZERO VIÉS
 """
 
 import io
@@ -81,7 +81,7 @@ class AnalysisCache:
             pass
 
 # =========================
-#  IA SUPER ESPECIALISTA DAY TRADE CRYPTO
+#  IA SUPER INTELIGENTE - ANÁLISE DE CONFLITOS
 # =========================
 class SuperIntelligentAnalyzer:
     def __init__(self):
@@ -121,7 +121,7 @@ class SuperIntelligentAnalyzer:
         width, height = image.size
         
         # Redimensionamento adequado para análise precisa
-        target_size = (800, 600)  # Mais pixels para análise detalhada
+        target_size = (800, 600)
         image = image.resize(target_size, Image.LANCZOS)
         
         return np.array(image)
@@ -173,7 +173,7 @@ class SuperIntelligentAnalyzer:
             trend_signals = []
             
             for resolution in resolutions:
-                segment_size = max(1, width // (8 * resolution))  # Mais segmentos
+                segment_size = max(1, width // (8 * resolution))
                 segments = []
                 
                 for i in range(8 * resolution):
@@ -210,13 +210,13 @@ class SuperIntelligentAnalyzer:
             
             if trend_signals:
                 weighted_trend = sum(t * s for t, s in trend_signals) / sum(s for _, s in trend_signals)
-                overall_strength = np.mean([s for _, s in trend_signals])
+                overall_strength = np.mean([s for _, s in trend_signals)
             else:
                 weighted_trend = 0
                 overall_strength = 0
             
             return {
-                "nano_trend": float(np.clip(weighted_trend * 2, -1, 1)),  # Mais sensível
+                "nano_trend": float(np.clip(weighted_trend * 2, -1, 1)),
                 "convergence_strength": float(overall_strength),
                 "multi_resolution_agreement": float(1.0 - np.std([t for t, _ in trend_signals]) if trend_signals else 0)
             }
@@ -242,7 +242,7 @@ class SuperIntelligentAnalyzer:
     def _price_density_analysis(self, price_data: np.ndarray) -> float:
         """Analisa a densidade/distribuição do preço para day trade"""
         try:
-            hist, bins = np.histogram(price_data.flatten(), bins=30)  # Mais bins para precisão
+            hist, bins = np.histogram(price_data.flatten(), bins=30)
             hist_normalized = hist / np.sum(hist)
             entropy = -np.sum(hist_normalized * np.log(hist_normalized + 1e-8))
             max_entropy = np.log(len(hist))
@@ -264,14 +264,13 @@ class SuperIntelligentAnalyzer:
             velocity = np.gradient(row_means)
             acceleration = np.gradient(velocity)
             
-            # Foco nos movimentos mais recentes (últimos 3-7 candles)
+            # Foco nos movimentos mais recentes
             recent_velocity = np.mean(velocity[-min(7, len(velocity)):])
             recent_acceleration = np.mean(acceleration[-min(5, len(acceleration)):])
             
-            # Cálculo mais sensível para day trade
             momentum_score = (
-                np.tanh(recent_velocity * 15) * 0.6 +  # Mais sensível
-                np.tanh(recent_acceleration * 8) * 0.4  # Mais sensível
+                np.tanh(recent_velocity * 15) * 0.6 +
+                np.tanh(recent_acceleration * 8) * 0.4
             )
             
             return float((momentum_score + 1) / 2)
@@ -290,8 +289,8 @@ class SuperIntelligentAnalyzer:
             # Volatilidade de curto prazo
             short_term_vol = np.std(row_means[-min(10, len(row_means)):])
             
-            # Volatilidade ideal para day trade (nem muito alta, nem muito baixa)
-            ideal_vol_range = (0.05, 0.15)  # Ajustável conforme o ativo
+            # Volatilidade ideal para day trade
+            ideal_vol_range = (0.05, 0.15)
             vol_score = 1.0 - abs(short_term_vol - np.mean(ideal_vol_range)) / (ideal_vol_range[1] - ideal_vol_range[0])
             
             return float(np.clip(vol_score, 0, 1))
@@ -324,7 +323,6 @@ class SuperIntelligentAnalyzer:
             row_means = np.mean(price_data, axis=0)
             changes = np.diff(row_means)
             
-            # Calcula suavidade das transições (importante para day trade)
             acceleration = np.diff(changes)
             smoothness = 1.0 / (1.0 + np.std(acceleration))
             
@@ -340,7 +338,7 @@ class SuperIntelligentAnalyzer:
                 return 0.5
                 
             vertical_profiles = []
-            for col in range(0, width, max(1, width // 15)):  # Mais pontos de análise
+            for col in range(0, width, max(1, width // 15)):
                 column_data = price_data[:, col]
                 if len(column_data) > 0:
                     profile = np.gradient(column_data)
@@ -363,7 +361,6 @@ class SuperIntelligentAnalyzer:
                 
             row_means = np.mean(price_data, axis=0)
             
-            # Calcula derivada segunda para suavidade
             first_deriv = np.gradient(row_means)
             second_deriv = np.gradient(first_deriv)
             
@@ -380,7 +377,7 @@ class SuperIntelligentAnalyzer:
         """Análise de price action para day trade"""
         try:
             height, width = price_data.shape
-            segments = 8  # Mais segmentos para análise detalhada
+            segments = 8
             segment_size = max(1, width // segments)
             regions = []
             
@@ -405,7 +402,7 @@ class SuperIntelligentAnalyzer:
                     if avg_change > 0:
                         trend_strength = min(1.0, abs(slope_normalized) / (avg_change + 1e-8))
                     else:
-                        trend_strength = min(1.0, abs(slope_normalized) * 12)  # Mais sensível
+                        trend_strength = min(1.0, abs(slope_normalized) * 12)
                 else:
                     trend_strength = 0
             else:
@@ -418,7 +415,7 @@ class SuperIntelligentAnalyzer:
             return {
                 "trend_direction": float(slope_normalized),
                 "trend_strength": float(trend_strength),
-                "momentum": float(slope_normalized * 1.2),  # Mais momentum
+                "momentum": float(slope_normalized * 1.2),
                 "volatility": float(np.std(price_data) / (np.mean(price_data) + 1e-8)),
                 "price_range": float(np.ptp(price_data))
             }
@@ -435,14 +432,13 @@ class SuperIntelligentAnalyzer:
                 
                 # MACD FORTALECIDO
                 fast_window = min(3, len(row_means))
-                slow_window = min(6, len(row_means))  # Mais rápido para day trade
+                slow_window = min(6, len(row_means))
                 signal_window = min(4, len(row_means))
                 
                 fast_ma = np.mean(row_means[-fast_window:])
                 slow_ma = np.mean(row_means[-slow_window:])
                 macd_line = fast_ma - slow_ma
                 
-                # Signal line (média do MACD)
                 macd_values = []
                 for i in range(slow_window, len(row_means)):
                     fast_val = np.mean(row_means[i-fast_window:i])
@@ -476,14 +472,13 @@ class SuperIntelligentAnalyzer:
                         rs = avg_gain / avg_loss
                         rsi = 100 - (100 / (1 + rs))
                     
-                    # Normaliza para -1 a 1
                     rsi_normalized = (rsi - 50) / 50
                 else:
                     rsi_normalized = 0.0
                 
-                # FORÇA DO MACD (0 a 1)
+                # FORÇA DO MACD
                 volatility = np.std(row_means) + 1e-8
-                macd_strength = min(1.0, abs(macd_histogram) / (volatility * 1.5))  # Mais sensível
+                macd_strength = min(1.0, abs(macd_histogram) / (volatility * 1.5))
                 macd_direction = 1 if macd_histogram > 0 else -1
                 macd_power = macd_strength * macd_direction
                 
@@ -496,128 +491,207 @@ class SuperIntelligentAnalyzer:
                 "rsi": float(rsi_normalized),
                 "macd": float(macd_power),
                 "macd_strength": float(macd_strength),
-                "volume_intensity": float(min(1.0, np.var(price_data) / 800.0)),  # Mais sensível
+                "volume_intensity": float(min(1.0, np.var(price_data) / 800.0)),
                 "momentum_quality": float(min(1.0, (abs(rsi_normalized) + abs(macd_power)) / 2))
             }
         except Exception as e:
             return {"rsi": 0.0, "macd": 0.0, "macd_strength": 0.0, "volume_intensity": 0.0, "momentum_quality": 0.0}
 
     # =========================
-    #  ANÁLISE DOS INDICADORES DO USUÁRIO - OTIMIZADA
+    #  ANÁLISE INTELIGENTE DE CONFLITOS - NOVA!
     # =========================
     
     def _analyze_user_indicators(self, user_indicators: Dict) -> Dict[str, float]:
-        """Analisa os indicadores fornecidos pelo usuário - OTIMIZADA PARA DAY TRADE"""
+        """Análise INTELIGENTE dos indicadores do usuário"""
         try:
             macd = float(user_indicators.get('macd', 0))
             rsi = float(user_indicators.get('rsi', 50))
             adx = float(user_indicators.get('adx', 0))
             
-            # ✅ RSI CRYPTO-OTIMIZADO (mais sensível)
-            if rsi >= 75:  # SOBRECOMPRA EXTREMA
-                rsi_power = -0.8
-                rsi_strength = 0.9
-            elif rsi <= 25:  # SOBREVENDA EXTREMA  
-                rsi_power = 0.8
-                rsi_strength = 0.9
-            elif rsi >= 65:  # SOBRECOMPRA
-                rsi_power = -0.5
-                rsi_strength = 0.7
+            # ✅ ANÁLISE INTELIGENTE DO RSI
+            if rsi <= 25:  # SOBREVENDA EXTREMA
+                rsi_power = 0.8   # Sinal de COMPRA (reversão esperada)
+                rsi_context = "oversold_strong"
+            elif rsi >= 75:  # SOBRECOMPRA EXTREMA  
+                rsi_power = -0.8  # Sinal de VENDA (reversão esperada)
+                rsi_context = "overbought_strong"
             elif rsi <= 35:  # SOBREVENDA
-                rsi_power = 0.5
-                rsi_strength = 0.7
+                rsi_power = 0.5   # Sinal de COMPRA
+                rsi_context = "oversold"
+            elif rsi >= 65:  # SOBRECOMPRA
+                rsi_power = -0.5  # Sinal de VENDA
+                rsi_context = "overbought"
             else:  # ZONA NEUTRA
                 rsi_power = (rsi - 50) / 50 * 0.3
-                rsi_strength = 0.4
+                rsi_context = "neutral"
             
-            # ✅ MACD FORTE (cripto responde bem a MACD)
-            macd_power = np.clip(macd * 8, -1, 1)  # Mais sensível para day trade
-            macd_strength = min(1.0, abs(macd) * 8)
+            # ✅ ANÁLISE INTELIGENTE DO MACD
+            macd_power = np.clip(macd * 2, -1, 1)  # Normalizado
+            macd_strength = min(1.0, abs(macd) * 0.5)
             
-            # ✅ ADX - FORÇA DA TENDÊNCIA
-            if adx > 40:  # TENDÊNCIA FORTE
-                adx_power = 0.9
-            elif adx > 25:  # TENDÊNCIA MODERADA
+            if macd < -2.0:
+                macd_context = "strong_sell"
+            elif macd > 2.0:
+                macd_context = "strong_buy"
+            elif macd < -0.5:
+                macd_context = "sell"
+            elif macd > 0.5:
+                macd_context = "buy"
+            else:
+                macd_context = "neutral"
+            
+            # ✅ ANÁLISE INTELIGENTE DO ADX
+            if adx > 40:
+                adx_power = 0.8
+                adx_context = "strong_trend"
+            elif adx > 25:
                 adx_power = 0.6
-            else:  # MERCADO LATERAL
+                adx_context = "moderate_trend"
+            else:
                 adx_power = 0.3
-            
-            # ✅ SCORE FINAL OTIMIZADO PARA DAY TRADE
-            user_score = (
-                macd_power * 0.40 +    # MACD mais importante em cripto
-                rsi_power * 0.35 +     # RSI muito importante
-                adx_power * 0.25       # ADX confirma força
-            )
+                adx_context = "weak_trend"
             
             return {
                 "user_macd_power": float(macd_power),
                 "user_macd_strength": float(macd_strength),
+                "user_macd_context": macd_context,
                 "user_rsi_power": float(rsi_power),
-                "user_rsi_strength": float(rsi_strength),
+                "user_rsi_strength": float(0.8 if abs(rsi_power) > 0.7 else 0.5),
+                "user_rsi_context": rsi_context,
                 "user_adx_power": float(adx_power),
-                "user_combined_score": float(user_score),
-                "user_confidence": float(min(1.0, (macd_strength + rsi_strength + adx_power) / 3))
+                "user_adx_context": adx_context,
+                "user_confidence": float(min(1.0, (macd_strength + abs(rsi_power) + adx_power) / 3))
             }
         except Exception as e:
             return {
-                "user_macd_power": 0.0,
-                "user_macd_strength": 0.0,
-                "user_rsi_power": 0.0,
-                "user_rsi_strength": 0.0,
-                "user_adx_power": 0.0,
-                "user_combined_score": 0.0,
+                "user_macd_power": 0.0, "user_macd_strength": 0.0, "user_macd_context": "neutral",
+                "user_rsi_power": 0.0, "user_rsi_strength": 0.0, "user_rsi_context": "neutral", 
+                "user_adx_power": 0.0, "user_adx_context": "weak_trend",
                 "user_confidence": 0.0
             }
 
+    def _intelligent_conflict_resolution(self, user_analysis: Dict, chart_analysis: Dict) -> Dict[str, Any]:
+        """RESOLUÇÃO INTELIGENTE de conflitos entre indicadores"""
+        
+        user_macd = user_analysis.get('user_macd_power', 0)
+        user_rsi = user_analysis.get('user_rsi_power', 0)
+        user_adx = user_analysis.get('user_adx_power', 0)
+        macd_context = user_analysis.get('user_macd_context', 'neutral')
+        rsi_context = user_analysis.get('user_rsi_context', 'neutral')
+        
+        chart_trend = chart_analysis['traditional']['price_action']['trend_direction']
+        chart_strength = chart_analysis['traditional']['price_action']['trend_strength']
+        chart_momentum = chart_analysis['traditional']['price_action']['momentum']
+        
+        # 🎯 IDENTIFICAÇÃO DO CENÁRIO
+        scenario = self._identify_market_scenario(user_macd, user_rsi, macd_context, rsi_context, chart_trend)
+        
+        # 🧠 RESOLUÇÃO INTELIGENTE POR CENÁRIO
+        if scenario == "oversold_reversal":
+            # RSI oversold + MACD não tão negativo = potencial reversão para COMPRA
+            resolved_score = user_rsi * 0.7 + user_macd * 0.3
+            confidence_boost = 0.15
+            reasoning = "Reversão de sobrevenda - RSI indica exaustão de venda"
+            
+        elif scenario == "momentum_breakdown":
+            # MACD muito negativo + RSI não oversold = VENDA de momentum
+            resolved_score = user_macd * 0.8 + user_rsi * 0.2
+            confidence_boost = 0.12
+            reasoning = "Momentum de venda forte - MACD dominante"
+            
+        elif scenario == "confirmed_downtrend":
+            # Todos alinhados para venda = VENDA forte
+            resolved_score = min(user_macd, user_rsi, chart_trend)
+            confidence_boost = 0.20
+            reasoning = "Tendência de baixa confirmada - múltiplas confirmações"
+            
+        elif scenario == "divergence_conflict":
+            # Conflito forte = análise mais conservadora
+            if abs(user_macd) > abs(user_rsi):
+                resolved_score = user_macd * 0.6 + user_rsi * 0.4
+            else:
+                resolved_score = user_rsi * 0.6 + user_macd * 0.4
+            confidence_boost = 0.05
+            reasoning = "Conflito de indicadores - análise conservadora"
+            
+        else:  # neutral_market
+            # Cenário neutro - média balanceada
+            resolved_score = (user_macd + user_rsi + chart_trend) / 3
+            confidence_boost = 0.0
+            reasoning = "Mercado neutro - análise balanceada"
+        
+        return {
+            "resolved_score": float(resolved_score),
+            "scenario": scenario,
+            "reasoning": reasoning,
+            "confidence_boost": confidence_boost,
+            "final_confidence": min(0.95, user_analysis.get('user_confidence', 0) + confidence_boost)
+        }
+
+    def _identify_market_scenario(self, macd: float, rsi: float, macd_ctx: str, rsi_ctx: str, chart_trend: float) -> str:
+        """Identifica inteligentemente o cenário de mercado"""
+        
+        is_strong_oversold = rsi_ctx in ["oversold_strong", "oversold"] and rsi > 0.5
+        is_strong_overbought = rsi_ctx in ["overbought_strong", "overbought"] and rsi < -0.5
+        is_strong_macd_sell = macd_ctx in ["strong_sell", "sell"] and macd < -0.5
+        is_strong_macd_buy = macd_ctx in ["strong_buy", "buy"] and macd > 0.5
+        is_downtrend = chart_trend < -0.2
+        is_uptrend = chart_trend > 0.2
+        
+        # 🎯 CENÁRIOS PRINCIPAIS
+        if is_strong_oversold and not is_strong_macd_sell and is_downtrend:
+            return "oversold_reversal"
+        elif is_strong_macd_sell and not is_strong_oversold and is_downtrend:
+            return "momentum_breakdown" 
+        elif is_strong_macd_sell and is_strong_oversold and is_downtrend:
+            return "confirmed_downtrend"
+        elif is_strong_macd_buy and is_strong_overbought and is_uptrend:
+            return "confirmed_uptrend"
+        elif (is_strong_oversold and is_strong_macd_sell) or (is_strong_overbought and is_strong_macd_buy):
+            return "divergence_conflict"
+        else:
+            return "neutral_market"
+
     # =========================
-    #  MOTOR DE DECISÃO SUPER ESPECIALISTA
+    #  MOTOR DE DECISÃO SUPER INTELIGENTE
     # =========================
     
     def _super_intelligent_decision_engine(self, all_analyses: Dict, timeframe: str) -> Dict[str, Any]:
-        """MOTOR ESPECIALISTA EM DAY TRADE CRYPTO"""
+        """MOTOR QUE ANALISA CONFLITOS INTELIGENTEMENTE"""
         
-        # 🎯 EXTRAI TODAS AS ANÁLISES
         traditional = all_analyses['traditional']
         user_analysis = all_analyses.get('user_analysis', {})
         nano_trend = all_analyses['nano_analysis']
         micro_structure = all_analyses['micro_structure']
         flow_dynamics = all_analyses['flow_dynamics']
         
-        # ⚖️ PESOS DE ALTA PRECISÃO (Day Trade Otimizado)
-        weights = {
-            'user_indicators': 0.30,   # Seus dados são CRUCIAIS
-            'trend_micro': 0.25,       # Tendência + micro-estrutura
-            'price_action': 0.25,      # Price Action fundamental
-            'momentum_flow': 0.20,     # Momentum + fluxo
-        }
+        # 🧠 RESOLUÇÃO INTELIGENTE DE CONFLITOS
+        conflict_resolution = self._intelligent_conflict_resolution(user_analysis, all_analyses)
         
-        # 📊 CÁLCULO DE COMPONENTES
+        # ⚖️ PESOS DINÂMICOS baseados no cenário
+        weights = self._get_dynamic_weights(conflict_resolution['scenario'])
+        
+        # 📊 COMPONENTES DA ANÁLISE
         trend_power = traditional['price_action']['trend_direction'] * traditional['price_action']['trend_strength']
         macd_power = traditional['indicators']['macd'] * traditional['indicators']['macd_strength']
         
-        # 🎯 COMPONENTE PRICE ACTION
+        user_power = conflict_resolution['resolved_score']
+        
+        nano_power = nano_trend['nano_trend'] * nano_trend['convergence_strength']
+        micro_power = micro_structure['structural_integrity']
+        trend_micro = (trend_power + nano_power + micro_power) / 3
+        
+        momentum_power = traditional['price_action']['momentum']
+        flow_power = flow_dynamics['overall_flow_quality']
+        momentum_flow = (momentum_power + flow_power) / 2
+        
         price_action_power = traditional['price_action']['trend_strength']
         if traditional['price_action']['trend_direction'] > 0:
             price_action_power = abs(price_action_power)
         else:
             price_action_power = -abs(price_action_power)
-    
-        # 🔢 COMPONENTE USUÁRIO (seus indicadores)
-        user_score = user_analysis.get('user_combined_score', 0)
-        user_confidence = user_analysis.get('user_confidence', 0)
-        user_power = user_score * user_confidence
         
-        # ⚡ COMPONENTE MOMENTUM + FLUXO
-        momentum_power = traditional['price_action']['momentum']
-        flow_power = flow_dynamics['overall_flow_quality']
-        momentum_flow = (momentum_power + flow_power) / 2
-        
-        # 📈 COMPONENTE TENDÊNCIA + MICRO
-        nano_power = nano_trend['nano_trend'] * nano_trend['convergence_strength']
-        micro_power = micro_structure['structural_integrity']
-        trend_micro = (trend_power + nano_power + micro_power) / 3
-        
-        # 💥 SCORE FINAL SUPER PRECISO
+        # 💥 SCORE FINAL INTELIGENTE
         total_score = (
             user_power * weights['user_indicators'] +
             trend_micro * weights['trend_micro'] +
@@ -625,118 +699,99 @@ class SuperIntelligentAnalyzer:
             momentum_flow * weights['momentum_flow']
         )
         
-        # 🎯 DECISÃO SUPER CONFIANTE
-        if total_score > 0.05:  # Threshold mais preciso
+        # 🎯 DECISÃO COM CONFIANÇA INTELIGENTE
+        if total_score > 0.05:
             direction = "buy"
-            base_confidence = min(abs(total_score) * 1.3, 0.95)
+            base_confidence = min(abs(total_score) * 1.3, 0.8)
         elif total_score < -0.05:
-            direction = "sell"
-            base_confidence = min(abs(total_score) * 1.3, 0.95)
+            direction = "sell" 
+            base_confidence = min(abs(total_score) * 1.3, 0.8)
         else:
-            # Mercado lateral - análise mais profunda
-            if user_power > 0.1:
-                direction = "buy"
-            elif user_power < -0.1:
-                direction = "sell"
-            else:
-                direction = "buy" if trend_power > 0 else "sell"
-            base_confidence = 0.65  # Confiança moderada
-    
-        # 🧠 CONFIANÇA REFORÇADA
-        final_confidence = self._calculate_super_confidence(
-            base_confidence, all_analyses, user_analysis
-        )
+            direction = "buy" if user_power > 0 else "sell"
+            base_confidence = 0.6
         
-        reasoning = self._generate_super_intelligent_reasoning(
-            direction, total_score, user_analysis, traditional, flow_dynamics
+        # 🧠 CONFIANÇA FINAL COM BOOST INTELIGENTE
+        final_confidence = base_confidence + conflict_resolution['confidence_boost']
+        
+        reasoning = self._generate_intelligent_reasoning(
+            direction, conflict_resolution, user_analysis, traditional
         )
         
         return {
             "direction": direction,
-            "confidence": final_confidence,
+            "confidence": min(0.95, final_confidence),
             "reasoning": reasoning,
             "total_score": total_score,
+            "scenario": conflict_resolution['scenario'],
             "user_power": user_power,
             "trend_micro_power": trend_micro,
             "price_action_power": price_action_power,
             "momentum_flow_power": momentum_flow
         }
 
-    def _calculate_super_confidence(self, base_confidence: float, 
-                                  all_analyses: Dict, user_analysis: Dict) -> float:
-        """Calcula confiança com múltiplos fatores de validação"""
-        
-        confidence_boosters = []
-        
-        # ✅ User indicators com alta confiança
-        if user_analysis.get('user_confidence', 0) > 0.8:
-            confidence_boosters.append(0.12)
-        
-        # ✅ Convergência multi-timeframe implícita
-        nano_strength = all_analyses['nano_analysis']['convergence_strength']
-        if nano_strength > 0.8:
-            confidence_boosters.append(0.10)
-        
-        # ✅ Fluxo de alta qualidade
-        flow_quality = all_analyses['flow_dynamics']['overall_flow_quality']
-        if flow_quality > 0.8:
-            confidence_boosters.append(0.08)
+    def _get_dynamic_weights(self, scenario: str) -> Dict[str, float]:
+        """Retorna pesos dinâmicos baseados no cenário"""
+        weight_profiles = {
+            "oversold_reversal": {
+                'user_indicators': 0.35,  # Mais peso no usuário (RSI oversold)
+                'trend_micro': 0.25,
+                'price_action': 0.20, 
+                'momentum_flow': 0.20
+            },
+            "momentum_breakdown": {
+                'user_indicators': 0.30,
+                'trend_micro': 0.30,      # Mais peso na tendência
+                'price_action': 0.25,
+                'momentum_flow': 0.15
+            },
+            "confirmed_downtrend": {
+                'user_indicators': 0.25,
+                'trend_micro': 0.35,      # Máximo peso na tendência
+                'price_action': 0.25,
+                'momentum_flow': 0.15
+            },
+            "divergence_conflict": {
+                'user_indicators': 0.40,  # Máximo peso no usuário (conflito)
+                'trend_micro': 0.20,
+                'price_action': 0.20,
+                'momentum_flow': 0.20
+            }
+        }
+        return weight_profiles.get(scenario, {
+            'user_indicators': 0.30,
+            'trend_micro': 0.25,
+            'price_action': 0.25,
+            'momentum_flow': 0.20
+        })
 
-        # ✅ Tendência forte
-        trend_strength = all_analyses['traditional']['price_action']['trend_strength']
-        if trend_strength > 0.7:
-            confidence_boosters.append(0.08)
-    
-        # 🎯 CONFIANÇA FINAL
-        super_confidence = base_confidence + sum(confidence_boosters)
-        return min(0.95, super_confidence)
-
-    def _generate_super_intelligent_reasoning(self, direction: str, total_score: float,
-                                           user_analysis: Dict, traditional: Dict,
-                                           flow_dynamics: Dict) -> str:
-        """Gera reasoning de especialista em day trade"""
+    def _generate_intelligent_reasoning(self, direction: str, conflict_resolution: Dict, 
+                                     user_analysis: Dict, traditional: Dict) -> str:
+        """Gera reasoning inteligente baseado no cenário"""
         
-        score_strength = "FORTE" if abs(total_score) > 0.3 else "MODERADA" if abs(total_score) > 0.15 else "SUAVE"
+        scenario = conflict_resolution['scenario']
+        base_reasoning = conflict_resolution['reasoning']
         
-        factors = []
+        user_macd_ctx = user_analysis.get('user_macd_context', 'neutral')
+        user_rsi_ctx = user_analysis.get('user_rsi_context', 'neutral')
         
-        # Fatores técnicos
-        if traditional['price_action']['trend_strength'] > 0.6:
-            factors.append("tendência definida")
-        
-        if traditional['indicators']['macd_strength'] > 0.5:
-            factors.append("MACD consistente")
-
-        if flow_dynamics['overall_flow_quality'] > 0.7:
-            factors.append("fluxo qualificado")
-    
-        # Fatores do usuário
-        user_macd = user_analysis.get('user_macd_power', 0)
-        user_rsi = user_analysis.get('user_rsi_power', 0)
-        user_adx = user_analysis.get('user_adx_power', 0)
-        
-        user_factors = []
-        if abs(user_macd) > 0.3:
-            user_factors.append("MACD")
-        if abs(user_rsi) > 0.3:
-            user_factors.append("RSI")
-        if user_adx > 0.6:
-            user_factors.append("ADX forte")
-        
-        if user_factors:
-            factors.append(f"confirmação do usuário ({', '.join(user_factors)})")
-    
-        if factors:
-            analysis = " + ".join(factors)
-            if direction == "buy":
-                return f"🎯 COMPRA {score_strength} - {analysis}"
-            else:
-                return f"🎯 VENDA {score_strength} - {analysis}"
+        # 🎯 DETALHAMENTO DO CENÁRIO
+        if scenario == "oversold_reversal":
+            details = f"RSI {user_rsi_ctx} + MACD {user_macd_ctx}"
+        elif scenario == "momentum_breakdown":
+            details = f"MACD {user_macd_ctx} dominante"
+        elif scenario == "confirmed_downtrend":
+            details = f"MACD {user_macd_ctx} + RSI {user_rsi_ctx} + Gráfico alinhados"
+        elif scenario == "divergence_conflict":
+            details = f"Conflito: MACD {user_macd_ctx} vs RSI {user_rsi_ctx}"
         else:
-            if direction == "buy":
-                return f"🎯 COMPRA {score_strength} - Análise técnica convergente"
-            else:
-                return f"🎯 VENDA {score_strength} - Análise técnica convergente"
+            details = "Análise técnica balanceada"
+        
+        strength = "FORTE" if abs(conflict_resolution['resolved_score']) > 0.3 else "MODERADA"
+        
+        if direction == "buy":
+            return f"🎯 COMPRA {strength} - {base_reasoning} | {details}"
+        else:
+            return f"🎯 VENDA {strength} - {base_reasoning} | {details}"
 
     def _calculate_signal_quality(self, analyses: Dict) -> float:
         """Calcula qualidade do sinal para day trade"""
@@ -772,7 +827,7 @@ class SuperIntelligentAnalyzer:
         }
 
     def analyze(self, blob: bytes, timeframe: str = '1m', user_indicators: Dict = None) -> Dict[str, Any]:
-        """ANÁLISE SUPER ESPECIALISTA - DAY TRADE CRYPTO"""
+        """ANÁLISE SUPER INTELIGENTE - RESOLUÇÃO DE CONFLITOS"""
         
         if user_indicators is None:
             user_indicators = {}
@@ -799,10 +854,10 @@ class SuperIntelligentAnalyzer:
             'nano_analysis': self._microscopic_trend_analysis(price_data),
             'micro_structure': self._analyze_micro_structure(price_data),
             'flow_dynamics': self._analyze_flow_dynamics(price_data),
-            'price_data': price_data  # Para referência
+            'price_data': price_data
         }
         
-        # 🎯 ANÁLISE DOS INDICADORES DO USUÁRIO
+        # 🎯 ANÁLISE INTELIGENTE DOS INDICADORES DO USUÁRIO
         if user_indicators:
             analyses['user_analysis'] = self._analyze_user_indicators(user_indicators)
         
@@ -813,7 +868,7 @@ class SuperIntelligentAnalyzer:
         # 📊 QUALIDADE DA ANÁLISE
         signal_quality = self._calculate_signal_quality(analyses)
         
-        # 🎨 RESULTADO SUPER PRECISO
+        # 🎨 RESULTADO SUPER INTELIGENTE
         result = {
             "direction": decision["direction"],
             "final_confidence": float(decision["confidence"]),
@@ -825,7 +880,7 @@ class SuperIntelligentAnalyzer:
             "cached": False,
             "signal_quality": float(signal_quality),
             "analysis_grade": "high" if signal_quality > 0.7 else "medium",
-            "market_context": "movimento_forte" if abs(decision["total_score"]) > 0.3 else "mercado_balanceado",
+            "market_context": decision["scenario"],
             "user_indicators_provided": bool(user_indicators),
             "metrics": {
                 "analysis_score": float(decision["total_score"]),
@@ -835,11 +890,12 @@ class SuperIntelligentAnalyzer:
                 "momentum_flow_power": float(decision["momentum_flow_power"]),
                 "trend_strength": analyses['traditional']['price_action']['trend_strength'],
                 "momentum": analyses['traditional']['price_action']['momentum'],
-                "rsi": analyses['traditional']['indicators']['rsi'],
+                "rsi": analyses['traditional']['indicators']['rsi"],
                 "macd": analyses['traditional']['indicators']['macd'],
                 "macd_strength": analyses['traditional']['indicators']['macd_strength']
             },
-            "reasoning": decision["reasoning"]
+            "reasoning": decision["reasoning"],
+            "intelligent_scenario": decision["scenario"]
         }
         
         # Adiciona métricas do usuário se disponíveis
@@ -855,7 +911,7 @@ class SuperIntelligentAnalyzer:
         return result
 
 # =========================
-#  APLICAÇÃO FLASK COMPLETA
+#  APLICAÇÃO FLASK (MANTIDO IGUAL)
 # =========================
 app = Flask(__name__)
 analyzer = SuperIntelligentAnalyzer()
@@ -870,7 +926,7 @@ HTML_TEMPLATE = '''
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IA Signal Pro - SUPER ESPECIALISTA DAY TRADE 🧠⚡</title>
+    <title>IA Signal Pro - SUPER INTELIGENTE 🧠⚡</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
@@ -1050,8 +1106,11 @@ HTML_TEMPLATE = '''
             font-weight: 700;
             margin-left: 8px;
         }
-        .context-movimento_forte { background: linear-gradient(135deg, #00ff88, #00cc66); color: white; }
-        .context-mercado_indeciso { background: linear-gradient(135deg, #7ce0ff, #4a90e2); color: white; }
+        .context-oversold_reversal { background: linear-gradient(135deg, #00ff88, #00cc66); color: white; }
+        .context-momentum_breakdown { background: linear-gradient(135deg, #ff4444, #cc0000); color: white; }
+        .context-confirmed_downtrend { background: linear-gradient(135deg, #ff6b6b, #ff0000); color: white; }
+        .context-divergence_conflict { background: linear-gradient(135deg, #ffaa00, #ff8800); color: white; }
+        .context-neutral_market { background: linear-gradient(135deg, #7ce0ff, #4a90e2); color: white; }
         
         .metrics {
             margin-top: 15px; 
@@ -1130,7 +1189,7 @@ HTML_TEMPLATE = '''
             display: none;
         }
         
-        .expert-badge {
+        .intelligent-badge {
             font-size: 10px;
             padding: 2px 6px;
             border-radius: 8px;
@@ -1198,13 +1257,23 @@ HTML_TEMPLATE = '''
             font-weight: 700;
             margin-left: 8px;
         }
+        
+        .scenario-info {
+            background: rgba(124, 224, 255, 0.1);
+            border-radius: 8px;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #7ce0ff;
+            text-align: center;
+            font-size: 12px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <div class="title">🧠⚡ IA SIGNAL PRO - SUPER ESPECIALISTA</div>
-            <div class="subtitle">DAY TRADE CRYPTO - ANÁLISE MINUCIOSA - ZERO CHUTES</div>
+            <div class="title">🧠⚡ IA SIGNAL PRO - SUPER INTELIGENTE</div>
+            <div class="subtitle">ANÁLISE DE CONFLITOS - DECISÕES CONTEXTUAIS</div>
         </div>
         
         <div class="timeframe-selector">
@@ -1224,10 +1293,10 @@ HTML_TEMPLATE = '''
         <!-- SEÇÃO DOS INDICADORES DO USUÁRIO -->
         <div class="user-indicators">
             <div style="text-align: center; font-weight: 600; margin-bottom: 10px; color: #7ce0ff;">
-                🔢 DADOS TÉCNICOS <span class="optional-badge">CRUCIAIS</span>
+                🔢 DADOS TÉCNICOS <span class="optional-badge">INTELIGENTES</span>
             </div>
             <div style="text-align: center; font-size: 12px; color: #9db0d1; margin-bottom: 10px;">
-                Forneça os valores exatos para máxima precisão
+                A IA analisa conflitos entre indicadores
             </div>
             <div class="indicator-grid">
                 <div class="indicator-group">
@@ -1272,17 +1341,18 @@ HTML_TEMPLATE = '''
             
             <div class="reasoning" id="reasoningText"></div>
             <div class="confidence" id="confidenceText"></div>
+            
+            <div id="scenarioInfo" class="scenario-info" style="display: none;"></div>
+            
             <div id="qualityIndicator" class="quality-indicator"></div>
             
             <div class="progress-bar">
                 <div class="progress-fill" id="progressFill"></div>
             </div>
             
-            <div id="contextInfo" style="text-align: center; margin: 10px 0;"></div>
-            
             <div class="power-analysis" id="powerAnalysis">
                 <div style="text-align: center; font-weight: 600; margin-bottom: 8px; color: #7ce0ff;">
-                    ⚡ ANÁLISE ESPECIALISTA
+                    ⚡ ANÁLISE INTELIGENTE
                 </div>
                 <div id="powerMetrics"></div>
             </div>
@@ -1308,9 +1378,9 @@ HTML_TEMPLATE = '''
             const qualityIndicator = document.getElementById('qualityIndicator');
             const progressFill = document.getElementById('progressFill');
             const metricsText = document.getElementById('metricsText');
-            const contextInfo = document.getElementById('contextInfo');
             const powerAnalysis = document.getElementById('powerAnalysis');
             const powerMetrics = document.getElementById('powerMetrics');
+            const scenarioInfo = document.getElementById('scenarioInfo');
             const timeframeBtns = document.querySelectorAll('.timeframe-btn');
             
             // Inputs dos indicadores do usuário
@@ -1388,11 +1458,11 @@ HTML_TEMPLATE = '''
                 analyzeBtn.textContent = `🧠 ANALISANDO ${currentTimeframe.toUpperCase()}...`;
                 result.style.display = 'block';
                 errorMessage.style.display = 'none';
+                scenarioInfo.style.display = 'none';
                 
                 signalText.className = 'signal-text';
-                signalText.textContent = 'Analisando momento do mercado...';
+                signalText.textContent = 'Analisando conflitos inteligentemente...';
                 qualityIndicator.textContent = '';
-                contextInfo.innerHTML = '';
                 
                 const now = new Date();
                 analysisTime.textContent = now.toLocaleTimeString('pt-BR');
@@ -1415,11 +1485,11 @@ HTML_TEMPLATE = '''
                 }
                 
                 entryTime.textContent = entryTimeValue;
-                reasoningText.textContent = 'Processando análise especialista...';
+                reasoningText.textContent = 'Processando análise inteligente de conflitos...';
                 confidenceText.textContent = '';
                 progressFill.style.width = '20%';
                 
-                metricsText.innerHTML = '<div class="loading">Iniciando análise do momento do mercado...</div>';
+                metricsText.innerHTML = '<div class="loading">Iniciando análise inteligente...</div>';
 
                 try {
                     const formData = new FormData();
@@ -1477,14 +1547,14 @@ HTML_TEMPLATE = '''
                 const confidence = (data.final_confidence * 100).toFixed(1);
                 const cached = data.cached || false;
                 const quality = data.analysis_grade || 'medium';
-                const context = data.market_context || 'mercado_balanceado';
+                const scenario = data.intelligent_scenario || 'neutral_market';
                 const userIndicatorsProvided = data.user_indicators_provided || false;
                 
                 // Define classe e texto do sinal
                 signalText.className = `signal-text signal-${direction}`;
                 let directionText = direction === 'buy' ? '🎯 COMPRAR' : '🎯 VENDER';
                 let userBadge = userIndicatorsProvided ? '<span class="user-data-badge">DADOS DO USUÁRIO</span>' : '';
-                signalText.innerHTML = `${directionText} <span class="expert-badge">ESPECIALISTA</span> ${userBadge} ${cached ? '<span class="cache-badge">CACHE</span>' : ''}`;
+                signalText.innerHTML = `${directionText} <span class="intelligent-badge">INTELIGENTE</span> ${userBadge} ${cached ? '<span class="cache-badge">CACHE</span>' : ''}`;
                 
                 // Atualiza informações
                 analysisTime.textContent = data.analysis_time || '--:--:--';
@@ -1492,29 +1562,31 @@ HTML_TEMPLATE = '''
                 timeframeEl.textContent = data.timeframe || 'Próximo minuto';
                 
                 reasoningText.textContent = data.reasoning;
-                confidenceText.textContent = `Confiança Técnica: ${confidence}%`;
+                confidenceText.textContent = `Confiança Inteligente: ${confidence}%`;
+                
+                // Informações do cenário
+                const scenarioLabels = {
+                    'oversold_reversal': '🔄 REVERSÃO DE SOBREVENDA',
+                    'momentum_breakdown': '📉 QUEDA DE MOMENTUM', 
+                    'confirmed_downtrend': '🔴 TENDÊNCIA DE BAIXA CONFIRMADA',
+                    'divergence_conflict': '⚡ CONFLITO DE INDICADORES',
+                    'neutral_market': '⚖️ MERCADO NEUTRO'
+                };
+                
+                scenarioInfo.innerHTML = `
+                    <strong>Cenário Identificado:</strong> ${scenarioLabels[scenario] || scenarioLabels.neutral_market}
+                `;
+                scenarioInfo.style.display = 'block';
                 
                 // Indicador de qualidade
                 qualityIndicator.className = `quality-indicator quality-${quality}`;
                 if (quality === 'high') {
-                    qualityIndicator.textContent = '✅ ALTA QUALIDADE - Análise confiável do momento';
+                    qualityIndicator.textContent = '✅ ALTA QUALIDADE - Análise confiável';
                 } else {
-                    qualityIndicator.textContent = '⚠️ QUALIDADE MÉDIA - Análise válida do momento';
+                    qualityIndicator.textContent = '⚠️ QUALIDADE MÉDIA - Análise válida';
                 }
                 
-                // Informações de contexto
-                const contextLabels = {
-                    'movimento_forte': '🚀 MOVIMENTO FORTE',
-                    'mercado_balanceado': '⚖️ MERCADO BALANCEADO'
-                };
-                
-                contextInfo.innerHTML = `
-                    <span class="context-badge context-${context}">
-                        ${contextLabels[context] || contextLabels.mercado_balanceado}
-                    </span>
-                `;
-                
-                // Análise Combinada
+                // Análise Inteligente
                 const metrics = data.metrics || {};
                 let powerHtml = '';
                 
@@ -1583,7 +1655,7 @@ def index():
 
 @app.route('/analyze', methods=['POST'])
 def analyze_photo():
-    """Endpoint de análise de imagem - SUPER ESPECIALISTA"""
+    """Endpoint de análise de imagem - SUPER INTELIGENTE"""
     try:
         if 'image' not in request.files:
             return jsonify({'error': 'Nenhuma imagem enviada'}), 400
@@ -1617,7 +1689,7 @@ def analyze_photo():
         if len(image_bytes) == 0:
             return jsonify({'error': 'Arquivo vazio'}), 400
         
-        # Análise SUPER ESPECIALISTA
+        # Análise SUPER INTELIGENTE
         analysis = analyzer.analyze(image_bytes, timeframe, user_indicators)
         
         return jsonify(analysis)
@@ -1632,9 +1704,9 @@ def health_check():
     """Health check para monitoramento"""
     return jsonify({
         'status': 'healthy', 
-        'service': 'IA Signal Pro - SUPER ESPECIALISTA DAY TRADE',
+        'service': 'IA Signal Pro - SUPER INTELIGENTE',
         'timestamp': datetime.datetime.now().isoformat(),
-        'version': '9.0.0-super-especialista'
+        'version': '10.0.0-inteligencia-conflitos'
     })
 
 @app.route('/cache/clear', methods=['POST'])
@@ -1663,10 +1735,9 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('DEBUG', 'False').lower() == 'true'
     
-    print(f"🚀 IA Signal Pro - SUPER ESPECIALISTA iniciando na porta {port}")
-    print(f"🧠⚡ SISTEMA: ANÁLISE MINUCIOSA DAY TRADE CRYPTO")
-    print(f"🎯 VERSÃO: SUPER ESPECIALISTA - PRECISÃO ABSOLUTA")
-    print(f"📈 FOCO: ADA/BTC/BNB/ETH/SOL/XRP")
-    print(f"💪 RECURSOS: Análise Nano + Micro-estrutura + Seus Indicadores")
+    print(f"🚀 IA Signal Pro - SUPER INTELIGENTE iniciando na porta {port}")
+    print(f"🧠⚡ SISTEMA: ANÁLISE INTELIGENTE DE CONFLITOS")
+    print(f"🎯 VERSÃO: RESOLUÇÃO CONTEXTUAL - CENÁRIOS DINÂMICOS")
+    print(f"📈 RECURSOS: Identificação de Cenários + Pesos Dinâmicos + Reasoning Inteligente")
     
     app.run(host='0.0.0.0', port=port, debug=debug)
