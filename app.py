@@ -1405,12 +1405,6 @@ HTML_TEMPLATE = '''
             });
 
             // Upload de arquivo
-            uploadArea.addEventListener('click', (e) => {
-                e.stopPropagation();  // ⬅️ EVITA DUPLO CLIQUE
-                if (!selectedFile) {
-                fileInput.click();
-                }
-            });
             
             uploadArea.addEventListener('dragover', (e) => {
                 e.preventDefault();
