@@ -789,7 +789,7 @@ class SuperIntelligentAnalyzer:
                 "trend_strength": analyses['traditional']['price_action']['trend_strength'],
                 "momentum": analyses['traditional']['price_action']['momentum'],
                 "rsi": analyses['traditional']['indicators']['rsi'],
-                "macd": analyses['traditional']['indicators']['macd"],
+                "macd": analyses['traditional']['indicators']['macd'],
                 "macd_strength": analyses['traditional']['indicators']['macd_strength']
             },
             "reasoning": decision["reasoning"]
