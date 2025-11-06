@@ -19,7 +19,6 @@ import math
 import datetime
 import hashlib
 import json
-import random
 from typing import Any, Dict, Optional, List, Tuple
 import numpy as np
 from flask import Flask, jsonify, render_template_string, request
@@ -476,40 +475,40 @@ class SuperIntelligentAnalyzer:
             return {"rsi": 0.0, "macd": 0.0, "macd_strength": 0.0, "volume_intensity": 0.0, "momentum_quality": 0.0}
 
     # =========================
-    #  ANÁLISE COM DADOS DO USUÁRIO - AJUSTES QUE DECIDIMOS!
+    #  ANÁLISE COM DADOS DO USUÁRIO - TOTALMENTE NEUTRA
     # =========================
     
     def _analyze_user_indicators(self, user_indicators: Dict) -> Dict[str, float]:
-        """Analisa os indicadores fornecidos pelo usuário - AJUSTADO!"""
+        """Analisa os indicadores fornecidos pelo usuário - TOTALMENTE NEUTRA"""
         try:
             macd = float(user_indicators.get('macd', 0))
             rsi = float(user_indicators.get('rsi', 50))
             adx = float(user_indicators.get('adx', 0))
             price = float(user_indicators.get('price', 0))
             
-            # ✅ RSI APENAS PARA POTENCIAIS REVERSÕES (Balanceado)
-            if rsi >= 70:  # SOBRECOMPRA - potencial reversão BAIXISTA
-                rsi_normalized = -0.3  # Sinal suave de reversão
-                rsi_strength = 0.7
-            elif rsi <= 25:  # SOBREVENDA - potencial reversão ALTISTA  
-                rsi_normalized = 0.3   # Sinal suave de reversão
-                rsi_strength = 0.7
-            else:  # ZONA NEUTRA - quase zero influência
-                rsi_normalized = (rsi - 50) / 50 * 0.1  # Muito pouco influente
-                rsi_strength = 0.2
+            # ✅ RSI TOTALMENTE SIMÉTRICO
+            if rsi >= 70:  # SOBRECOMPRA
+                rsi_normalized = -0.5  # Sinal forte de reversão
+                rsi_strength = 0.8
+            elif rsi <= 30:  # SOBREVENDA (30 para simetria com 70)
+                rsi_normalized = 0.5   # Sinal forte de reversão
+                rsi_strength = 0.8
+            else:  # ZONA NEUTRA
+                rsi_normalized = (rsi - 50) / 50 * 0.2  # Influência mínima
+                rsi_strength = 0.3
             
-            # ✅ MACD BALANCEADO
-            macd_power = np.clip(macd * 2, -1, 1)  # Fator reduzido para balancear
-            macd_strength = min(1.0, abs(macd) * 2)
+            # ✅ MACD TOTALMENTE NEUTRO
+            macd_power = np.clip(macd * 3, -1, 1)  # Fator normalizado
+            macd_strength = min(1.0, abs(macd) * 3)
             
-            # ✅ ADX (tendência) BALANCEADO  
-            adx_strength = min(1.0, adx / 50) * 0.8  # Reduzido para balancear
+            # ✅ ADX TOTALMENTE NEUTRO
+            adx_strength = min(1.0, adx / 50)  # Normalizado para 0-1
             
-            # ✅ SCORE PERFEITAMENTE BALANCEADO
+            # ✅ SCORE TOTALMENTE BALANCEADO - PESOS IGUAIS
             user_score = (
-                macd_power * 0.4 +      # MACD mantém peso
-                rsi_normalized * 0.3 +  # RSI com peso médio  
-                adx_strength * 0.3      # ADX/Tendência com peso igual
+                macd_power * 0.333 +    # Peso igual
+                rsi_normalized * 0.333 + # Peso igual  
+                adx_strength * 0.334     # Peso igual (soma 1.0)
             )
             
             return {
@@ -533,76 +532,84 @@ class SuperIntelligentAnalyzer:
             }
 
     # =========================
-    #  MOTOR DE DECISÃO 100% NEUTRO - AJUSTADO!
+    #  MOTOR DE DECISÃO 100% NEUTRO - ZERO FALLBACK
     # =========================
     
     def _absolute_decision_engine(self, all_analyses: Dict, timeframe: str) -> Dict[str, Any]:
-        """MOTOR 100% NEUTRO - AGORA PERFEITAMENTE BALANCEADO!"""
-        try:
-            # Extrai todas as análises
-            traditional = all_analyses['traditional']
-            user_analysis = all_analyses.get('user_analysis', {})
-            nano_trend = all_analyses['nano_analysis']
-            micro_structure = all_analyses['micro_structure']
-            
-            # ✅ PESOS PERFEITAMENTE BALANCEADOS
-            # Tendência: 25%
-            trend_direction = traditional['price_action']['trend_direction']
-            trend_strength = traditional['price_action']['trend_strength']
-            trend_power = trend_direction * trend_strength
-            
-            # MACD: 25%
-            macd_value = traditional['indicators']['macd']
-            macd_strength = traditional['indicators']['macd_strength']
-            macd_power = macd_value * macd_strength
-            
-            # Micro-estrutura: 25%
-            nano_power = nano_trend['nano_trend'] * nano_trend['convergence_strength']
-            micro_power = micro_structure['structural_integrity']
-            micro_composite = (nano_power + micro_power) / 2
-            
-            # Dados do Usuário: 25% (já balanceado internamente)
-            user_score = user_analysis.get('user_combined_score', 0)
-            user_confidence = user_analysis.get('user_confidence', 0)
-            
-            # 💥 SCORE FINAL PERFEITAMENTE BALANCEADO
-            ia_score = (trend_power * 0.25) + (macd_power * 0.25) + (micro_composite * 0.25)
-            total_score = ia_score + (user_score * user_confidence * 0.25)
-            
-            # 🎯 DECISÃO BINÁRIA: APENAS COMPRA ou VENDA
-            if total_score > 0:
-                direction = "buy"
-                confidence = 0.50 + (min(abs(total_score), 0.5) * 0.40)
-            else:
-                direction = "sell" 
-                confidence = 0.50 + (min(abs(total_score), 0.5) * 0.40)
-            
-            reasoning = self._generate_enhanced_reasoning(direction, trend_power, macd_power, 
-                                                       micro_composite, user_score, total_score, 
-                                                       user_analysis)
-            
-            return {
-                "direction": direction,
-                "confidence": confidence,
-                "reasoning": reasoning,
-                "total_score": total_score,
-                "context": self._detect_enhanced_context(trend_strength, macd_strength, micro_composite, user_score, total_score),
-                "trend_power": trend_power,
-                "macd_power": macd_power,
-                "micro_power": micro_composite,
-                "user_score": user_score,
-                "ia_score": ia_score
-            }
-            
-        except Exception as e:
-            return self._neutral_market_decision()
+        """MOTOR 100% NEUTRO - SEM FALLBACK, SEM VIÉS"""
+        # Extrai todas as análises
+        traditional = all_analyses['traditional']
+        user_analysis = all_analyses.get('user_analysis', {})
+        nano_trend = all_analyses['nano_analysis']
+        micro_structure = all_analyses['micro_structure']
+        flow_dynamics = all_analyses['flow_dynamics']
+        
+        # ✅ PESOS PERFEITAMENTE BALANCEADOS
+        # Tendência: 20%
+        trend_direction = traditional['price_action']['trend_direction']
+        trend_strength = traditional['price_action']['trend_strength']
+        trend_power = trend_direction * trend_strength
+        
+        # MACD: 20%
+        macd_value = traditional['indicators']['macd']
+        macd_strength = traditional['indicators']['macd_strength']
+        macd_power = macd_value * macd_strength
+        
+        # Micro-estrutura: 20%
+        nano_power = nano_trend['nano_trend'] * nano_trend['convergence_strength']
+        micro_power = micro_structure['structural_integrity']
+        micro_composite = (nano_power + micro_power) / 2
+        
+        # Fluxo: 20%
+        flow_power = flow_dynamics['overall_flow_quality']
+        flow_direction = 1 if trend_direction > 0 else -1
+        flow_composite = flow_power * flow_direction
+        
+        # Dados do Usuário: 20% (já balanceado internamente)
+        user_score = user_analysis.get('user_combined_score', 0)
+        user_confidence = user_analysis.get('user_confidence', 0)
+        user_composite = user_score * user_confidence
+        
+        # 💥 SCORE FINAL TOTALMENTE NEUTRO
+        total_score = (
+            trend_power * 0.20 + 
+            macd_power * 0.20 + 
+            micro_composite * 0.20 +
+            flow_composite * 0.20 +
+            user_composite * 0.20
+        )
+        
+        # 🎯 DECISÃO PURAMENTE TÉCNICA - ZERO VIÉS
+        if total_score > 0:
+            direction = "buy"
+            confidence = min(abs(total_score), 0.95)  # ✅ CONFIANÇA BASE 0%
+        else:
+            direction = "sell" 
+            confidence = min(abs(total_score), 0.95)  # ✅ CONFIANÇA BASE 0%
+        
+        reasoning = self._generate_enhanced_reasoning(direction, trend_power, macd_power, 
+                                                   micro_composite, flow_composite, user_score, total_score, 
+                                                   user_analysis)
+        
+        return {
+            "direction": direction,
+            "confidence": confidence,
+            "reasoning": reasoning,
+            "total_score": total_score,
+            "context": self._detect_enhanced_context(trend_strength, macd_strength, micro_composite, user_score, total_score),
+            "trend_power": trend_power,
+            "macd_power": macd_power,
+            "micro_power": micro_composite,
+            "flow_power": flow_composite,
+            "user_score": user_score
+        }
 
     def _generate_enhanced_reasoning(self, direction: str, trend_power: float, macd_power: float, 
-                                   micro_power: float, user_score: float, total_score: float, 
+                                   micro_power: float, flow_power: float, user_score: float, total_score: float, 
                                    user_analysis: Dict) -> str:
-        """Gera reasoning com dados do usuário - AJUSTADO!"""
+        """Gera reasoning com dados do usuário - TOTALMENTE NEUTRO"""
         
-        strength = "ALTA" if abs(total_score) > 0.25 else "moderada"
+        strength = "ALTA" if abs(total_score) > 0.3 else "MODERADA" if abs(total_score) > 0.15 else "SUAVE"
         
         factors = []
         
@@ -613,6 +620,8 @@ class SuperIntelligentAnalyzer:
             factors.append(f"MACD {macd_power*100:+.1f}%")
         if abs(micro_power) > 0.1: 
             factors.append(f"micro-estrutura {micro_power*100:+.1f}%")
+        if abs(flow_power) > 0.1:
+            factors.append(f"fluxo {flow_power*100:+.1f}%")
         
         # Fatores do usuário (balanceados)
         user_macd = user_analysis.get('user_macd_power', 0)
@@ -638,9 +647,9 @@ class SuperIntelligentAnalyzer:
                 return f"📉 VENDA {strength} - {analysis}"
         else:
             if direction == "buy":
-                return f"📈 COMPRA {strength} - Convergência técnica balanceada"
+                return f"📈 COMPRA {strength} - Convergência técnica neutra"
             else:
-                return f"📉 VENDA {strength} - Convergência técnica balanceada"
+                return f"📉 VENDA {strength} - Convergência técnica neutra"
 
     def _calculate_enhanced_confidence(self, base_confidence: float, all_analyses: Dict) -> float:
         """Calcula confiança com dados do usuário"""
@@ -676,27 +685,10 @@ class SuperIntelligentAnalyzer:
             return "mercado_indeciso"
         elif trend_strength > 0.4:
             return "tendencia_estabelecida"
-        elif user_score > 0.2:
+        elif abs(user_score) > 0.2:
             return "confirmacao_usuario"
         else:
             return "mercado_balanceado"
-
-    def _neutral_market_decision(self) -> Dict[str, Any]:
-        """Decisão neutra baseada em análise técnica"""
-        direction = "buy" if random.random() > 0.5 else "sell"
-        
-        return {
-            "direction": direction,
-            "confidence": 0.55,
-            "reasoning": f"📊 {direction.upper()} - Análise de mercado contingente",
-            "total_score": 0.05 if direction == "buy" else -0.05,
-            "context": "analise_contingente",
-            "trend_power": 0.02,
-            "macd_power": 0.02,
-            "micro_power": 0.02,
-            "user_score": 0.0,
-            "ia_score": 0.05
-        }
 
     def _calculate_signal_quality(self, analyses: Dict) -> float:
         """Calcula qualidade do sinal"""
@@ -732,7 +724,7 @@ class SuperIntelligentAnalyzer:
         }
 
     def analyze(self, blob: bytes, timeframe: str = '1m', user_indicators: Dict = None) -> Dict[str, Any]:
-        """ANÁLISE 100% NEUTRA - AGORA PERFEITAMENTE BALANCEADA!"""
+        """ANÁLISE 100% NEUTRA - SEM FALLBACK, SEM VIÉS"""
         
         if user_indicators is None:
             user_indicators = {}
@@ -743,95 +735,77 @@ class SuperIntelligentAnalyzer:
             cached['cached'] = True
             return cached
         
-        try:
-            # Processamento básico
-            image = self._load_image(blob)
-            self._validate_chart_image(image)
-            
-            img_array = self._preprocess_image(image, timeframe)
-            price_data = self._extract_price_data(img_array)
-            
-            # 🧠 ANÁLISE MULTI-CAMADAS
-            analyses = {
-                'traditional': {
-                    'price_action': self._analyze_price_action(price_data, timeframe),
-                    'indicators': self._calculate_advanced_indicators(price_data)
-                },
-                'nano_analysis': self._microscopic_trend_analysis(price_data),
-                'micro_structure': self._analyze_micro_structure(price_data),
-                'flow_dynamics': self._analyze_flow_dynamics(price_data)
+        # Processamento básico
+        image = self._load_image(blob)
+        self._validate_chart_image(image)
+        
+        img_array = self._preprocess_image(image, timeframe)
+        price_data = self._extract_price_data(img_array)
+        
+        # 🧠 ANÁLISE MULTI-CAMADAS
+        analyses = {
+            'traditional': {
+                'price_action': self._analyze_price_action(price_data, timeframe),
+                'indicators': self._calculate_advanced_indicators(price_data)
+            },
+            'nano_analysis': self._microscopic_trend_analysis(price_data),
+            'micro_structure': self._analyze_micro_structure(price_data),
+            'flow_dynamics': self._analyze_flow_dynamics(price_data)
+        }
+        
+        # 🎯 ANÁLISE DOS INDICADORES DO USUÁRIO
+        if user_indicators:
+            analyses['user_analysis'] = self._analyze_user_indicators(user_indicators)
+        
+        # 🎯 MOTOR DE DECISÃO 100% NEUTRO (SEM FALLBACK)
+        decision = self._absolute_decision_engine(analyses, timeframe)
+        time_info = self._get_entry_timeframe(timeframe)
+        
+        # 📊 QUALIDADE DA ANÁLISE
+        signal_quality = self._calculate_signal_quality(analyses)
+        
+        # 🎨 RESULTADO SUPER NEUTRO
+        result = {
+            "direction": decision["direction"],
+            "final_confidence": float(decision["confidence"]),
+            "entry_signal": f"🧠 {decision['direction'].upper()} - {decision['reasoning']}",
+            "entry_time": time_info["entry_time"],
+            "timeframe": time_info["timeframe"],
+            "analysis_time": time_info["current_time"],
+            "user_timeframe": timeframe,
+            "cached": False,
+            "signal_quality": float(signal_quality),
+            "analysis_grade": "high" if signal_quality > 0.7 else "medium",
+            "market_context": decision["context"],
+            "micro_quality": analyses['nano_analysis']['convergence_strength'],
+            "user_indicators_provided": bool(user_indicators),
+            "metrics": {
+                "analysis_score": float(decision["total_score"]),
+                "trend_power": float(decision["trend_power"]),
+                "macd_power": float(decision["macd_power"]),
+                "micro_power": float(decision["micro_power"]),
+                "flow_power": float(decision["flow_power"]),
+                "user_score": float(decision["user_score"]),
+                "trend_strength": analyses['traditional']['price_action']['trend_strength'],
+                "momentum": analyses['traditional']['price_action']['momentum'],
+                "rsi": analyses['traditional']['indicators']['rsi'],
+                "macd": analyses['traditional']['indicators']['macd"],
+                "macd_strength": analyses['traditional']['indicators']['macd_strength']
+            },
+            "reasoning": decision["reasoning"]
+        }
+        
+        # Adiciona métricas do usuário se disponíveis
+        if user_indicators:
+            result["user_metrics"] = {
+                "provided_macd": float(user_indicators.get('macd', 0)),
+                "provided_rsi": float(user_indicators.get('rsi', 50)),
+                "provided_adx": float(user_indicators.get('adx', 0)),
+                "provided_price": float(user_indicators.get('price', 0))
             }
-            
-            # 🎯 ANÁLISE DOS INDICADORES DO USUÁRIO
-            if user_indicators:
-                analyses['user_analysis'] = self._analyze_user_indicators(user_indicators)
-            
-            # 🎯 MOTOR DE DECISÃO 100% NEUTRO (AGORA BALANCEADO)
-            decision = self._absolute_decision_engine(analyses, timeframe)
-            time_info = self._get_entry_timeframe(timeframe)
-            
-            # 📊 QUALIDADE DA ANÁLISE
-            signal_quality = self._calculate_signal_quality(analyses)
-            
-            # 🎨 RESULTADO SUPER NEUTRO
-            result = {
-                "direction": decision["direction"],
-                "final_confidence": float(decision["confidence"]),
-                "entry_signal": f"🧠 {decision['direction'].upper()} - {decision['reasoning']}",
-                "entry_time": time_info["entry_time"],
-                "timeframe": time_info["timeframe"],
-                "analysis_time": time_info["current_time"],
-                "user_timeframe": timeframe,
-                "cached": False,
-                "signal_quality": float(signal_quality),
-                "analysis_grade": "high" if signal_quality > 0.7 else "medium",
-                "market_context": decision["context"],
-                "micro_quality": analyses['nano_analysis']['convergence_strength'],
-                "user_indicators_provided": bool(user_indicators),
-                "metrics": {
-                    "analysis_score": float(decision["total_score"]),
-                    "trend_power": float(decision["trend_power"]),
-                    "macd_power": float(decision["macd_power"]),
-                    "micro_power": float(decision["micro_power"]),
-                    "user_score": float(decision["user_score"]),
-                    "ia_score": float(decision["ia_score"]),
-                    "trend_strength": analyses['traditional']['price_action']['trend_strength'],
-                    "momentum": analyses['traditional']['price_action']['momentum'],
-                    "rsi": analyses['traditional']['indicators']['rsi'],
-                    "macd": analyses['traditional']['indicators']['macd'],
-                    "macd_strength": analyses['traditional']['indicators']['macd_strength']
-                },
-                "reasoning": decision["reasoning"]
-            }
-            
-            # Adiciona métricas do usuário se disponíveis
-            if user_indicators:
-                result["user_metrics"] = {
-                    "provided_macd": float(user_indicators.get('macd', 0)),
-                    "provided_rsi": float(user_indicators.get('rsi', 50)),
-                    "provided_adx": float(user_indicators.get('adx', 0)),
-                    "provided_price": float(user_indicators.get('price', 0))
-                }
-            
-            self.cache.set(blob, timeframe, user_indicators, result)
-            return result
-            
-        except Exception as e:
-            fallback_result = self._neutral_market_decision()
-            fallback_result.update({
-                "entry_signal": f"🧠 {fallback_result['direction'].upper()} - Análise de mercado contingente",
-                "entry_time": datetime.datetime.now().strftime("%H:%M"),
-                "timeframe": "Próximo candle",
-                "analysis_time": datetime.datetime.now().strftime("%H:%M:%S"),
-                "user_timeframe": timeframe,
-                "cached": False,
-                "signal_quality": 0.6,
-                "analysis_grade": "medium",
-                "market_context": "market_analysis",
-                "micro_quality": 0.6,
-                "user_indicators_provided": bool(user_indicators)
-            })
-            return fallback_result
+        
+        self.cache.set(blob, timeframe, user_indicators, result)
+        return result
 
     # =========================
     # VISUAL ANALYSIS (no OCR) - TODAS AS FUNÇÕES PRESERVADAS
@@ -1670,11 +1644,11 @@ HTML_TEMPLATE = '''
                 let powerHtml = '';
                 
                 const powerItems = [
-                    ['Score da IA', metrics.ia_score?.toFixed(3)],
-                    ['Score do Usuário', metrics.user_score?.toFixed(3)],
                     ['Score Final', metrics.analysis_score?.toFixed(3)],
                     ['Poder da Tendência', (metrics.trend_power * 100)?.toFixed(1) + '%'],
-                    ['Poder do MACD', (metrics.macd_power * 100)?.toFixed(1) + '%']
+                    ['Poder do MACD', (metrics.macd_power * 100)?.toFixed(1) + '%'],
+                    ['Poder Micro', (metrics.micro_power * 100)?.toFixed(1) + '%'],
+                    ['Poder do Fluxo', (metrics.flow_power * 100)?.toFixed(1) + '%']
                 ];
                 
                 powerItems.forEach(([label, value]) => {
@@ -1734,7 +1708,7 @@ def index():
 
 @app.route('/analyze', methods=['POST'])
 def analyze_photo():
-    """Endpoint de análise de imagem - AGORA PERFEITAMENTE BALANCEADO!"""
+    """Endpoint de análise de imagem - 100% NEUTRA, SEM FALLBACK"""
     try:
         if 'image' not in request.files:
             return jsonify({'error': 'Nenhuma imagem enviada'}), 400
@@ -1768,14 +1742,14 @@ def analyze_photo():
         if len(image_bytes) == 0:
             return jsonify({'error': 'Arquivo vazio'}), 400
         
-        # Análise 100% NEUTRA - AGORA PERFEITAMENTE BALANCEADA!
+        # Análise 100% NEUTRA - SEM FALLBACK
         analysis = analyzer.analyze(image_bytes, timeframe, user_indicators)
         
         return jsonify(analysis)
         
     except Exception as e:
         return jsonify({
-            'error': f'Erro interno: {str(e)}'
+            'error': f'Erro na análise: {str(e)}'
         }), 500
 
 @app.route('/health', methods=['GET'])
@@ -1785,7 +1759,7 @@ def health_check():
         'status': 'healthy', 
         'service': 'IA Signal Pro - 100% NEUTRA',
         'timestamp': datetime.datetime.now().isoformat(),
-        'version': '7.0.0-balanceada'
+        'version': '8.0.0-zero-vies'
     })
 
 @app.route('/cache/clear', methods=['POST'])
@@ -1816,8 +1790,8 @@ if __name__ == '__main__':
     
     print(f"🚀 IA Signal Pro - 100% NEUTRA iniciando na porta {port}")
     print(f"🧠⚖️ SISTEMA: ZERO VIÉS - DECISÕES PURAMENTE TÉCNICAS")
-    print(f"🎯 VERSÃO: PERFEITAMENTE BALANCEADA")
-    print(f"📈 SAÍDA: COMPRA ou VENDA - SEM FAVORITISMO")
-    print(f"💪 NEUTRALIDADE: RSI (reversões) + MACD + Tendência + Micro-estrutura")
+    print(f"🎯 VERSÃO: ZERO FALLBACK - SEM CHUTES ALEATÓRIOS")
+    print(f"📈 SAÍDA: COMPRA ou VENDA - BASEADO APENAS NOS DADOS")
+    print(f"💪 NEUTRALIDADE: RSI SIMÉTRICO + PESOS IGUAIS + CONFIANÇA BASE 0%")
     
     app.run(host='0.0.0.0', port=port, debug=debug)
