@@ -210,7 +210,7 @@ class SuperIntelligentAnalyzer:
             
             if trend_signals:
                 weighted_trend = sum(t * s for t, s in trend_signals) / sum(s for _, s in trend_signals)
-                overall_strength = np.mean([s for _, s in trend_signals)
+                overall_strength = np.mean([s for _, s in trend_signals])
             else:
                 weighted_trend = 0
                 overall_strength = 0
