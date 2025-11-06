@@ -476,33 +476,40 @@ class SuperIntelligentAnalyzer:
             return {"rsi": 0.0, "macd": 0.0, "macd_strength": 0.0, "volume_intensity": 0.0, "momentum_quality": 0.0}
 
     # =========================
-    #  ANÁLISE COM DADOS DO USUÁRIO - NOVA FUNCIONALIDADE!
+    #  ANÁLISE COM DADOS DO USUÁRIO - AJUSTES QUE DECIDIMOS!
     # =========================
     
     def _analyze_user_indicators(self, user_indicators: Dict) -> Dict[str, float]:
-        """Analisa os indicadores fornecidos pelo usuário"""
+        """Analisa os indicadores fornecidos pelo usuário - AJUSTADO!"""
         try:
             macd = float(user_indicators.get('macd', 0))
             rsi = float(user_indicators.get('rsi', 50))
             adx = float(user_indicators.get('adx', 0))
             price = float(user_indicators.get('price', 0))
             
-            # Análise do MACD fornecido
-            macd_power = np.clip(macd * 10, -1, 1)  # Normaliza para -1 a 1
-            macd_strength = min(1.0, abs(macd) * 20)  # Força baseada no valor absoluto
+            # ✅ RSI APENAS PARA POTENCIAIS REVERSÕES (Balanceado)
+            if rsi >= 70:  # SOBRECOMPRA - potencial reversão BAIXISTA
+                rsi_normalized = -0.3  # Sinal suave de reversão
+                rsi_strength = 0.7
+            elif rsi <= 25:  # SOBREVENDA - potencial reversão ALTISTA  
+                rsi_normalized = 0.3   # Sinal suave de reversão
+                rsi_strength = 0.7
+            else:  # ZONA NEUTRA - quase zero influência
+                rsi_normalized = (rsi - 50) / 50 * 0.1  # Muito pouco influente
+                rsi_strength = 0.2
             
-            # Análise do RSI fornecido
-            rsi_normalized = (rsi - 50) / 50  # Normaliza para -1 a 1
-            rsi_strength = min(1.0, abs(rsi_normalized))
+            # ✅ MACD BALANCEADO
+            macd_power = np.clip(macd * 2, -1, 1)  # Fator reduzido para balancear
+            macd_strength = min(1.0, abs(macd) * 2)
             
-            # Análise do ADX fornecido
-            adx_strength = min(1.0, adx / 50)  # ADX > 25 = tendência forte
+            # ✅ ADX (tendência) BALANCEADO  
+            adx_strength = min(1.0, adx / 50) * 0.8  # Reduzido para balancear
             
-            # Score combinado dos indicadores do usuário
+            # ✅ SCORE PERFEITAMENTE BALANCEADO
             user_score = (
-                macd_power * 0.4 +
-                rsi_normalized * 0.3 +
-                adx_strength * 0.3
+                macd_power * 0.4 +      # MACD mantém peso
+                rsi_normalized * 0.3 +  # RSI com peso médio  
+                adx_strength * 0.3      # ADX/Tendência com peso igual
             )
             
             return {
@@ -526,68 +533,60 @@ class SuperIntelligentAnalyzer:
             }
 
     # =========================
-    #  MOTOR DE DECISÃO 100% NEUTRO - ATUALIZADO!
+    #  MOTOR DE DECISÃO 100% NEUTRO - AJUSTADO!
     # =========================
     
     def _absolute_decision_engine(self, all_analyses: Dict, timeframe: str) -> Dict[str, Any]:
-        """MOTOR 100% NEUTRO - AGORA COM DADOS DO USUÁRIO!"""
+        """MOTOR 100% NEUTRO - AGORA PERFEITAMENTE BALANCEADO!"""
         try:
             # Extrai todas as análises
-            nano_trend = all_analyses['nano_analysis']
-            micro_structure = all_analyses['micro_structure']
-            flow_dynamics = all_analyses['flow_dynamics']
             traditional = all_analyses['traditional']
             user_analysis = all_analyses.get('user_analysis', {})
+            nano_trend = all_analyses['nano_analysis']
+            micro_structure = all_analyses['micro_structure']
             
-            # 🎯 ANÁLISE PURAMENTE TÉCNICA - ZERO VIÉS
+            # ✅ PESOS PERFEITAMENTE BALANCEADOS
+            # Tendência: 25%
             trend_direction = traditional['price_action']['trend_direction']
             trend_strength = traditional['price_action']['trend_strength']
             trend_power = trend_direction * trend_strength
             
+            # MACD: 25%
             macd_value = traditional['indicators']['macd']
             macd_strength = traditional['indicators']['macd_strength']
             macd_power = macd_value * macd_strength
             
+            # Micro-estrutura: 25%
             nano_power = nano_trend['nano_trend'] * nano_trend['convergence_strength']
-            micro_power = micro_structure['structural_integrity'] * 0.5 + flow_dynamics['overall_flow_quality'] * 0.5
+            micro_power = micro_structure['structural_integrity']
             micro_composite = (nano_power + micro_power) / 2
             
-            # 🧠 SCORE DA IA (70% de peso)
-            ia_score = (
-                trend_power * 0.333 +
-                macd_power * 0.333 +  
-                micro_composite * 0.334
-            )
-            
-            # 🎯 SCORE DO USUÁRIO (30% de peso) - NOVO!
+            # Dados do Usuário: 25% (já balanceado internamente)
             user_score = user_analysis.get('user_combined_score', 0)
             user_confidence = user_analysis.get('user_confidence', 0)
             
-            # 💥 SCORE FINAL COMBINADO
-            total_score = (ia_score * 0.7) + (user_score * user_confidence * 0.3)
+            # 💥 SCORE FINAL PERFEITAMENTE BALANCEADO
+            ia_score = (trend_power * 0.25) + (macd_power * 0.25) + (micro_composite * 0.25)
+            total_score = ia_score + (user_score * user_confidence * 0.25)
             
-            # DECISÃO 100% NEUTRA
+            # 🎯 DECISÃO BINÁRIA: APENAS COMPRA ou VENDA
             if total_score > 0:
                 direction = "buy"
                 confidence = 0.50 + (min(abs(total_score), 0.5) * 0.40)
-                reasoning = self._generate_enhanced_reasoning("buy", trend_power, macd_power, micro_composite, user_score, total_score, user_analysis)
             else:
-                direction = "sell"
+                direction = "sell" 
                 confidence = 0.50 + (min(abs(total_score), 0.5) * 0.40)
-                reasoning = self._generate_enhanced_reasoning("sell", trend_power, macd_power, micro_composite, user_score, total_score, user_analysis)
             
-            # CONFIANÇA FINAL
-            final_confidence = self._calculate_enhanced_confidence(confidence, all_analyses)
-            
-            # CONTEXTO
-            context = self._detect_enhanced_context(trend_strength, macd_strength, micro_composite, user_score, total_score)
+            reasoning = self._generate_enhanced_reasoning(direction, trend_power, macd_power, 
+                                                       micro_composite, user_score, total_score, 
+                                                       user_analysis)
             
             return {
                 "direction": direction,
-                "confidence": final_confidence,
+                "confidence": confidence,
                 "reasoning": reasoning,
                 "total_score": total_score,
-                "context": context,
+                "context": self._detect_enhanced_context(trend_strength, macd_strength, micro_composite, user_score, total_score),
                 "trend_power": trend_power,
                 "macd_power": macd_power,
                 "micro_power": micro_composite,
@@ -601,21 +600,21 @@ class SuperIntelligentAnalyzer:
     def _generate_enhanced_reasoning(self, direction: str, trend_power: float, macd_power: float, 
                                    micro_power: float, user_score: float, total_score: float, 
                                    user_analysis: Dict) -> str:
-        """Gera reasoning com dados do usuário"""
+        """Gera reasoning com dados do usuário - AJUSTADO!"""
         
         strength = "ALTA" if abs(total_score) > 0.25 else "moderada"
         
         factors = []
         
-        # Fatores da IA
-        if abs(trend_power) > 0.15: 
+        # Fatores da IA (balanceados)
+        if abs(trend_power) > 0.1: 
             factors.append(f"tendência {trend_power*100:+.1f}%")
-        if abs(macd_power) > 0.15: 
+        if abs(macd_power) > 0.1: 
             factors.append(f"MACD {macd_power*100:+.1f}%")
-        if abs(micro_power) > 0.15: 
+        if abs(micro_power) > 0.1: 
             factors.append(f"micro-estrutura {micro_power*100:+.1f}%")
         
-        # Fatores do usuário - NOVO!
+        # Fatores do usuário (balanceados)
         user_macd = user_analysis.get('user_macd_power', 0)
         user_rsi = user_analysis.get('user_rsi', 0)
         user_adx = user_analysis.get('user_adx_strength', 0)
@@ -639,9 +638,9 @@ class SuperIntelligentAnalyzer:
                 return f"📉 VENDA {strength} - {analysis}"
         else:
             if direction == "buy":
-                return f"📈 COMPRA {strength} - Convergência técnica"
+                return f"📈 COMPRA {strength} - Convergência técnica balanceada"
             else:
-                return f"📉 VENDA {strength} - Convergência técnica"
+                return f"📉 VENDA {strength} - Convergência técnica balanceada"
 
     def _calculate_enhanced_confidence(self, base_confidence: float, all_analyses: Dict) -> float:
         """Calcula confiança com dados do usuário"""
@@ -655,7 +654,7 @@ class SuperIntelligentAnalyzer:
                 all_analyses['traditional']['indicators']['macd_strength']
             ]
             
-            # Adiciona confiança do usuário - NOVO!
+            # Adiciona confiança do usuário
             user_analysis = all_analyses.get('user_analysis', {})
             user_confidence = user_analysis.get('user_confidence', 0)
             confidence_factors.append(user_confidence)
@@ -733,7 +732,7 @@ class SuperIntelligentAnalyzer:
         }
 
     def analyze(self, blob: bytes, timeframe: str = '1m', user_indicators: Dict = None) -> Dict[str, Any]:
-        """ANÁLISE 100% NEUTRA - AGORA COM DADOS DO USUÁRIO!"""
+        """ANÁLISE 100% NEUTRA - AGORA PERFEITAMENTE BALANCEADA!"""
         
         if user_indicators is None:
             user_indicators = {}
@@ -763,11 +762,11 @@ class SuperIntelligentAnalyzer:
                 'flow_dynamics': self._analyze_flow_dynamics(price_data)
             }
             
-            # 🎯 NOVO: ANÁLISE DOS INDICADORES DO USUÁRIO
+            # 🎯 ANÁLISE DOS INDICADORES DO USUÁRIO
             if user_indicators:
                 analyses['user_analysis'] = self._analyze_user_indicators(user_indicators)
             
-            # 🎯 MOTOR DE DECISÃO 100% NEUTRO (ATUALIZADO)
+            # 🎯 MOTOR DE DECISÃO 100% NEUTRO (AGORA BALANCEADO)
             decision = self._absolute_decision_engine(analyses, timeframe)
             time_info = self._get_entry_timeframe(timeframe)
             
@@ -799,7 +798,7 @@ class SuperIntelligentAnalyzer:
                     "trend_strength": analyses['traditional']['price_action']['trend_strength'],
                     "momentum": analyses['traditional']['price_action']['momentum'],
                     "rsi": analyses['traditional']['indicators']['rsi'],
-                    "macd": analyses['traditional']['indicators']['macd'],
+                    "macd": analyses['traditional']['indicators']['macd"],
                     "macd_strength": analyses['traditional']['indicators']['macd_strength']
                 },
                 "reasoning": decision["reasoning"]
@@ -1735,7 +1734,7 @@ def index():
 
 @app.route('/analyze', methods=['POST'])
 def analyze_photo():
-    """Endpoint de análise de imagem - AGORA COM DADOS DO USUÁRIO!"""
+    """Endpoint de análise de imagem - AGORA PERFEITAMENTE BALANCEADO!"""
     try:
         if 'image' not in request.files:
             return jsonify({'error': 'Nenhuma imagem enviada'}), 400
@@ -1769,7 +1768,7 @@ def analyze_photo():
         if len(image_bytes) == 0:
             return jsonify({'error': 'Arquivo vazio'}), 400
         
-        # Análise 100% NEUTRA - AGORA COM DADOS DO USUÁRIO!
+        # Análise 100% NEUTRA - AGORA PERFEITAMENTE BALANCEADA!
         analysis = analyzer.analyze(image_bytes, timeframe, user_indicators)
         
         return jsonify(analysis)
@@ -1786,7 +1785,7 @@ def health_check():
         'status': 'healthy', 
         'service': 'IA Signal Pro - 100% NEUTRA',
         'timestamp': datetime.datetime.now().isoformat(),
-        'version': '7.0.0-com-dados-usuario'
+        'version': '7.0.0-balanceada'
     })
 
 @app.route('/cache/clear', methods=['POST'])
@@ -1817,8 +1816,8 @@ if __name__ == '__main__':
     
     print(f"🚀 IA Signal Pro - 100% NEUTRA iniciando na porta {port}")
     print(f"🧠⚖️ SISTEMA: ZERO VIÉS - DECISÕES PURAMENTE TÉCNICAS")
-    print(f"🎯 NOVO: AGORA COM DADOS DO USUÁRIO (MACD, RSI, ADX, Preço)")
+    print(f"🎯 VERSÃO: PERFEITAMENTE BALANCEADA")
     print(f"📈 SAÍDA: COMPRA ou VENDA - SEM FAVORITISMO")
-    print(f"💪 NEUTRALIDADE: COMBINAÇÃO IA (70%) + USUÁRIO (30%)")
+    print(f"💪 NEUTRALIDADE: RSI (reversões) + MACD + Tendência + Micro-estrutura")
     
     app.run(host='0.0.0.0', port=port, debug=debug)
