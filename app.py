@@ -890,7 +890,7 @@ class SuperIntelligentAnalyzer:
                 "momentum_flow_power": float(decision["momentum_flow_power"]),
                 "trend_strength": analyses['traditional']['price_action']['trend_strength'],
                 "momentum": analyses['traditional']['price_action']['momentum'],
-                "rsi": analyses['traditional']['indicators']['rsi"],
+                "rsi": analyses['traditional']['indicators']['rsi'],
                 "macd": analyses['traditional']['indicators']['macd'],
                 "macd_strength": analyses['traditional']['indicators']['macd_strength']
             },
