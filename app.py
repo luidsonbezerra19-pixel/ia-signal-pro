@@ -10,6 +10,7 @@ except Exception as _e:
 """
 IA SIGNAL PRO - SUPER INTELIGENTE 🧠⚡
 ANÁLISE DE CONFLITOS - DECISÕES CONTEXTUAIS - ZERO VIÉS
+VERSÃO OTIMIZADA - PERFORMANCE MAXIMIZADA
 """
 
 import io
@@ -18,18 +19,117 @@ import math
 import datetime
 import hashlib
 import json
+import logging
+import gc
 from typing import Any, Dict, Optional, List, Tuple
+from logging.handlers import RotatingFileHandler
 import numpy as np
 from flask import Flask, jsonify, render_template_string, request
 from PIL import Image, ImageFilter
 
 # =========================
-#  SISTEMA DE CACHE INTELIGENTE
+#  SISTEMA DE LOGS AVANÇADO
 # =========================
-class AnalysisCache:
-    def __init__(self, cache_dir: str = "analysis_cache"):
+
+class AdvancedLogger:
+    def __init__(self):
+        self.logger = logging.getLogger('IASignalPro')
+        self.logger.setLevel(logging.INFO)
+        self._setup_handlers()
+    
+    def _setup_handlers(self):
+        """Configura handlers de log"""
+        # Handler para arquivo com rotação
+        file_handler = RotatingFileHandler(
+            'ia_signal_pro.log', 
+            maxBytes=10*1024*1024,  # 10MB
+            backupCount=5
+        )
+        
+        # Handler para console
+        console_handler = logging.StreamHandler()
+        
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'
+        )
+        
+        file_handler.setFormatter(formatter)
+        console_handler.setFormatter(formatter)
+        
+        self.logger.addHandler(file_handler)
+        self.logger.addHandler(console_handler)
+    
+    def info(self, message: str):
+        self.logger.info(message)
+    
+    def error(self, message: str, exc_info: bool = False):
+        self.logger.error(message, exc_info=exc_info)
+    
+    def warning(self, message: str):
+        self.logger.warning(message)
+
+# =========================
+#  SISTEMA DE MÉTRICAS
+# =========================
+
+class MetricsCollector:
+    def __init__(self):
+        self.metrics = {
+            'total_requests': 0,
+            'successful_analyses': 0,
+            'failed_analyses': 0,
+            'average_processing_time': 0,
+            'cache_hit_rate': 0,
+            'cache_hits': 0,
+            'memory_cleanups': 0
+        }
+        self.start_time = datetime.datetime.now()
+    
+    def record_analysis(self, success: bool, processing_time: float, cache_hit: bool):
+        """Registra métricas de análise"""
+        self.metrics['total_requests'] += 1
+        
+        if success:
+            self.metrics['successful_analyses'] += 1
+        else:
+            self.metrics['failed_analyses'] += 1
+        
+        # Atualiza tempo médio de processamento
+        current_avg = self.metrics['average_processing_time']
+        total_requests = self.metrics['total_requests']
+        self.metrics['average_processing_time'] = (
+            (current_avg * (total_requests - 1) + processing_time) / total_requests
+        )
+        
+        # Taxa de cache hit
+        if cache_hit:
+            cache_hits = self.metrics['cache_hits'] + 1
+            self.metrics['cache_hits'] = cache_hits
+            self.metrics['cache_hit_rate'] = cache_hits / total_requests
+    
+    def record_memory_cleanup(self):
+        """Registra limpeza de memória"""
+        self.metrics['memory_cleanups'] += 1
+    
+    def get_metrics(self) -> Dict:
+        """Retorna métricas atuais"""
+        uptime = (datetime.datetime.now() - self.start_time).total_seconds()
+        metrics = self.metrics.copy()
+        metrics['uptime_seconds'] = uptime
+        metrics['requests_per_second'] = metrics['total_requests'] / uptime if uptime > 0 else 0
+        return metrics
+
+# =========================
+#  CACHE INTELIGENTE MELHORADO
+# =========================
+
+class SmartAnalysisCache:
+    def __init__(self, cache_dir: str = "analysis_cache", max_size_mb: int = 500):
         self.cache_dir = cache_dir
+        self.max_size_mb = max_size_mb
+        self._cleanup_threshold = 0.8  # 80% de uso
         os.makedirs(cache_dir, exist_ok=True)
+        
         self.cache_duration = {
             '1m': 60,
             '5m': 300
@@ -42,6 +142,37 @@ class AnalysisCache:
     
     def _get_cache_file(self, key: str) -> str:
         return os.path.join(self.cache_dir, f"{key}.json")
+    
+    def _get_cache_size(self) -> float:
+        """Calcula tamanho total do cache em MB"""
+        total_size = 0
+        if os.path.exists(self.cache_dir):
+            for file in os.listdir(self.cache_dir):
+                file_path = os.path.join(self.cache_dir, file)
+                if os.path.isfile(file_path):
+                    total_size += os.path.getsize(file_path)
+        return total_size / (1024 * 1024)
+    
+    def _cleanup_old_cache(self):
+        """Remove arquivos mais antigos quando o cache estiver cheio"""
+        try:
+            if self._get_cache_size() > self.max_size_mb * self._cleanup_threshold:
+                files = []
+                for file in os.listdir(self.cache_dir):
+                    file_path = os.path.join(self.cache_dir, file)
+                    if os.path.isfile(file_path):
+                        files.append((file_path, os.path.getctime(file_path)))
+                
+                if files:
+                    # Ordena por data de criação (mais antigos primeiro)
+                    files.sort(key=lambda x: x[1])
+                    
+                    # Remove 20% dos arquivos mais antigos
+                    files_to_remove = max(1, len(files) // 5)
+                    for i in range(files_to_remove):
+                        os.remove(files[i][0])
+        except Exception as e:
+            print(f"Erro na limpeza do cache: {e}")
     
     def get(self, image_bytes: bytes, timeframe: str, user_indicators: Dict) -> Optional[Dict]:
         try:
@@ -65,6 +196,9 @@ class AnalysisCache:
     
     def set(self, image_bytes: bytes, timeframe: str, user_indicators: Dict, analysis: Dict):
         try:
+            # Limpeza automática antes de adicionar
+            self._cleanup_old_cache()
+            
             key = self._get_cache_key(image_bytes, timeframe, user_indicators)
             cache_file = self._get_cache_file(key)
             
@@ -81,12 +215,89 @@ class AnalysisCache:
             pass
 
 # =========================
-#  IA SUPER INTELIGENTE - ANÁLISE DE CONFLITOS
+#  IA SUPER INTELIGENTE OTIMIZADA
 # =========================
-class SuperIntelligentAnalyzer:
+
+class OptimizedSuperIntelligentAnalyzer:
     def __init__(self):
-        self.cache = AnalysisCache()
+        self.cache = SmartAnalysisCache()
+        self.logger = AdvancedLogger()
+        self.metrics = MetricsCollector()
+        self._setup_optimizations()
+        self._analysis_count = 0
+        self._cleanup_interval = 50  # Limpa a cada 50 análises
+        self._memory_threshold = 150 * 1024 * 1024  # 150MB
         
+    def _setup_optimizations(self):
+        """Configura otimizações de performance"""
+        # Pré-compila kernels comuns
+        self._edge_kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]])
+        self._gaussian_kernel = np.array([[1, 2, 1], [2, 4, 2], [1, 2, 1]]) / 16
+        
+        # Cache interno para cálculos repetitivos
+        self._calculation_cache = {}
+        self._cache_ttl = datetime.timedelta(minutes=5)
+    
+    def _check_memory_usage(self):
+        """Verifica e gerencia uso de memória"""
+        try:
+            import psutil
+            process = psutil.Process()
+            memory_usage = process.memory_info().rss
+            
+            if memory_usage > self._memory_threshold:
+                self._perform_memory_cleanup()
+                self.metrics.record_memory_cleanup()
+        except ImportError:
+            # Fallback se psutil não estiver disponível
+            if self._analysis_count % 100 == 0:
+                self._perform_memory_cleanup()
+    
+    def _perform_memory_cleanup(self):
+        """Limpeza agressiva de memória"""
+        if hasattr(self, '_calculation_cache'):
+            self._calculation_cache.clear()
+        gc.collect()
+        self.logger.info("Limpeza de memória realizada")
+    
+    def _validate_inputs(self, blob: bytes, timeframe: str, user_indicators: Dict):
+        """Validações completas de entrada"""
+        # Validação do blob
+        if not blob or len(blob) == 0:
+            raise ValueError("Blob de imagem vazio")
+        
+        if len(blob) > 20 * 1024 * 1024:  # 20MB
+            raise ValueError("Imagem muito grande (máximo 20MB)")
+        
+        # Validação do timeframe
+        if timeframe not in ['1m', '5m']:
+            raise ValueError("Timeframe deve ser '1m' ou '5m'")
+        
+        # Validação dos indicadores do usuário
+        if user_indicators:
+            self._validate_user_indicators(user_indicators)
+    
+    def _validate_user_indicators(self, user_indicators: Dict):
+        """Valida indicadores do usuário"""
+        valid_indicators = ['macd', 'rsi', 'adx', 'price']
+        
+        for key, value in user_indicators.items():
+            if key not in valid_indicators:
+                raise ValueError(f"Indicador inválido: {key}")
+            
+            try:
+                float_value = float(value)
+                
+                # Validações específicas por indicador
+                if key == 'rsi' and not (0 <= float_value <= 100):
+                    raise ValueError("RSI deve estar entre 0 e 100")
+                    
+                if key == 'price' and float_value <= 0:
+                    raise ValueError("Preço deve ser positivo")
+                    
+            except (ValueError, TypeError):
+                raise ValueError(f"Valor inválido para {key}: {value}")
+    
     def _load_image(self, blob: bytes) -> Image.Image:
         """Carrega e prepara a imagem para análise"""
         try:
@@ -133,34 +344,44 @@ class SuperIntelligentAnalyzer:
             gray = np.dot(img_array[...,:3], [0.299, 0.587, 0.114])
             
             # Realce de bordas para melhor detecção
-            kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]])
-            enhanced = self._apply_convolution(gray, kernel)
+            enhanced = self._optimized_convolution(gray, self._edge_kernel)
             
             return enhanced
         except Exception as e:
             return np.dot(img_array[...,:3], [0.299, 0.587, 0.114])
 
-    def _apply_convolution(self, image: np.ndarray, kernel: np.ndarray) -> np.ndarray:
-        """Aplica convolução de forma otimizada"""
-        try:
-            kernel_height, kernel_width = kernel.shape
-            pad_height = kernel_height // 2
-            pad_width = kernel_width // 2
-            
-            padded = np.pad(image, ((pad_height, pad_height), (pad_width, pad_width)), mode='edge')
-            output = np.zeros_like(image)
-            
-            for i in range(image.shape[0]):
-                for j in range(image.shape[1]):
-                    region = padded[i:i+kernel_height, j:j+kernel_width]
-                    output[i, j] = np.sum(region * kernel)
-            
-            return np.clip(output, 0, 255)
-        except Exception:
-            return image
+    def _optimized_convolution(self, image: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+        """Convolução otimizada usando OpenCV quando disponível"""
+        if cv2 is not None:
+            try:
+                return cv2.filter2D(image, -1, kernel)
+            except:
+                pass
+        
+        # Fallback para implementação numpy otimizada
+        return self._apply_convolution_optimized(image, kernel)
+
+    def _apply_convolution_optimized(self, image: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+        """Implementação numpy otimizada"""
+        kernel_height, kernel_width = kernel.shape
+        pad_height, pad_width = kernel_height // 2, kernel_width // 2
+        
+        # Padding mais eficiente
+        padded = np.pad(image, ((pad_height, pad_height), (pad_width, pad_width)), 
+                       mode='reflect')  # Melhor que 'edge' para bordas
+        
+        # View para operações vetorizadas
+        output = np.zeros_like(image)
+        
+        # Operação vetorizada (mais rápida que loops)
+        for i in range(kernel_height):
+            for j in range(kernel_width):
+                output += kernel[i, j] * padded[i:i+image.shape[0], j:j+image.shape[1]]
+        
+        return np.clip(output, 0, 255)
 
     # =========================
-    #  ANÁLISE MICROSCÓPICA AVANÇADA
+    #  ANÁLISE MICROSCÓPICA AVANÇADA (OTIMIZADA)
     # =========================
     
     def _microscopic_trend_analysis(self, price_data: np.ndarray) -> Dict[str, float]:
@@ -370,7 +591,7 @@ class SuperIntelligentAnalyzer:
             return 0.5
 
     # =========================
-    #  ANÁLISE TRADICIONAL FORTALECIDA
+    #  ANÁLISE TRADICIONAL FORTALECIDA (OTIMIZADA)
     # =========================
     
     def _analyze_price_action(self, price_data: np.ndarray, timeframe: str) -> Dict[str, float]:
@@ -498,7 +719,7 @@ class SuperIntelligentAnalyzer:
             return {"rsi": 0.0, "macd": 0.0, "macd_strength": 0.0, "volume_intensity": 0.0, "momentum_quality": 0.0}
 
     # =========================
-    #  ANÁLISE INTELIGENTE DE CONFLITOS - NOVA!
+    #  ANÁLISE INTELIGENTE DE CONFLITOS - OTIMIZADA
     # =========================
     
     def _analyze_user_indicators(self, user_indicators: Dict) -> Dict[str, float]:
@@ -653,7 +874,7 @@ class SuperIntelligentAnalyzer:
             return "neutral_market"
 
     # =========================
-    #  MOTOR DE DECISÃO SUPER INTELIGENTE
+    #  MOTOR DE DECISÃO SUPER INTELIGENTE (OTIMIZADO)
     # =========================
     
     def _super_intelligent_decision_engine(self, all_analyses: Dict, timeframe: str) -> Dict[str, Any]:
@@ -829,96 +1050,155 @@ class SuperIntelligentAnalyzer:
     def analyze(self, blob: bytes, timeframe: str = '1m', user_indicators: Dict = None) -> Dict[str, Any]:
         """ANÁLISE SUPER INTELIGENTE - RESOLUÇÃO DE CONFLITOS"""
         
-        if user_indicators is None:
-            user_indicators = {}
+        start_time = datetime.datetime.now()
+        cache_hit = False
         
-        # Cache inteligente
-        cached = self.cache.get(blob, timeframe, user_indicators)
-        if cached:
-            cached['cached'] = True
-            return cached
-        
-        # Processamento básico
-        image = self._load_image(blob)
-        self._validate_chart_image(image)
-        
-        img_array = self._preprocess_image(image, timeframe)
-        price_data = self._extract_price_data(img_array)
-        
-        # 🧠 ANÁLISE MULTI-CAMADAS
-        analyses = {
-            'traditional': {
-                'price_action': self._analyze_price_action(price_data, timeframe),
-                'indicators': self._calculate_advanced_indicators(price_data)
-            },
-            'nano_analysis': self._microscopic_trend_analysis(price_data),
-            'micro_structure': self._analyze_micro_structure(price_data),
-            'flow_dynamics': self._analyze_flow_dynamics(price_data),
-            'price_data': price_data
-        }
-        
-        # 🎯 ANÁLISE INTELIGENTE DOS INDICADORES DO USUÁRIO
-        if user_indicators:
-            analyses['user_analysis'] = self._analyze_user_indicators(user_indicators)
-        
-        # 🎯 MOTOR DE DECISÃO SUPER INTELIGENTE
-        decision = self._super_intelligent_decision_engine(analyses, timeframe)
-        time_info = self._get_entry_timeframe(timeframe)
-        
-        # 📊 QUALIDADE DA ANÁLISE
-        signal_quality = self._calculate_signal_quality(analyses)
-        
-        # 🎨 RESULTADO SUPER INTELIGENTE
-        result = {
-            "direction": decision["direction"],
-            "final_confidence": float(decision["confidence"]),
-            "entry_signal": f"🧠 {decision['direction'].upper()} - {decision['reasoning']}",
-            "entry_time": time_info["entry_time"],
-            "timeframe": time_info["timeframe"],
-            "analysis_time": time_info["current_time"],
-            "user_timeframe": timeframe,
-            "cached": False,
-            "signal_quality": float(signal_quality),
-            "analysis_grade": "high" if signal_quality > 0.7 else "medium",
-            "market_context": decision["scenario"],
-            "user_indicators_provided": bool(user_indicators),
-            "metrics": {
-                "analysis_score": float(decision["total_score"]),
-                "user_power": float(decision["user_power"]),
-                "trend_micro_power": float(decision["trend_micro_power"]),
-                "price_action_power": float(decision["price_action_power"]),
-                "momentum_flow_power": float(decision["momentum_flow_power"]),
-                "trend_strength": analyses['traditional']['price_action']['trend_strength'],
-                "momentum": analyses['traditional']['price_action']['momentum'],
-                "rsi": analyses['traditional']['indicators']['rsi'],
-                "macd": analyses['traditional']['indicators']['macd'],
-                "macd_strength": analyses['traditional']['indicators']['macd_strength']
-            },
-            "reasoning": decision["reasoning"],
-            "intelligent_scenario": decision["scenario"]
-        }
-        
-        # Adiciona métricas do usuário se disponíveis
-        if user_indicators:
-            result["user_metrics"] = {
-                "provided_macd": float(user_indicators.get('macd', 0)),
-                "provided_rsi": float(user_indicators.get('rsi', 50)),
-                "provided_adx": float(user_indicators.get('adx', 0)),
-                "provided_price": float(user_indicators.get('price', 0))
+        try:
+            self.logger.info(f"Iniciando análise - Timeframe: {timeframe}")
+            
+            if user_indicators is None:
+                user_indicators = {}
+            
+            # Validações de segurança
+            self._validate_inputs(blob, timeframe, user_indicators)
+            
+            # Gerenciamento de memória
+            self._analysis_count += 1
+            if self._analysis_count % self._cleanup_interval == 0:
+                self._check_memory_usage()
+            
+            # Cache inteligente
+            cached = self.cache.get(blob, timeframe, user_indicators)
+            if cached:
+                cached['cached'] = True
+                cache_hit = True
+                self.logger.info("Cache hit - retornando análise em cache")
+                return cached
+            
+            # Processamento básico
+            image = self._load_image(blob)
+            self._validate_chart_image(image)
+            
+            img_array = self._preprocess_image(image, timeframe)
+            price_data = self._extract_price_data(img_array)
+            
+            # 🧠 ANÁLISE MULTI-CAMADAS
+            analyses = {
+                'traditional': {
+                    'price_action': self._analyze_price_action(price_data, timeframe),
+                    'indicators': self._calculate_advanced_indicators(price_data)
+                },
+                'nano_analysis': self._microscopic_trend_analysis(price_data),
+                'micro_structure': self._analyze_micro_structure(price_data),
+                'flow_dynamics': self._analyze_flow_dynamics(price_data),
+                'price_data': price_data
             }
-        
-        self.cache.set(blob, timeframe, user_indicators, result)
-        return result
+            
+            # 🎯 ANÁLISE INTELIGENTE DOS INDICADORES DO USUÁRIO
+            if user_indicators:
+                analyses['user_analysis'] = self._analyze_user_indicators(user_indicators)
+            
+            # 🎯 MOTOR DE DECISÃO SUPER INTELIGENTE
+            decision = self._super_intelligent_decision_engine(analyses, timeframe)
+            time_info = self._get_entry_timeframe(timeframe)
+            
+            # 📊 QUALIDADE DA ANÁLISE
+            signal_quality = self._calculate_signal_quality(analyses)
+            
+            # 🎨 RESULTADO SUPER INTELIGENTE
+            result = {
+                "direction": decision["direction"],
+                "final_confidence": float(decision["confidence"]),
+                "entry_signal": f"🧠 {decision['direction'].upper()} - {decision['reasoning']}",
+                "entry_time": time_info["entry_time"],
+                "timeframe": time_info["timeframe"],
+                "analysis_time": time_info["current_time"],
+                "user_timeframe": timeframe,
+                "cached": False,
+                "signal_quality": float(signal_quality),
+                "analysis_grade": "high" if signal_quality > 0.7 else "medium",
+                "market_context": decision["scenario"],
+                "user_indicators_provided": bool(user_indicators),
+                "metrics": {
+                    "analysis_score": float(decision["total_score"]),
+                    "user_power": float(decision["user_power"]),
+                    "trend_micro_power": float(decision["trend_micro_power"]),
+                    "price_action_power": float(decision["price_action_power"]),
+                    "momentum_flow_power": float(decision["momentum_flow_power"]),
+                    "trend_strength": analyses['traditional']['price_action']['trend_strength'],
+                    "momentum": analyses['traditional']['price_action']['momentum'],
+                    "rsi": analyses['traditional']['indicators']['rsi'],
+                    "macd": analyses['traditional']['indicators']['macd'],
+                    "macd_strength": analyses['traditional']['indicators']['macd_strength']
+                },
+                "reasoning": decision["reasoning"],
+                "intelligent_scenario": decision["scenario"]
+            }
+            
+            # Adiciona métricas do usuário se disponíveis
+            if user_indicators:
+                result["user_metrics"] = {
+                    "provided_macd": float(user_indicators.get('macd', 0)),
+                    "provided_rsi": float(user_indicators.get('rsi', 50)),
+                    "provided_adx": float(user_indicators.get('adx', 0)),
+                    "provided_price": float(user_indicators.get('price', 0))
+                }
+            
+            self.cache.set(blob, timeframe, user_indicators, result)
+            
+            processing_time = (datetime.datetime.now() - start_time).total_seconds()
+            self.metrics.record_analysis(True, processing_time, cache_hit)
+            
+            self.logger.info(f"Análise concluída em {processing_time:.2f}s - "
+                           f"Direção: {result['direction']} - "
+                           f"Confiança: {result['final_confidence']:.2f}")
+            
+            return result
+            
+        except Exception as e:
+            processing_time = (datetime.datetime.now() - start_time).total_seconds()
+            self.metrics.record_analysis(False, processing_time, cache_hit)
+            self.logger.error(f"Erro na análise: {str(e)}", exc_info=True)
+            raise
 
 # =========================
-#  APLICAÇÃO FLASK (MANTIDO IGUAL)
+#  CONFIGURAÇÃO DE PRODUÇÃO
 # =========================
-app = Flask(__name__)
-analyzer = SuperIntelligentAnalyzer()
 
-# Configurações para produção
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
-app.config['JSON_SORT_KEYS'] = False
+class ProductionConfig:
+    """Configurações otimizadas para produção"""
+    
+    # Limites de requisição
+    MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB
+    JSON_SORT_KEYS = False
+    
+    # Otimizações do Flask
+    TEMPLATES_AUTO_RELOAD = False
+    EXPLAIN_TEMPLATE_LOADING = False
+    
+    # Segurança
+    SESSION_COOKIE_SECURE = True
+    SESSION_COOKIE_HTTPONLY = True
+    
+    @staticmethod
+    def init_app(app):
+        # Configurações específicas da aplicação
+        app.config.from_object(ProductionConfig)
+
+# =========================
+#  APLICAÇÃO FLASK OTIMIZADA
+# =========================
+
+def create_app():
+    app = Flask(__name__)
+    ProductionConfig.init_app(app)
+    
+    # Otimizações adicionais
+    app.analyzer = OptimizedSuperIntelligentAnalyzer()
+    
+    return app
+
+app = create_app()
 
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
@@ -1267,13 +1547,25 @@ HTML_TEMPLATE = '''
             text-align: center;
             font-size: 12px;
         }
+        
+        .performance-info {
+            background: rgba(255, 165, 0, 0.1);
+            border-radius: 8px;
+            padding: 8px;
+            margin: 8px 0;
+            border: 1px solid #ffa500;
+            text-align: center;
+            font-size: 11px;
+            color: #ffa500;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
             <div class="title">🧠⚡ IA SIGNAL PRO - SUPER INTELIGENTE</div>
-            <div class="subtitle">ANÁLISE DE CONFLITOS - DECISÕES CONTEXTUAIS</div>
+            <div class="subtitle">ANÁLISE DE CONFLITOS - PERFORMANCE MAXIMIZADA</div>
+            <div class="subtitle">🚀 VERSÃO OTIMIZADA - CACHE INTELIGENTE</div>
         </div>
         
         <div class="timeframe-selector">
@@ -1358,10 +1650,59 @@ HTML_TEMPLATE = '''
             </div>
             
             <div class="metrics" id="metricsText"></div>
+            
+            <div id="performanceInfo" class="performance-info" style="display: none;">
+                ⚡ Performance: Processamento otimizado
+            </div>
         </div>
     </div>
 
     <script>
+        // Debounce para evitar múltiplas requisições
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+
+        // Preview de imagem com compressão
+        function compressImage(file, maxWidth = 800, maxHeight = 600, quality = 0.8) {
+            return new Promise((resolve) => {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                const img = new Image();
+                
+                img.onload = function() {
+                    let width = img.width;
+                    let height = img.height;
+                    
+                    if (width > maxWidth) {
+                        height = (height * maxWidth) / width;
+                        width = maxWidth;
+                    }
+                    
+                    if (height > maxHeight) {
+                        width = (width * maxHeight) / height;
+                        height = maxHeight;
+                    }
+                    
+                    canvas.width = width;
+                    canvas.height = height;
+                    ctx.drawImage(img, 0, 0, width, height);
+                    
+                    canvas.toBlob(resolve, 'image/jpeg', quality);
+                };
+                
+                img.src = URL.createObjectURL(file);
+            });
+        }
+
         document.addEventListener('DOMContentLoaded', function() {
             const fileInput = document.getElementById('fileInput');
             const analyzeBtn = document.getElementById('analyzeBtn');
@@ -1381,6 +1722,7 @@ HTML_TEMPLATE = '''
             const powerAnalysis = document.getElementById('powerAnalysis');
             const powerMetrics = document.getElementById('powerMetrics');
             const scenarioInfo = document.getElementById('scenarioInfo');
+            const performanceInfo = document.getElementById('performanceInfo');
             const timeframeBtns = document.querySelectorAll('.timeframe-btn');
             
             // Inputs dos indicadores do usuário
@@ -1404,7 +1746,8 @@ HTML_TEMPLATE = '''
                 });
             });
 
-            // Upload de arquivo
+            // Upload de arquivo com debounce
+            const debouncedFileSelect = debounce(handleFileSelect, 300);
             
             uploadArea.addEventListener('dragover', (e) => {
                 e.preventDefault();
@@ -1420,24 +1763,35 @@ HTML_TEMPLATE = '''
                 uploadArea.style.borderColor = '#7ce0ff';
                 if (e.dataTransfer.files.length) {
                     fileInput.files = e.dataTransfer.files;
-                    handleFileSelect(e);
+                    debouncedFileSelect(e);
                 }
             });
 
-            function handleFileSelect(event) {
+            async function handleFileSelect(event) {
                 const files = event.target.files;
                 if (files && files.length > 0) {
                     selectedFile = files[0];
                     analyzeBtn.disabled = false;
                     analyzeBtn.textContent = `✅ PRONTO PARA ANÁLISE ${currentTimeframe.toUpperCase()}`;
                     
-                    // Mostrar prévia da imagem
-                    const reader = new FileReader();
-                    reader.onload = function(e) {
-                        imagePreview.src = e.target.result;
-                        imagePreview.style.display = 'block';
-                    };
-                    reader.readAsDataURL(selectedFile);
+                    // Mostrar prévia da imagem com compressão
+                    try {
+                        const compressedBlob = await compressImage(selectedFile);
+                        const reader = new FileReader();
+                        reader.onload = function(e) {
+                            imagePreview.src = e.target.result;
+                            imagePreview.style.display = 'block';
+                        };
+                        reader.readAsDataURL(compressedBlob);
+                    } catch (error) {
+                        // Fallback se a compressão falhar
+                        const reader = new FileReader();
+                        reader.onload = function(e) {
+                            imagePreview.src = e.target.result;
+                            imagePreview.style.display = 'block';
+                        };
+                        reader.readAsDataURL(selectedFile);
+                    }
                 } else {
                     analyzeBtn.disabled = true;
                     analyzeBtn.textContent = '🧠 SELECIONE UMA IMAGEM PRIMEIRO';
@@ -1445,7 +1799,7 @@ HTML_TEMPLATE = '''
                 }
             }
 
-            fileInput.addEventListener('change', handleFileSelect);
+            fileInput.addEventListener('change', debouncedFileSelect);
 
             analyzeBtn.addEventListener('click', async () => {
                 if (!selectedFile) {
@@ -1458,6 +1812,7 @@ HTML_TEMPLATE = '''
                 result.style.display = 'block';
                 errorMessage.style.display = 'none';
                 scenarioInfo.style.display = 'none';
+                performanceInfo.style.display = 'none';
                 
                 signalText.className = 'signal-text';
                 signalText.textContent = 'Analisando conflitos inteligentemente...';
@@ -1492,7 +1847,15 @@ HTML_TEMPLATE = '''
 
                 try {
                     const formData = new FormData();
-                    formData.append('image', selectedFile);
+                    
+                    // Usa imagem comprimida se possível
+                    try {
+                        const compressedBlob = await compressImage(selectedFile);
+                        formData.append('image', compressedBlob, selectedFile.name);
+                    } catch (error) {
+                        formData.append('image', selectedFile);
+                    }
+                    
                     formData.append('timeframe', currentTimeframe);
                     
                     // Adiciona indicadores do usuário ao formData
@@ -1528,6 +1891,7 @@ HTML_TEMPLATE = '''
                     }
                     
                     displayResults(data);
+                    performanceInfo.style.display = 'block';
                     
                 } catch (error) {
                     console.error('Erro:', error);
@@ -1681,19 +2045,20 @@ def analyze_photo():
         file_size = image_file.tell()
         image_file.seek(0)
         
-        if file_size > 10 * 1024 * 1024:
-            return jsonify({'error': 'Imagem muito grande (máximo 10MB)'}), 400
+        if file_size > 20 * 1024 * 1024:
+            return jsonify({'error': 'Imagem muito grande (máximo 20MB)'}), 400
         
         image_bytes = image_file.read()
         if len(image_bytes) == 0:
             return jsonify({'error': 'Arquivo vazio'}), 400
         
         # Análise SUPER INTELIGENTE
-        analysis = analyzer.analyze(image_bytes, timeframe, user_indicators)
+        analysis = app.analyzer.analyze(image_bytes, timeframe, user_indicators)
         
         return jsonify(analysis)
         
     except Exception as e:
+        app.analyzer.logger.error(f"Erro no endpoint /analyze: {str(e)}", exc_info=True)
         return jsonify({
             'error': f'Erro na análise: {str(e)}'
         }), 500
@@ -1701,11 +2066,14 @@ def analyze_photo():
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check para monitoramento"""
+    metrics = app.analyzer.metrics.get_metrics()
+    
     return jsonify({
         'status': 'healthy', 
         'service': 'IA Signal Pro - SUPER INTELIGENTE',
         'timestamp': datetime.datetime.now().isoformat(),
-        'version': '10.0.0-inteligencia-conflitos'
+        'version': '11.0.0-otimizada-performance',
+        'metrics': metrics
     })
 
 @app.route('/cache/clear', methods=['POST'])
@@ -1719,16 +2087,31 @@ def clear_cache():
             return jsonify({'ok': True, 'message': 'Cache limpo com sucesso!'})
         return jsonify({'ok': True, 'message': 'Cache já está vazio!'})
     except Exception as e:
+        app.analyzer.logger.error(f"Erro ao limpar cache: {str(e)}")
         return jsonify({'ok': False, 'error': str(e)}), 500
+
+@app.route('/metrics', methods=['GET'])
+def get_metrics():
+    """Endpoint para métricas do sistema"""
+    try:
+        metrics = app.analyzer.metrics.get_metrics()
+        return jsonify(metrics)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 # Handler de erro global
 @app.errorhandler(500)
 def internal_error(error):
+    app.analyzer.logger.error("Erro interno do servidor", exc_info=True)
     return jsonify({'error': 'Erro interno do servidor'}), 500
 
 @app.errorhandler(404)
 def not_found(error):
     return jsonify({'error': 'Endpoint não encontrado'}), 404
+
+@app.errorhandler(413)
+def too_large(error):
+    return jsonify({'error': 'Arquivo muito grande (máximo 20MB)'}), 413
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
@@ -1736,7 +2119,8 @@ if __name__ == '__main__':
     
     print(f"🚀 IA Signal Pro - SUPER INTELIGENTE iniciando na porta {port}")
     print(f"🧠⚡ SISTEMA: ANÁLISE INTELIGENTE DE CONFLITOS")
-    print(f"🎯 VERSÃO: RESOLUÇÃO CONTEXTUAL - CENÁRIOS DINÂMICOS")
-    print(f"📈 RECURSOS: Identificação de Cenários + Pesos Dinâmicos + Reasoning Inteligente")
+    print(f"🎯 VERSÃO: PERFORMANCE MAXIMIZADA - CACHE INTELIGENTE")
+    print(f"📈 RECURSOS: Convolução Otimizada + Gerenciamento de Memória + Logs Avançados")
+    print(f"⚡ MÉTRICAS: Sistema completo de monitoramento")
     
     app.run(host='0.0.0.0', port=port, debug=debug)
