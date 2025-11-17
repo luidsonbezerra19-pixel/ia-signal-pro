@@ -14,7 +14,7 @@ from openai import OpenAI
 #  CONFIGURAÇÃO OPENAI GPT-5.1
 # ==============================================================
 
-client = OpenAI(api_key="SUA_API_KEY_AQUI")   # <--- COLOQUE A SUA KEY AQUI
+client = OpenAI(api_key="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")   # <--- COLOQUE A SUA KEY AQUI
 
 
 # ==============================================================
