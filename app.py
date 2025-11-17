@@ -1,2126 +1,269 @@
-from __future__ import annotations
+# ==============================================================
+#  IA SIGNAL PRO - ANÁLISE DE 200 CANDLES EM TEMPO REAL
+#  Flask + TradingView + Binance + GPT-5.1
+# ==============================================================
 
-# --- Visual analysis dependency ---
-try:
-    import cv2  # OpenCV for visual (non-OCR) analysis
-except Exception as _e:
-    cv2 = None
-    print('[WARN] OpenCV (cv2) not available. Visual analysis will be skipped.', str(_e))
-
-"""
-IA SIGNAL PRO - SUPER INTELIGENTE 🧠⚡
-ANÁLISE DE CONFLITOS - DECISÕES CONTEXTUAIS - ZERO VIÉS
-VERSÃO OTIMIZADA - PERFORMANCE MAXIMIZADA
-"""
-
-import io
 import os
-import math
-import datetime
-import hashlib
 import json
-import logging
-import gc
-from typing import Any, Dict, Optional, List, Tuple
-from logging.handlers import RotatingFileHandler
-import numpy as np
-from flask import Flask, jsonify, render_template_string, request
-from PIL import Image, ImageFilter
+import datetime
+import requests
+from flask import Flask, request, jsonify, render_template_string
+from openai import OpenAI
 
-# =========================
-#  SISTEMA DE LOGS AVANÇADO
-# =========================
+# ==============================================================
+#  CONFIGURAÇÃO OPENAI GPT-5.1
+# ==============================================================
 
-class AdvancedLogger:
-    def __init__(self):
-        self.logger = logging.getLogger('IASignalPro')
-        self.logger.setLevel(logging.INFO)
-        self._setup_handlers()
-    
-    def _setup_handlers(self):
-        """Configura handlers de log"""
-        # Handler para arquivo com rotação
-        file_handler = RotatingFileHandler(
-            'ia_signal_pro.log', 
-            maxBytes=10*1024*1024,  # 10MB
-            backupCount=5
-        )
-        
-        # Handler para console
-        console_handler = logging.StreamHandler()
-        
-        formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'
-        )
-        
-        file_handler.setFormatter(formatter)
-        console_handler.setFormatter(formatter)
-        
-        self.logger.addHandler(file_handler)
-        self.logger.addHandler(console_handler)
-    
-    def info(self, message: str):
-        self.logger.info(message)
-    
-    def error(self, message: str, exc_info: bool = False):
-        self.logger.error(message, exc_info=exc_info)
-    
-    def warning(self, message: str):
-        self.logger.warning(message)
+client = OpenAI(api_key="SUA_API_KEY_AQUI")   # <--- COLOQUE A SUA KEY AQUI
 
-# =========================
-#  SISTEMA DE MÉTRICAS
-# =========================
 
-class MetricsCollector:
-    def __init__(self):
-        self.metrics = {
-            'total_requests': 0,
-            'successful_analyses': 0,
-            'failed_analyses': 0,
-            'average_processing_time': 0,
-            'cache_hit_rate': 0,
-            'cache_hits': 0,
-            'memory_cleanups': 0
-        }
-        self.start_time = datetime.datetime.now()
-    
-    def record_analysis(self, success: bool, processing_time: float, cache_hit: bool):
-        """Registra métricas de análise"""
-        self.metrics['total_requests'] += 1
-        
-        if success:
-            self.metrics['successful_analyses'] += 1
-        else:
-            self.metrics['failed_analyses'] += 1
-        
-        # Atualiza tempo médio de processamento
-        current_avg = self.metrics['average_processing_time']
-        total_requests = self.metrics['total_requests']
-        self.metrics['average_processing_time'] = (
-            (current_avg * (total_requests - 1) + processing_time) / total_requests
-        )
-        
-        # Taxa de cache hit
-        if cache_hit:
-            cache_hits = self.metrics['cache_hits'] + 1
-            self.metrics['cache_hits'] = cache_hits
-            self.metrics['cache_hit_rate'] = cache_hits / total_requests
-    
-    def record_memory_cleanup(self):
-        """Registra limpeza de memória"""
-        self.metrics['memory_cleanups'] += 1
-    
-    def get_metrics(self) -> Dict:
-        """Retorna métricas atuais"""
-        uptime = (datetime.datetime.now() - self.start_time).total_seconds()
-        metrics = self.metrics.copy()
-        metrics['uptime_seconds'] = uptime
-        metrics['requests_per_second'] = metrics['total_requests'] / uptime if uptime > 0 else 0
-        return metrics
-
-# =========================
-#  CACHE INTELIGENTE MELHORADO
-# =========================
-
-class SmartAnalysisCache:
-    def __init__(self, cache_dir: str = "analysis_cache", max_size_mb: int = 500):
-        self.cache_dir = cache_dir
-        self.max_size_mb = max_size_mb
-        self._cleanup_threshold = 0.8  # 80% de uso
-        os.makedirs(cache_dir, exist_ok=True)
-        
-        self.cache_duration = {
-            '1m': 60,
-            '5m': 300
-        }
-    
-    def _get_cache_key(self, image_bytes: bytes, timeframe: str, user_indicators: Dict) -> str:
-        indicators_hash = hashlib.md5(json.dumps(user_indicators, sort_keys=True).encode()).hexdigest()
-        content_hash = hashlib.md5(image_bytes).hexdigest()
-        return f"{timeframe}_{content_hash}_{indicators_hash}"
-    
-    def _get_cache_file(self, key: str) -> str:
-        return os.path.join(self.cache_dir, f"{key}.json")
-    
-    def _get_cache_size(self) -> float:
-        """Calcula tamanho total do cache em MB"""
-        total_size = 0
-        if os.path.exists(self.cache_dir):
-            for file in os.listdir(self.cache_dir):
-                file_path = os.path.join(self.cache_dir, file)
-                if os.path.isfile(file_path):
-                    total_size += os.path.getsize(file_path)
-        return total_size / (1024 * 1024)
-    
-    def _cleanup_old_cache(self):
-        """Remove arquivos mais antigos quando o cache estiver cheio"""
-        try:
-            if self._get_cache_size() > self.max_size_mb * self._cleanup_threshold:
-                files = []
-                for file in os.listdir(self.cache_dir):
-                    file_path = os.path.join(self.cache_dir, file)
-                    if os.path.isfile(file_path):
-                        files.append((file_path, os.path.getctime(file_path)))
-                
-                if files:
-                    # Ordena por data de criação (mais antigos primeiro)
-                    files.sort(key=lambda x: x[1])
-                    
-                    # Remove 20% dos arquivos mais antigos
-                    files_to_remove = max(1, len(files) // 5)
-                    for i in range(files_to_remove):
-                        os.remove(files[i][0])
-        except Exception as e:
-            print(f"Erro na limpeza do cache: {e}")
-    
-    def get(self, image_bytes: bytes, timeframe: str, user_indicators: Dict) -> Optional[Dict]:
-        try:
-            key = self._get_cache_key(image_bytes, timeframe, user_indicators)
-            cache_file = self._get_cache_file(key)
-            
-            if os.path.exists(cache_file):
-                with open(cache_file, 'r') as f:
-                    cache_data = json.load(f)
-                
-                cache_time = datetime.datetime.fromisoformat(cache_data['timestamp'])
-                current_time = datetime.datetime.now()
-                age_seconds = (current_time - cache_time).total_seconds()
-                
-                if age_seconds < self.cache_duration.get(timeframe, 60):
-                    return cache_data['analysis']
-        except Exception:
-            pass
-        
-        return None
-    
-    def set(self, image_bytes: bytes, timeframe: str, user_indicators: Dict, analysis: Dict):
-        try:
-            # Limpeza automática antes de adicionar
-            self._cleanup_old_cache()
-            
-            key = self._get_cache_key(image_bytes, timeframe, user_indicators)
-            cache_file = self._get_cache_file(key)
-            
-            cache_data = {
-                'timestamp': datetime.datetime.now().isoformat(),
-                'timeframe': timeframe,
-                'user_indicators': user_indicators,
-                'analysis': analysis
-            }
-            
-            with open(cache_file, 'w') as f:
-                json.dump(cache_data, f, indent=2)
-        except Exception:
-            pass
-
-# =========================
-#  IA SUPER INTELIGENTE OTIMIZADA
-# =========================
+# ==============================================================
+#  ANALISADOR SUPER INTELIGENTE COM GPT-5.1
+# ==============================================================
 
 class OptimizedSuperIntelligentAnalyzer:
-    def __init__(self):
-        self.cache = SmartAnalysisCache()
-        self.logger = AdvancedLogger()
-        self.metrics = MetricsCollector()
-        self._setup_optimizations()
-        self._analysis_count = 0
-        self._cleanup_interval = 50  # Limpa a cada 50 análises
-        self._memory_threshold = 150 * 1024 * 1024  # 150MB
-        
-    def _setup_optimizations(self):
-        """Configura otimizações de performance"""
-        # Pré-compila kernels comuns
-        self._edge_kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]])
-        self._gaussian_kernel = np.array([[1, 2, 1], [2, 4, 2], [1, 2, 1]]) / 16
-        
-        # Cache interno para cálculos repetitivos
-        self._calculation_cache = {}
-        self._cache_ttl = datetime.timedelta(minutes=5)
-    
-    def _check_memory_usage(self):
-        """Verifica e gerencia uso de memória"""
-        try:
-            import psutil
-            process = psutil.Process()
-            memory_usage = process.memory_info().rss
-            
-            if memory_usage > self._memory_threshold:
-                self._perform_memory_cleanup()
-                self.metrics.record_memory_cleanup()
-        except ImportError:
-            # Fallback se psutil não estiver disponível
-            if self._analysis_count % 100 == 0:
-                self._perform_memory_cleanup()
-    
-    def _perform_memory_cleanup(self):
-        """Limpeza agressiva de memória"""
-        if hasattr(self, '_calculation_cache'):
-            self._calculation_cache.clear()
-        gc.collect()
-        self.logger.info("Limpeza de memória realizada")
-    
-    def _validate_inputs(self, blob: bytes, timeframe: str, user_indicators: Dict):
-        """Validações completas de entrada"""
-        # Validação do blob
-        if not blob or len(blob) == 0:
-            raise ValueError("Blob de imagem vazio")
-        
-        if len(blob) > 20 * 1024 * 1024:  # 20MB
-            raise ValueError("Imagem muito grande (máximo 20MB)")
-        
-        # Validação do timeframe
-        if timeframe not in ['1m', '5m']:
-            raise ValueError("Timeframe deve ser '1m' ou '5m'")
-        
-        # Validação dos indicadores do usuário
-        if user_indicators:
-            self._validate_user_indicators(user_indicators)
-    
-    def _validate_user_indicators(self, user_indicators: Dict):
-        """Valida indicadores do usuário"""
-        valid_indicators = ['macd', 'rsi', 'adx', 'price']
-        
-        for key, value in user_indicators.items():
-            if key not in valid_indicators:
-                raise ValueError(f"Indicador inválido: {key}")
-            
-            try:
-                float_value = float(value)
-                
-                # Validações específicas por indicador
-                if key == 'rsi' and not (0 <= float_value <= 100):
-                    raise ValueError("RSI deve estar entre 0 e 100")
-                    
-                if key == 'price' and float_value <= 0:
-                    raise ValueError("Preço deve ser positivo")
-                    
-            except (ValueError, TypeError):
-                raise ValueError(f"Valor inválido para {key}: {value}")
-    
-    def _load_image(self, blob: bytes) -> Image.Image:
-        """Carrega e prepara a imagem para análise"""
-        try:
-            image = Image.open(io.BytesIO(blob))
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-            return image
-        except Exception as e:
-            raise ValueError(f"Erro ao carregar imagem: {str(e)}")
-    
-    def _validate_chart_image(self, image: Image.Image) -> bool:
-        """Validação básica do gráfico"""
-        width, height = image.size
-        
-        if width < 100 or height < 100:
-            raise ValueError("Imagem muito pequena (mínimo 100x100 pixels)")
-        
-        try:
-            img_array = np.array(image)
-            gray = np.dot(img_array[...,:3], [0.299, 0.587, 0.114])
-            contrast = np.std(gray)
-            
-            if contrast < 10:
-                raise ValueError("Contraste insuficiente para análise")
-            
-            return True
-        except Exception as e:
-            raise ValueError(f"Erro na validação: {str(e)}")
 
-    def _preprocess_image(self, image: Image.Image, timeframe: str) -> np.ndarray:
-        """Pré-processamento otimizado para day trade"""
-        width, height = image.size
-        
-        # Redimensionamento adequado para análise precisa
-        target_size = (800, 600)
-        image = image.resize(target_size, Image.LANCZOS)
-        
-        return np.array(image)
+    def analyze_raw_data(self, symbol, timeframe, candles):
+        """
+        Análise completa usando os últimos 200 candles do ativo.
+        """
 
-    def _extract_price_data(self, img_array: np.ndarray) -> np.ndarray:
-        """Extrai dados de preço de forma ultra precisa"""
-        try:
-            # Converte para escala de cinza com pesos otimizados
-            gray = np.dot(img_array[...,:3], [0.299, 0.587, 0.114])
-            
-            # Realce de bordas para melhor detecção
-            enhanced = self._optimized_convolution(gray, self._edge_kernel)
-            
-            return enhanced
-        except Exception as e:
-            return np.dot(img_array[...,:3], [0.299, 0.587, 0.114])
+        prompt = f"""
+Você é uma IA profissional de trading. 
+Analise os últimos 200 candles do ativo {symbol} em {timeframe}.
 
-    def _optimized_convolution(self, image: np.ndarray, kernel: np.ndarray) -> np.ndarray:
-        """Convolução otimizada usando OpenCV quando disponível"""
-        if cv2 is not None:
-            try:
-                return cv2.filter2D(image, -1, kernel)
-            except:
-                pass
-        
-        # Fallback para implementação numpy otimizada
-        return self._apply_convolution_optimized(image, kernel)
+Dados OHLCV:
+{json.dumps(candles, indent=2)}
 
-    def _apply_convolution_optimized(self, image: np.ndarray, kernel: np.ndarray) -> np.ndarray:
-        """Implementação numpy otimizada"""
-        kernel_height, kernel_width = kernel.shape
-        pad_height, pad_width = kernel_height // 2, kernel_width // 2
-        
-        # Padding mais eficiente
-        padded = np.pad(image, ((pad_height, pad_height), (pad_width, pad_width)), 
-                       mode='reflect')  # Melhor que 'edge' para bordas
-        
-        # View para operações vetorizadas
-        output = np.zeros_like(image)
-        
-        # Operação vetorizada (mais rápida que loops)
-        for i in range(kernel_height):
-            for j in range(kernel_width):
-                output += kernel[i, j] * padded[i:i+image.shape[0], j:j+image.shape[1]]
-        
-        return np.clip(output, 0, 255)
+Forneça como resposta:
 
-    # =========================
-    #  ANÁLISE MICROSCÓPICA AVANÇADA (OTIMIZADA)
-    # =========================
-    
-    def _microscopic_trend_analysis(self, price_data: np.ndarray) -> Dict[str, float]:
-        """Análise NANO de tendências - precisão máxima"""
-        try:
-            height, width = price_data.shape
-            
-            # Análise multi-resolução para day trade
-            resolutions = [1, 2, 3]
-            trend_signals = []
-            
-            for resolution in resolutions:
-                segment_size = max(1, width // (8 * resolution))
-                segments = []
-                
-                for i in range(8 * resolution):
-                    start = i * segment_size
-                    end = min((i + 1) * segment_size, width)
-                    segment = price_data[:, start:end]
-                    
-                    if segment.size > 0:
-                        segment_mean = np.mean(segment)
-                        if segment.shape[1] > 1:
-                            x_vals = np.arange(min(5, segment.shape[1]))
-                            y_vals = np.mean(segment[:, -min(5, segment.shape[1]):], axis=0)
-                            if len(y_vals) > 1:
-                                segment_trend = (y_vals[-1] - y_vals[0]) / (len(y_vals) - 1)
-                            else:
-                                segment_trend = 0
-                        else:
-                            segment_trend = 0
-                        segments.append((segment_mean, segment_trend))
-                
-                if len(segments) >= 4:
-                    means = [s[0] for s in segments]
-                    trends = [s[1] for s in segments]
-                    
-                    if len(means) > 1:
-                        overall_trend = (means[-1] - means[0]) / (len(means) - 1)
-                    else:
-                        overall_trend = 0
-                    
-                    trend_agreement = np.std(trends) if trends else 0
-                    convergence_strength = 1.0 / (1.0 + trend_agreement * 8)
-                    
-                    trend_signals.append((overall_trend, convergence_strength))
-            
-            if trend_signals:
-                weighted_trend = sum(t * s for t, s in trend_signals) / sum(s for _, s in trend_signals)
-                overall_strength = np.mean([s for _, s in trend_signals])
-            else:
-                weighted_trend = 0
-                overall_strength = 0
-            
-            return {
-                "nano_trend": float(np.clip(weighted_trend * 2, -1, 1)),
-                "convergence_strength": float(overall_strength),
-                "multi_resolution_agreement": float(1.0 - np.std([t for t, _ in trend_signals]) if trend_signals else 0)
-            }
-        except Exception as e:
-            return {"nano_trend": 0.0, "convergence_strength": 0.0, "multi_resolution_agreement": 0.0}
+1. Tendência (forte, moderada ou fraca)
+2. Suportes e resistências
+3. Padrões técnicos (triângulo, bandeira, M, W, pullback etc)
+4. Análise do volume e volatilidade
+5. Direção provável do próximo movimento
+6. Sinal final (BUY, SELL ou HOLD)
+7. Preço sugerido de entrada
+8. Stop Loss ideal
+9. Take Profit ideal
+10. Explicação detalhada e clara
+11. Confiabilidade do sinal (0% a 100%)
+"""
 
-    def _analyze_micro_structure(self, price_data: np.ndarray) -> Dict[str, float]:
-        """Analisa a estrutura MICRO do mercado com precisão"""
-        try:
-            density_analysis = self._price_density_analysis(price_data)
-            micro_momentum = self._micro_momentum_analysis(price_data)
-            volatility_quality = self._analyze_volatility_quality(price_data)
-            
-            return {
-                "price_density": density_analysis,
-                "micro_momentum": micro_momentum,
-                "volatility_quality": volatility_quality,
-                "structural_integrity": (density_analysis + micro_momentum + volatility_quality) / 3.0
-            }
-        except Exception:
-            return {"price_density": 0.5, "micro_momentum": 0.5, "volatility_quality": 0.5, "structural_integrity": 0.5}
-
-    def _price_density_analysis(self, price_data: np.ndarray) -> float:
-        """Analisa a densidade/distribuição do preço para day trade"""
-        try:
-            hist, bins = np.histogram(price_data.flatten(), bins=30)
-            hist_normalized = hist / np.sum(hist)
-            entropy = -np.sum(hist_normalized * np.log(hist_normalized + 1e-8))
-            max_entropy = np.log(len(hist))
-            
-            density_score = 1.0 - (entropy / max_entropy)
-            return float(np.clip(density_score, 0, 1))
-        except Exception:
-            return 0.5
-
-    def _micro_momentum_analysis(self, price_data: np.ndarray) -> float:
-        """Analisa momentum em nível microscópico para entradas precisas"""
-        try:
-            height, width = price_data.shape
-            
-            if width < 15:
-                return 0.5
-            
-            row_means = np.mean(price_data, axis=0)
-            velocity = np.gradient(row_means)
-            acceleration = np.gradient(velocity)
-            
-            # Foco nos movimentos mais recentes
-            recent_velocity = np.mean(velocity[-min(7, len(velocity)):])
-            recent_acceleration = np.mean(acceleration[-min(5, len(acceleration)):])
-            
-            momentum_score = (
-                np.tanh(recent_velocity * 15) * 0.6 +
-                np.tanh(recent_acceleration * 8) * 0.4
-            )
-            
-            return float((momentum_score + 1) / 2)
-        except Exception:
-            return 0.5
-
-    def _analyze_volatility_quality(self, price_data: np.ndarray) -> float:
-        """Analisa a qualidade da volatilidade para day trade"""
-        try:
-            height, width = price_data.shape
-            if width < 10:
-                return 0.5
-                
-            row_means = np.mean(price_data, axis=0)
-            
-            # Volatilidade de curto prazo
-            short_term_vol = np.std(row_means[-min(10, len(row_means)):])
-            
-            # Volatilidade ideal para day trade
-            ideal_vol_range = (0.05, 0.15)
-            vol_score = 1.0 - abs(short_term_vol - np.mean(ideal_vol_range)) / (ideal_vol_range[1] - ideal_vol_range[0])
-            
-            return float(np.clip(vol_score, 0, 1))
-        except Exception:
-            return 0.5
-
-    def _analyze_flow_dynamics(self, price_data: np.ndarray) -> Dict[str, float]:
-        """Analisa a DINÂMICA do fluxo de preços para day trade"""
-        try:
-            continuity_score = self._flow_continuity_analysis(price_data)
-            breakage_analysis = self._breakage_detection(price_data)
-            smooth_transitions = self._smoothness_analysis(price_data)
-            
-            return {
-                "flow_continuity": continuity_score,
-                "breakage_resistance": breakage_analysis,
-                "transition_smoothness": smooth_transitions,
-                "overall_flow_quality": (continuity_score + breakage_analysis + smooth_transitions) / 3.0
-            }
-        except Exception:
-            return {"flow_continuity": 0.5, "breakage_resistance": 0.5, "transition_smoothness": 0.5, "overall_flow_quality": 0.5}
-
-    def _flow_continuity_analysis(self, price_data: np.ndarray) -> float:
-        """Analisa continuidade do fluxo para entradas suaves"""
-        try:
-            height, width = price_data.shape
-            if width < 10:
-                return 0.5
-                
-            row_means = np.mean(price_data, axis=0)
-            changes = np.diff(row_means)
-            
-            acceleration = np.diff(changes)
-            smoothness = 1.0 / (1.0 + np.std(acceleration))
-            
-            return float(np.clip(smoothness, 0, 1))
-        except Exception:
-            return 0.5
-
-    def _breakage_detection(self, price_data: np.ndarray) -> float:
-        """Detecta rupturas na estrutura de preços"""
-        try:
-            height, width = price_data.shape
-            if width < 10:
-                return 0.5
-                
-            vertical_profiles = []
-            for col in range(0, width, max(1, width // 15)):
-                column_data = price_data[:, col]
-                if len(column_data) > 0:
-                    profile = np.gradient(column_data)
-                    vertical_profiles.append(np.std(profile))
-            
-            if vertical_profiles:
-                breakage_score = 1.0 / (1.0 + np.mean(vertical_profiles))
-                return float(np.clip(breakage_score, 0, 1))
-            else:
-                return 0.5
-        except Exception:
-            return 0.5
-
-    def _smoothness_analysis(self, price_data: np.ndarray) -> float:
-        """Analisa suavidade das transições para day trade"""
-        try:
-            height, width = price_data.shape
-            if width < 5:
-                return 0.5
-                
-            row_means = np.mean(price_data, axis=0)
-            
-            first_deriv = np.gradient(row_means)
-            second_deriv = np.gradient(first_deriv)
-            
-            smoothness = 1.0 / (1.0 + np.std(second_deriv))
-            return float(np.clip(smoothness, 0, 1))
-        except Exception:
-            return 0.5
-
-    # =========================
-    #  ANÁLISE TRADICIONAL FORTALECIDA (OTIMIZADA)
-    # =========================
-    
-    def _analyze_price_action(self, price_data: np.ndarray, timeframe: str) -> Dict[str, float]:
-        """Análise de price action para day trade"""
-        try:
-            height, width = price_data.shape
-            segments = 8
-            segment_size = max(1, width // segments)
-            regions = []
-            
-            for i in range(segments):
-                start = i * segment_size
-                end = min((i + 1) * segment_size, width)
-                segment = price_data[:, start:end]
-                if segment.size > 0:
-                    regions.append(np.mean(segment))
-            
-            if len(regions) >= 3:
-                if len(regions) > 1:
-                    price_range = max(regions) - min(regions) if max(regions) != min(regions) else 1
-                    slope = (regions[-1] - regions[0]) / (len(regions) - 1)
-                    slope_normalized = slope / (price_range + 1e-8)
-                else:
-                    slope_normalized = 0
-                    
-                if len(regions) > 1:
-                    changes = [regions[i] - regions[i-1] for i in range(1, len(regions))]
-                    avg_change = np.mean(np.abs(changes))
-                    if avg_change > 0:
-                        trend_strength = min(1.0, abs(slope_normalized) / (avg_change + 1e-8))
-                    else:
-                        trend_strength = min(1.0, abs(slope_normalized) * 12)
-                else:
-                    trend_strength = 0
-            else:
-                slope_normalized = 0
-                trend_strength = 0.5
-            
-            trend_strength = min(1.0, max(0.0, trend_strength))
-            slope_normalized = max(-1.0, min(1.0, slope_normalized))
-            
-            return {
-                "trend_direction": float(slope_normalized),
-                "trend_strength": float(trend_strength),
-                "momentum": float(slope_normalized * 1.2),
-                "volatility": float(np.std(price_data) / (np.mean(price_data) + 1e-8)),
-                "price_range": float(np.ptp(price_data))
-            }
-        except Exception:
-            return {"trend_direction": 0.0, "trend_strength": 0.5, "momentum": 0.0, "volatility": 0.0, "price_range": 0.0}
-
-    def _calculate_advanced_indicators(self, price_data: np.ndarray) -> Dict[str, float]:
-        """Indicadores técnicos SUPER-REFORÇADOS para day trade"""
-        try:
-            height, width = price_data.shape
-            
-            if width > 10:
-                row_means = np.mean(price_data, axis=0)
-                
-                # MACD FORTALECIDO
-                fast_window = min(3, len(row_means))
-                slow_window = min(6, len(row_means))
-                signal_window = min(4, len(row_means))
-                
-                fast_ma = np.mean(row_means[-fast_window:])
-                slow_ma = np.mean(row_means[-slow_window:])
-                macd_line = fast_ma - slow_ma
-                
-                macd_values = []
-                for i in range(slow_window, len(row_means)):
-                    fast_val = np.mean(row_means[i-fast_window:i])
-                    slow_val = np.mean(row_means[i-slow_window:i])
-                    macd_values.append(fast_val - slow_val)
-                
-                if len(macd_values) >= signal_window:
-                    signal_line = np.mean(macd_values[-signal_window:])
-                    macd_histogram = macd_line - signal_line
-                else:
-                    signal_line = macd_line * 0.9
-                    macd_histogram = macd_line * 0.1
-                
-                # RSI FORTALECIDO
-                if len(row_means) > 5:
-                    gains = []
-                    losses = []
-                    for i in range(1, len(row_means)):
-                        change = row_means[i] - row_means[i-1]
-                        if change > 0:
-                            gains.append(change)
-                        else:
-                            losses.append(abs(change))
-                    
-                    avg_gain = np.mean(gains) if gains else 0
-                    avg_loss = np.mean(losses) if losses else 0
-                    
-                    if avg_loss == 0:
-                        rsi = 100 if avg_gain > 0 else 50
-                    else:
-                        rs = avg_gain / avg_loss
-                        rsi = 100 - (100 / (1 + rs))
-                    
-                    rsi_normalized = (rsi - 50) / 50
-                else:
-                    rsi_normalized = 0.0
-                
-                # FORÇA DO MACD
-                volatility = np.std(row_means) + 1e-8
-                macd_strength = min(1.0, abs(macd_histogram) / (volatility * 1.5))
-                macd_direction = 1 if macd_histogram > 0 else -1
-                macd_power = macd_strength * macd_direction
-                
-            else:
-                rsi_normalized = 0.0
-                macd_power = 0.0
-                macd_strength = 0.0
-            
-            return {
-                "rsi": float(rsi_normalized),
-                "macd": float(macd_power),
-                "macd_strength": float(macd_strength),
-                "volume_intensity": float(min(1.0, np.var(price_data) / 800.0)),
-                "momentum_quality": float(min(1.0, (abs(rsi_normalized) + abs(macd_power)) / 2))
-            }
-        except Exception as e:
-            return {"rsi": 0.0, "macd": 0.0, "macd_strength": 0.0, "volume_intensity": 0.0, "momentum_quality": 0.0}
-
-    # =========================
-    #  ANÁLISE INTELIGENTE DE CONFLITOS - OTIMIZADA
-    # =========================
-    
-    def _analyze_user_indicators(self, user_indicators: Dict) -> Dict[str, float]:
-        """Análise INTELIGENTE dos indicadores do usuário"""
-        try:
-            macd = float(user_indicators.get('macd', 0))
-            rsi = float(user_indicators.get('rsi', 50))
-            adx = float(user_indicators.get('adx', 0))
-            
-            # ✅ ANÁLISE INTELIGENTE DO RSI
-            if rsi <= 25:  # SOBREVENDA EXTREMA
-                rsi_power = 0.8   # Sinal de COMPRA (reversão esperada)
-                rsi_context = "oversold_strong"
-            elif rsi >= 75:  # SOBRECOMPRA EXTREMA  
-                rsi_power = -0.8  # Sinal de VENDA (reversão esperada)
-                rsi_context = "overbought_strong"
-            elif rsi <= 35:  # SOBREVENDA
-                rsi_power = 0.5   # Sinal de COMPRA
-                rsi_context = "oversold"
-            elif rsi >= 65:  # SOBRECOMPRA
-                rsi_power = -0.5  # Sinal de VENDA
-                rsi_context = "overbought"
-            else:  # ZONA NEUTRA
-                rsi_power = (rsi - 50) / 50 * 0.3
-                rsi_context = "neutral"
-            
-            # ✅ ANÁLISE INTELIGENTE DO MACD
-            macd_power = np.clip(macd * 2, -1, 1)  # Normalizado
-            macd_strength = min(1.0, abs(macd) * 0.5)
-            
-            if macd < -2.0:
-                macd_context = "strong_sell"
-            elif macd > 2.0:
-                macd_context = "strong_buy"
-            elif macd < -0.5:
-                macd_context = "sell"
-            elif macd > 0.5:
-                macd_context = "buy"
-            else:
-                macd_context = "neutral"
-            
-            # ✅ ANÁLISE INTELIGENTE DO ADX
-            if adx > 40:
-                adx_power = 0.8
-                adx_context = "strong_trend"
-            elif adx > 25:
-                adx_power = 0.6
-                adx_context = "moderate_trend"
-            else:
-                adx_power = 0.3
-                adx_context = "weak_trend"
-            
-            return {
-                "user_macd_power": float(macd_power),
-                "user_macd_strength": float(macd_strength),
-                "user_macd_context": macd_context,
-                "user_rsi_power": float(rsi_power),
-                "user_rsi_strength": float(0.8 if abs(rsi_power) > 0.7 else 0.5),
-                "user_rsi_context": rsi_context,
-                "user_adx_power": float(adx_power),
-                "user_adx_context": adx_context,
-                "user_confidence": float(min(1.0, (macd_strength + abs(rsi_power) + adx_power) / 3))
-            }
-        except Exception as e:
-            return {
-                "user_macd_power": 0.0, "user_macd_strength": 0.0, "user_macd_context": "neutral",
-                "user_rsi_power": 0.0, "user_rsi_strength": 0.0, "user_rsi_context": "neutral", 
-                "user_adx_power": 0.0, "user_adx_context": "weak_trend",
-                "user_confidence": 0.0
-            }
-
-    def _intelligent_conflict_resolution(self, user_analysis: Dict, chart_analysis: Dict) -> Dict[str, Any]:
-        """RESOLUÇÃO INTELIGENTE de conflitos entre indicadores"""
-        
-        user_macd = user_analysis.get('user_macd_power', 0)
-        user_rsi = user_analysis.get('user_rsi_power', 0)
-        user_adx = user_analysis.get('user_adx_power', 0)
-        macd_context = user_analysis.get('user_macd_context', 'neutral')
-        rsi_context = user_analysis.get('user_rsi_context', 'neutral')
-        
-        chart_trend = chart_analysis['traditional']['price_action']['trend_direction']
-        chart_strength = chart_analysis['traditional']['price_action']['trend_strength']
-        chart_momentum = chart_analysis['traditional']['price_action']['momentum']
-        
-        # 🎯 IDENTIFICAÇÃO DO CENÁRIO
-        scenario = self._identify_market_scenario(user_macd, user_rsi, macd_context, rsi_context, chart_trend)
-        
-        # 🧠 RESOLUÇÃO INTELIGENTE POR CENÁRIO
-        if scenario == "oversold_reversal":
-            # RSI oversold + MACD não tão negativo = potencial reversão para COMPRA
-            resolved_score = user_rsi * 0.7 + user_macd * 0.3
-            confidence_boost = 0.15
-            reasoning = "Reversão de sobrevenda - RSI indica exaustão de venda"
-            
-        elif scenario == "momentum_breakdown":
-            # MACD muito negativo + RSI não oversold = VENDA de momentum
-            resolved_score = user_macd * 0.8 + user_rsi * 0.2
-            confidence_boost = 0.12
-            reasoning = "Momentum de venda forte - MACD dominante"
-            
-        elif scenario == "confirmed_downtrend":
-            # Todos alinhados para venda = VENDA forte
-            resolved_score = min(user_macd, user_rsi, chart_trend)
-            confidence_boost = 0.20
-            reasoning = "Tendência de baixa confirmada - múltiplas confirmações"
-            
-        elif scenario == "divergence_conflict":
-            # Conflito forte = análise mais conservadora
-            if abs(user_macd) > abs(user_rsi):
-                resolved_score = user_macd * 0.6 + user_rsi * 0.4
-            else:
-                resolved_score = user_rsi * 0.6 + user_macd * 0.4
-            confidence_boost = 0.05
-            reasoning = "Conflito de indicadores - análise conservadora"
-            
-        else:  # neutral_market
-            # Cenário neutro - média balanceada
-            resolved_score = (user_macd + user_rsi + chart_trend) / 3
-            confidence_boost = 0.0
-            reasoning = "Mercado neutro - análise balanceada"
-        
-        return {
-            "resolved_score": float(resolved_score),
-            "scenario": scenario,
-            "reasoning": reasoning,
-            "confidence_boost": confidence_boost,
-            "final_confidence": min(0.95, user_analysis.get('user_confidence', 0) + confidence_boost)
-        }
-
-    def _identify_market_scenario(self, macd: float, rsi: float, macd_ctx: str, rsi_ctx: str, chart_trend: float) -> str:
-        """Identifica inteligentemente o cenário de mercado"""
-        
-        is_strong_oversold = rsi_ctx in ["oversold_strong", "oversold"] and rsi > 0.5
-        is_strong_overbought = rsi_ctx in ["overbought_strong", "overbought"] and rsi < -0.5
-        is_strong_macd_sell = macd_ctx in ["strong_sell", "sell"] and macd < -0.5
-        is_strong_macd_buy = macd_ctx in ["strong_buy", "buy"] and macd > 0.5
-        is_downtrend = chart_trend < -0.2
-        is_uptrend = chart_trend > 0.2
-        
-        # 🎯 CENÁRIOS PRINCIPAIS
-        if is_strong_oversold and not is_strong_macd_sell and is_downtrend:
-            return "oversold_reversal"
-        elif is_strong_macd_sell and not is_strong_oversold and is_downtrend:
-            return "momentum_breakdown" 
-        elif is_strong_macd_sell and is_strong_oversold and is_downtrend:
-            return "confirmed_downtrend"
-        elif is_strong_macd_buy and is_strong_overbought and is_uptrend:
-            return "confirmed_uptrend"
-        elif (is_strong_oversold and is_strong_macd_sell) or (is_strong_overbought and is_strong_macd_buy):
-            return "divergence_conflict"
-        else:
-            return "neutral_market"
-
-    # =========================
-    #  MOTOR DE DECISÃO SUPER INTELIGENTE (OTIMIZADO)
-    # =========================
-    
-    def _super_intelligent_decision_engine(self, all_analyses: Dict, timeframe: str) -> Dict[str, Any]:
-        """MOTOR QUE ANALISA CONFLITOS INTELIGENTEMENTE"""
-        
-        traditional = all_analyses['traditional']
-        user_analysis = all_analyses.get('user_analysis', {})
-        nano_trend = all_analyses['nano_analysis']
-        micro_structure = all_analyses['micro_structure']
-        flow_dynamics = all_analyses['flow_dynamics']
-        
-        # 🧠 RESOLUÇÃO INTELIGENTE DE CONFLITOS
-        conflict_resolution = self._intelligent_conflict_resolution(user_analysis, all_analyses)
-        
-        # ⚖️ PESOS DINÂMICOS baseados no cenário
-        weights = self._get_dynamic_weights(conflict_resolution['scenario'])
-        
-        # 📊 COMPONENTES DA ANÁLISE
-        trend_power = traditional['price_action']['trend_direction'] * traditional['price_action']['trend_strength']
-        macd_power = traditional['indicators']['macd'] * traditional['indicators']['macd_strength']
-        
-        user_power = conflict_resolution['resolved_score']
-        
-        nano_power = nano_trend['nano_trend'] * nano_trend['convergence_strength']
-        micro_power = micro_structure['structural_integrity']
-        trend_micro = (trend_power + nano_power + micro_power) / 3
-        
-        momentum_power = traditional['price_action']['momentum']
-        flow_power = flow_dynamics['overall_flow_quality']
-        momentum_flow = (momentum_power + flow_power) / 2
-        
-        price_action_power = traditional['price_action']['trend_strength']
-        if traditional['price_action']['trend_direction'] > 0:
-            price_action_power = abs(price_action_power)
-        else:
-            price_action_power = -abs(price_action_power)
-        
-        # 💥 SCORE FINAL INTELIGENTE
-        total_score = (
-            user_power * weights['user_indicators'] +
-            trend_micro * weights['trend_micro'] +
-            price_action_power * weights['price_action'] +
-            momentum_flow * weights['momentum_flow']
+        response = client.chat.completions.create(
+            model="gpt-5.1",
+            messages=[{"role": "user", "content": prompt}]
         )
-        
-        # 🎯 DECISÃO COM CONFIANÇA INTELIGENTE
-        if total_score > 0.05:
-            direction = "buy"
-            base_confidence = min(abs(total_score) * 1.3, 0.8)
-        elif total_score < -0.05:
-            direction = "sell" 
-            base_confidence = min(abs(total_score) * 1.3, 0.8)
-        else:
-            direction = "buy" if user_power > 0 else "sell"
-            base_confidence = 0.6
-        
-        # 🧠 CONFIANÇA FINAL COM BOOST INTELIGENTE
-        final_confidence = base_confidence + conflict_resolution['confidence_boost']
-        
-        reasoning = self._generate_intelligent_reasoning(
-            direction, conflict_resolution, user_analysis, traditional
-        )
-        
-        return {
-            "direction": direction,
-            "confidence": min(0.95, final_confidence),
-            "reasoning": reasoning,
-            "total_score": total_score,
-            "scenario": conflict_resolution['scenario'],
-            "user_power": user_power,
-            "trend_micro_power": trend_micro,
-            "price_action_power": price_action_power,
-            "momentum_flow_power": momentum_flow
-        }
 
-    def _get_dynamic_weights(self, scenario: str) -> Dict[str, float]:
-        """Retorna pesos dinâmicos baseados no cenário"""
-        weight_profiles = {
-            "oversold_reversal": {
-                'user_indicators': 0.35,  # Mais peso no usuário (RSI oversold)
-                'trend_micro': 0.25,
-                'price_action': 0.20, 
-                'momentum_flow': 0.20
-            },
-            "momentum_breakdown": {
-                'user_indicators': 0.30,
-                'trend_micro': 0.30,      # Mais peso na tendência
-                'price_action': 0.25,
-                'momentum_flow': 0.15
-            },
-            "confirmed_downtrend": {
-                'user_indicators': 0.25,
-                'trend_micro': 0.35,      # Máximo peso na tendência
-                'price_action': 0.25,
-                'momentum_flow': 0.15
-            },
-            "divergence_conflict": {
-                'user_indicators': 0.40,  # Máximo peso no usuário (conflito)
-                'trend_micro': 0.20,
-                'price_action': 0.20,
-                'momentum_flow': 0.20
-            }
-        }
-        return weight_profiles.get(scenario, {
-            'user_indicators': 0.30,
-            'trend_micro': 0.25,
-            'price_action': 0.25,
-            'momentum_flow': 0.20
-        })
+        return response.choices[0].message["content"]
 
-    def _generate_intelligent_reasoning(self, direction: str, conflict_resolution: Dict, 
-                                     user_analysis: Dict, traditional: Dict) -> str:
-        """Gera reasoning inteligente baseado no cenário"""
-        
-        scenario = conflict_resolution['scenario']
-        base_reasoning = conflict_resolution['reasoning']
-        
-        user_macd_ctx = user_analysis.get('user_macd_context', 'neutral')
-        user_rsi_ctx = user_analysis.get('user_rsi_context', 'neutral')
-        
-        # 🎯 DETALHAMENTO DO CENÁRIO
-        if scenario == "oversold_reversal":
-            details = f"RSI {user_rsi_ctx} + MACD {user_macd_ctx}"
-        elif scenario == "momentum_breakdown":
-            details = f"MACD {user_macd_ctx} dominante"
-        elif scenario == "confirmed_downtrend":
-            details = f"MACD {user_macd_ctx} + RSI {user_rsi_ctx} + Gráfico alinhados"
-        elif scenario == "divergence_conflict":
-            details = f"Conflito: MACD {user_macd_ctx} vs RSI {user_rsi_ctx}"
-        else:
-            details = "Análise técnica balanceada"
-        
-        strength = "FORTE" if abs(conflict_resolution['resolved_score']) > 0.3 else "MODERADA"
-        
-        if direction == "buy":
-            return f"🎯 COMPRA {strength} - {base_reasoning} | {details}"
-        else:
-            return f"🎯 VENDA {strength} - {base_reasoning} | {details}"
 
-    def _calculate_signal_quality(self, analyses: Dict) -> float:
-        """Calcula qualidade do sinal para day trade"""
-        try:
-            factors = [
-                analyses['nano_analysis']['convergence_strength'] * 0.25,
-                analyses['micro_structure']['structural_integrity'] * 0.25,
-                analyses['flow_dynamics']['overall_flow_quality'] * 0.20,
-                analyses['traditional']['price_action']['trend_strength'] * 0.20,
-                analyses['traditional']['indicators']['macd_strength'] * 0.10
-            ]
-            return float(np.clip(np.mean(factors), 0, 1))
-        except Exception:
-            return 0.6
-
-    def _get_entry_timeframe(self, user_timeframe: str) -> Dict[str, str]:
-        """Calcula timeframe de entrada otimizado"""
-        now = datetime.datetime.now()
-        if user_timeframe == '1m':
-            entry_time = (now + datetime.timedelta(minutes=1)).strftime("%H:%M")
-            timeframe_str = "Próximo minuto"
-        else:
-            minutes_to_add = 5 - (now.minute % 5)
-            if minutes_to_add == 0:
-                minutes_to_add = 5
-            entry_time = (now + datetime.timedelta(minutes=minutes_to_add)).strftime("%H:%M")
-            timeframe_str = "Próximo candle de 5min"
-        
-        return {
-            "current_time": now.strftime("%H:%M:%S"),
-            "entry_time": entry_time,
-            "timeframe": timeframe_str
-        }
-
-    def analyze(self, blob: bytes, timeframe: str = '1m', user_indicators: Dict = None) -> Dict[str, Any]:
-        """ANÁLISE SUPER INTELIGENTE - RESOLUÇÃO DE CONFLITOS"""
-        
-        start_time = datetime.datetime.now()
-        cache_hit = False
-        
-        try:
-            self.logger.info(f"Iniciando análise - Timeframe: {timeframe}")
-            
-            if user_indicators is None:
-                user_indicators = {}
-            
-            # Validações de segurança
-            self._validate_inputs(blob, timeframe, user_indicators)
-            
-            # Gerenciamento de memória
-            self._analysis_count += 1
-            if self._analysis_count % self._cleanup_interval == 0:
-                self._check_memory_usage()
-            
-            # Cache inteligente
-            cached = self.cache.get(blob, timeframe, user_indicators)
-            if cached:
-                cached['cached'] = True
-                cache_hit = True
-                self.logger.info("Cache hit - retornando análise em cache")
-                return cached
-            
-            # Processamento básico
-            image = self._load_image(blob)
-            self._validate_chart_image(image)
-            
-            img_array = self._preprocess_image(image, timeframe)
-            price_data = self._extract_price_data(img_array)
-            
-            # 🧠 ANÁLISE MULTI-CAMADAS
-            analyses = {
-                'traditional': {
-                    'price_action': self._analyze_price_action(price_data, timeframe),
-                    'indicators': self._calculate_advanced_indicators(price_data)
-                },
-                'nano_analysis': self._microscopic_trend_analysis(price_data),
-                'micro_structure': self._analyze_micro_structure(price_data),
-                'flow_dynamics': self._analyze_flow_dynamics(price_data),
-                'price_data': price_data
-            }
-            
-            # 🎯 ANÁLISE INTELIGENTE DOS INDICADORES DO USUÁRIO
-            if user_indicators:
-                analyses['user_analysis'] = self._analyze_user_indicators(user_indicators)
-            
-            # 🎯 MOTOR DE DECISÃO SUPER INTELIGENTE
-            decision = self._super_intelligent_decision_engine(analyses, timeframe)
-            time_info = self._get_entry_timeframe(timeframe)
-            
-            # 📊 QUALIDADE DA ANÁLISE
-            signal_quality = self._calculate_signal_quality(analyses)
-            
-            # 🎨 RESULTADO SUPER INTELIGENTE
-            result = {
-                "direction": decision["direction"],
-                "final_confidence": float(decision["confidence"]),
-                "entry_signal": f"🧠 {decision['direction'].upper()} - {decision['reasoning']}",
-                "entry_time": time_info["entry_time"],
-                "timeframe": time_info["timeframe"],
-                "analysis_time": time_info["current_time"],
-                "user_timeframe": timeframe,
-                "cached": False,
-                "signal_quality": float(signal_quality),
-                "analysis_grade": "high" if signal_quality > 0.7 else "medium",
-                "market_context": decision["scenario"],
-                "user_indicators_provided": bool(user_indicators),
-                "metrics": {
-                    "analysis_score": float(decision["total_score"]),
-                    "user_power": float(decision["user_power"]),
-                    "trend_micro_power": float(decision["trend_micro_power"]),
-                    "price_action_power": float(decision["price_action_power"]),
-                    "momentum_flow_power": float(decision["momentum_flow_power"]),
-                    "trend_strength": analyses['traditional']['price_action']['trend_strength'],
-                    "momentum": analyses['traditional']['price_action']['momentum'],
-                    "rsi": analyses['traditional']['indicators']['rsi'],
-                    "macd": analyses['traditional']['indicators']['macd'],
-                    "macd_strength": analyses['traditional']['indicators']['macd_strength']
-                },
-                "reasoning": decision["reasoning"],
-                "intelligent_scenario": decision["scenario"]
-            }
-            
-            # Adiciona métricas do usuário se disponíveis
-            if user_indicators:
-                result["user_metrics"] = {
-                    "provided_macd": float(user_indicators.get('macd', 0)),
-                    "provided_rsi": float(user_indicators.get('rsi', 50)),
-                    "provided_adx": float(user_indicators.get('adx', 0)),
-                    "provided_price": float(user_indicators.get('price', 0))
-                }
-            
-            self.cache.set(blob, timeframe, user_indicators, result)
-            
-            processing_time = (datetime.datetime.now() - start_time).total_seconds()
-            self.metrics.record_analysis(True, processing_time, cache_hit)
-            
-            self.logger.info(f"Análise concluída em {processing_time:.2f}s - "
-                           f"Direção: {result['direction']} - "
-                           f"Confiança: {result['final_confidence']:.2f}")
-            
-            return result
-            
-        except Exception as e:
-            processing_time = (datetime.datetime.now() - start_time).total_seconds()
-            self.metrics.record_analysis(False, processing_time, cache_hit)
-            self.logger.error(f"Erro na análise: {str(e)}", exc_info=True)
-            raise
-
-# =========================
-#  CONFIGURAÇÃO DE PRODUÇÃO
-# =========================
-
-class ProductionConfig:
-    """Configurações otimizadas para produção"""
-    
-    # Limites de requisição
-    MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB
-    JSON_SORT_KEYS = False
-    
-    # Otimizações do Flask
-    TEMPLATES_AUTO_RELOAD = False
-    EXPLAIN_TEMPLATE_LOADING = False
-    
-    # Segurança
-    SESSION_COOKIE_SECURE = True
-    SESSION_COOKIE_HTTPONLY = True
-    
-    @staticmethod
-    def init_app(app):
-        # Configurações específicas da aplicação
-        app.config.from_object(ProductionConfig)
-
-# =========================
-#  APLICAÇÃO FLASK OTIMIZADA
-# =========================
+# ==============================================================
+#  SERVIÇO FLASK
+# ==============================================================
 
 def create_app():
     app = Flask(__name__)
-    ProductionConfig.init_app(app)
-    
-    # Otimizações adicionais
     app.analyzer = OptimizedSuperIntelligentAnalyzer()
-    
     return app
+
 
 app = create_app()
 
-HTML_TEMPLATE = '''
+
+# ==============================================================
+#  HTML COMPLETO COM GRÁFICOS + PAINEL + ANÁLISE
+# ==============================================================
+
+HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="pt-br">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IA Signal Pro - SUPER INTELIGENTE 🧠⚡</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { 
-            background: linear-gradient(135deg, #0b1220 0%, #1a1f38 100%); 
-            color: #e9eef2; 
-            font-family: 'Segoe UI', system-ui, sans-serif;
-            min-height: 100vh; 
-            padding: 20px;
-        }
-        .container {
-            max-width: 500px; 
-            margin: 0 auto;
-            background: rgba(15, 22, 39, 0.95); 
-            border-radius: 20px;
-            padding: 25px; 
-            border: 2px solid #7ce0ff;
-            box-shadow: 0 10px 30px rgba(124, 224, 255, 0.3);
-        }
-        .header { 
-            text-align: center; 
-            margin-bottom: 20px; 
-        }
-        .title {
-            font-size: 24px; 
-            font-weight: 800; 
-            margin-bottom: 5px;
-            background: linear-gradient(90deg, #7ce0ff, #00ff88);
-            -webkit-background-clip: text; 
-            -webkit-text-fill-color: transparent;
-        }
-        .subtitle { 
-            color: #9db0d1; 
-            font-size: 13px; 
-            margin-bottom: 10px; 
-        }
-        
-        .upload-area {
-            border: 2px dashed #7ce0ff; 
-            border-radius: 15px;
-            padding: 30px 15px; 
-            text-align: center;
-            background: rgba(124, 224, 255, 0.05); 
-            margin-bottom: 20px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-        .upload-area:hover {
-            border-color: #00ff88;
-            background: rgba(0, 255, 136, 0.05);
-        }
-        .file-input {
-            margin: 15px 0; 
-            padding: 12px;
-            background: rgba(42, 53, 82, 0.3); 
-            border: 1px solid #7ce0ff;
-            border-radius: 8px; 
-            color: white; 
-            width: 100%; 
-            cursor: pointer;
-        }
-        
-        .timeframe-selector { 
-            display: flex; 
-            gap: 10px; 
-            margin: 15px 0; 
-        }
-        .timeframe-btn {
-            flex: 1; 
-            padding: 12px; 
-            border: 2px solid #7ce0ff;
-            background: rgba(124, 224, 255, 0.1); 
-            color: #9db0d1;
-            border-radius: 10px; 
-            cursor: pointer; 
-            text-align: center;
-            font-weight: 600; 
-            transition: all 0.3s ease;
-        }
-        .timeframe-btn.active {
-            background: linear-gradient(135deg, #7ce0ff 0%, #4a90e2 100%);
-            color: white; 
-            border-color: #4a90e2;
-        }
-        
-        .analyze-btn {
-            background: linear-gradient(135deg, #7ce0ff 0%, #4a90e2 100%);
-            color: white; 
-            border: none; 
-            border-radius: 10px; 
-            padding: 16px;
-            font-size: 16px; 
-            font-weight: 700; 
-            cursor: pointer; 
-            width: 100%;
-            transition: all 0.3s ease;
-        }
-        .analyze-btn:hover { 
-            background: linear-gradient(135deg, #4a90e2 0%, #2a76ef 100%);
-            transform: translateY(-2px);
-        }
-        .analyze-btn:disabled { 
-            background: #2a3552; 
-            transform: none; 
-            cursor: not-allowed;
-        }
-        
-        .result { 
-            display: none; 
-            background: rgba(14, 21, 36, 0.9);
-            border-radius: 15px; 
-            padding: 20px; 
-            margin-top: 20px;
-            border: 1px solid #223152;
-            animation: fadeIn 0.5s ease-in;
-        }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        
-        .signal-buy { color: #00ff88; }
-        .signal-sell { color: #ff4444; }
-        
-        .signal-text {
-            font-weight: 800; 
-            font-size: 22px; 
-            text-align: center; 
-            margin-bottom: 10px;
-        }
-        
-        .time-info {
-            background: rgba(42, 53, 82, 0.5); 
-            border-radius: 8px;
-            padding: 12px; 
-            margin: 10px 0; 
-            text-align: center;
-        }
-        .time-item {
-            margin: 5px 0; 
-            display: flex; 
-            justify-content: space-between;
-            align-items: center;
-        }
-        .time-label { color: #9db0d1; font-size: 13px; }
-        .time-value { color: #00ff88; font-weight: 600; font-size: 14px; }
-        
-        .confidence {
-            font-size: 16px; 
-            text-align: center; 
-            margin: 10px 0;
-            color: #9db0d1;
-        }
-        .reasoning {
-            text-align: center; 
-            margin: 12px 0; 
-            color: #7ce0ff;
-            font-weight: 600; 
-            font-size: 14px;
-        }
-        
-        .quality-indicator {
-            text-align: center; 
-            margin: 10px 0; 
-            padding: 8px;
-            border-radius: 8px; 
-            font-weight: 700; 
-            font-size: 13px;
-        }
-        .quality-high { background: rgba(0, 255, 136, 0.1); color: #00ff88; border: 1px solid #00ff88; }
-        .quality-medium { background: rgba(255, 165, 0, 0.1); color: #ffa500; border: 1px solid #ffa500; }
-        
-        .context-badge {
-            display: inline-block;
-            padding: 4px 8px;
-            border-radius: 12px;
-            font-size: 10px;
-            font-weight: 700;
-            margin-left: 8px;
-        }
-        .context-oversold_reversal { background: linear-gradient(135deg, #00ff88, #00cc66); color: white; }
-        .context-momentum_breakdown { background: linear-gradient(135deg, #ff4444, #cc0000); color: white; }
-        .context-confirmed_downtrend { background: linear-gradient(135deg, #ff6b6b, #ff0000); color: white; }
-        .context-divergence_conflict { background: linear-gradient(135deg, #ffaa00, #ff8800); color: white; }
-        .context-neutral_market { background: linear-gradient(135deg, #7ce0ff, #4a90e2); color: white; }
-        
-        .metrics {
-            margin-top: 15px; 
-            font-size: 13px; 
-            color: #9db0d1;
-            background: rgba(42, 53, 82, 0.3); 
-            padding: 15px;
-            border-radius: 8px;
-        }
-        .metric-item {
-            margin: 6px 0; 
-            display: flex; 
-            justify-content: space-between;
-            align-items: center;
-        }
-        .metric-value {
-            font-weight: 600; 
-            color: #e9eef2;
-        }
-        
-        .error-message {
-            background: rgba(255, 68, 68, 0.1); 
-            border: 1px solid #ff4444;
-            border-radius: 10px; 
-            padding: 15px; 
-            margin: 10px 0;
-            color: #ff8888; 
-            text-align: center;
-        }
-        
-        .loading {
-            text-align: center; 
-            color: #7ce0ff; 
-            font-size: 14px;
-        }
-        
-        .cache-badge {
-            background: linear-gradient(135deg, #ffaa00, #ff6b6b);
-            color: white; 
-            padding: 4px 8px; 
-            border-radius: 12px;
-            font-size: 10px; 
-            font-weight: 700; 
-            margin-left: 8px;
-        }
-        
-        .progress-bar {
-            width: 100%; 
-            height: 4px; 
-            background: #2a3552;
-            border-radius: 2px; 
-            margin: 12px 0; 
-            overflow: hidden;
-        }
-        .progress-fill {
-            height: 100%; 
-            background: linear-gradient(90deg, #7ce0ff, #00ff88);
-            width: 0%; 
-            transition: width 0.3s ease;
-        }
-        
-        .power-analysis {
-            background: rgba(124, 224, 255, 0.1);
-            border-radius: 8px;
-            padding: 10px;
-            margin: 10px 0;
-            border: 1px solid #7ce0ff;
-        }
-        
-        .image-preview {
-            max-width: 100%;
-            max-height: 200px;
-            border-radius: 8px;
-            margin: 10px 0;
-            border: 2px solid #7ce0ff;
-            display: none;
-        }
-        
-        .intelligent-badge {
-            font-size: 10px;
-            padding: 2px 6px;
-            border-radius: 8px;
-            margin-left: 5px;
-            background: linear-gradient(135deg, #7ce0ff, #4a90e2);
-            color: white;
-        }
-        
-        .user-indicators {
-            background: rgba(124, 224, 255, 0.1);
-            border-radius: 12px;
-            padding: 15px;
-            margin: 15px 0;
-            border: 1px solid #7ce0ff;
-        }
-        
-        .indicator-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            margin-top: 10px;
-        }
-        
-        .indicator-group {
-            display: flex;
-            flex-direction: column;
-        }
-        
-        .indicator-label {
-            font-size: 12px;
-            color: #7ce0ff;
-            margin-bottom: 5px;
-            font-weight: 600;
-        }
-        
-        .indicator-input {
-            background: rgba(42, 53, 82, 0.5);
-            border: 1px solid #7ce0ff;
-            border-radius: 6px;
-            padding: 8px;
-            color: white;
-            font-size: 14px;
-        }
-        
-        .indicator-input:focus {
-            outline: none;
-            border-color: #00ff88;
-        }
-        
-        .optional-badge {
-            font-size: 10px;
-            padding: 2px 6px;
-            border-radius: 8px;
-            margin-left: 5px;
-            background: linear-gradient(135deg, #ffaa00, #ff6b6b);
-            color: white;
-        }
-        
-        .user-data-badge {
-            background: linear-gradient(135deg, #00ff88, #00cc66);
-            color: white;
-            padding: 4px 8px;
-            border-radius: 12px;
-            font-size: 10px;
-            font-weight: 700;
-            margin-left: 8px;
-        }
-        
-        .scenario-info {
-            background: rgba(124, 224, 255, 0.1);
-            border-radius: 8px;
-            padding: 10px;
-            margin: 10px 0;
-            border: 1px solid #7ce0ff;
-            text-align: center;
-            font-size: 12px;
-        }
-        
-        .performance-info {
-            background: rgba(255, 165, 0, 0.1);
-            border-radius: 8px;
-            padding: 8px;
-            margin: 8px 0;
-            border: 1px solid #ffa500;
-            text-align: center;
-            font-size: 11px;
-            color: #ffa500;
-        }
-    </style>
+<meta charset="UTF-8" />
+<title>IA Signal Pro - REAL TIME 🧠⚡</title>
+
+<script src="https://s3.tradingview.com/tv.js"></script>
+
+<style>
+    body {
+        background: #0b1220;
+        color: #e9eef2;
+        font-family: Arial, sans-serif;
+        padding: 20px;
+    }
+    .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 25px;
+    }
+    .box {
+        background: #111827;
+        padding: 15px;
+        border-radius: 12px;
+        border: 1px solid #00eaff55;
+    }
+    .title {
+        font-size: 20px;
+        font-weight: bold;
+        margin-bottom: 10px;
+        color: #00eaff;
+    }
+    .btn {
+        background: #00ffaa;
+        border: none;
+        padding: 12px;
+        font-size: 16px;
+        margin-top: 10px;
+        cursor: pointer;
+        border-radius: 10px;
+        width: 100%;
+        font-weight: bold;
+    }
+    pre {
+        white-space: pre-wrap;
+        background: #0e172a;
+        padding: 10px;
+        border-radius: 8px;
+        border: 1px solid #00eaff66;
+    }
+</style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <div class="title">🧠⚡ IA SIGNAL PRO - SUPER INTELIGENTE</div>
-            <div class="subtitle">ANÁLISE DE CONFLITOS - PERFORMANCE MAXIMIZADA</div>
-            <div class="subtitle">🚀 VERSÃO OTIMIZADA - CACHE INTELIGENTE</div>
-        </div>
-        
-        <div class="timeframe-selector">
-            <button class="timeframe-btn active" data-timeframe="1m">⏱️ 1 MINUTO</button>
-            <button class="timeframe-btn" data-timeframe="5m">⏱️ 5 MINUTOS</button>
-        </div>
-        
-        <div class="upload-area" id="uploadArea">
-            <div style="font-size: 15px; margin-bottom: 8px;">
-                📊 CLIQUE OU ARRASTE A IMAGEM DO GRÁFICO
-            </div>
-            <input type="file" id="fileInput" class="file-input" accept="image/*">
-        </div>
-        
-        <img id="imagePreview" class="image-preview" alt="Prévia da imagem">
-        
-        <!-- SEÇÃO DOS INDICADORES DO USUÁRIO -->
-        <div class="user-indicators">
-            <div style="text-align: center; font-weight: 600; margin-bottom: 10px; color: #7ce0ff;">
-                🔢 DADOS TÉCNICOS <span class="optional-badge">INTELIGENTES</span>
-            </div>
-            <div style="text-align: center; font-size: 12px; color: #9db0d1; margin-bottom: 10px;">
-                A IA analisa conflitos entre indicadores
-            </div>
-            <div class="indicator-grid">
-                <div class="indicator-group">
-                    <label class="indicator-label">📈 MACD</label>
-                    <input type="number" step="0.001" id="macdInput" class="indicator-input" placeholder="Ex: -0.002">
-                </div>
-                <div class="indicator-group">
-                    <label class="indicator-label">📊 RSI</label>
-                    <input type="number" step="0.1" id="rsiInput" class="indicator-input" placeholder="Ex: 42.5">
-                </div>
-                <div class="indicator-group">
-                    <label class="indicator-label">🎯 ADX</label>
-                    <input type="number" step="0.1" id="adxInput" class="indicator-input" placeholder="Ex: 35.0">
-                </div>
-                <div class="indicator-group">
-                    <label class="indicator-label">💰 PREÇO</label>
-                    <input type="number" step="0.01" id="priceInput" class="indicator-input" placeholder="Ex: 1450.75">
-                </div>
-            </div>
-        </div>
-        
-        <button class="analyze-btn" id="analyzeBtn" disabled>🧠 SELECIONE UMA IMAGEM PRIMEIRO</button>
-        
-        <div class="result" id="result">
-            <div id="signalText" class="signal-text"></div>
-            <div id="errorMessage" class="error-message" style="display: none;"></div>
-            
-            <div class="time-info">
-                <div class="time-item">
-                    <span class="time-label">⏰ Horário da Análise:</span>
-                    <span class="time-value" id="analysisTime">--:--:--</span>
-                </div>
-                <div class="time-item">
-                    <span class="time-label">🎯 Entrada Recomendada:</span>
-                    <span class="time-value" id="entryTime">--:--</span>
-                </div>
-                <div class="time-item">
-                    <span class="time-label">⏱️ Timeframe:</span>
-                    <span class="time-value" id="timeframe">Próximo minuto</span>
-                </div>
-            </div>
-            
-            <div class="reasoning" id="reasoningText"></div>
-            <div class="confidence" id="confidenceText"></div>
-            
-            <div id="scenarioInfo" class="scenario-info" style="display: none;"></div>
-            
-            <div id="qualityIndicator" class="quality-indicator"></div>
-            
-            <div class="progress-bar">
-                <div class="progress-fill" id="progressFill"></div>
-            </div>
-            
-            <div class="power-analysis" id="powerAnalysis">
-                <div style="text-align: center; font-weight: 600; margin-bottom: 8px; color: #7ce0ff;">
-                    ⚡ ANÁLISE INTELIGENTE
-                </div>
-                <div id="powerMetrics"></div>
-            </div>
-            
-            <div class="metrics" id="metricsText"></div>
-            
-            <div id="performanceInfo" class="performance-info" style="display: none;">
-                ⚡ Performance: Processamento otimizado
-            </div>
-        </div>
-    </div>
 
-    <script>
-        // Debounce para evitar múltiplas requisições
-        function debounce(func, wait) {
-            let timeout;
-            return function executedFunction(...args) {
-                const later = () => {
-                    clearTimeout(timeout);
-                    func(...args);
-                };
-                clearTimeout(timeout);
-                timeout = setTimeout(later, wait);
-            };
-        }
+<h1 style="text-align:center;">📈 IA SIGNAL PRO – Análise em Tempo Real 🧠⚡</h1>
 
-        // Preview de imagem com compressão
-        function compressImage(file, maxWidth = 800, maxHeight = 600, quality = 0.8) {
-            return new Promise((resolve) => {
-                const canvas = document.createElement('canvas');
-                const ctx = canvas.getContext('2d');
-                const img = new Image();
-                
-                img.onload = function() {
-                    let width = img.width;
-                    let height = img.height;
-                    
-                    if (width > maxWidth) {
-                        height = (height * maxWidth) / width;
-                        width = maxWidth;
-                    }
-                    
-                    if (height > maxHeight) {
-                        width = (width * maxHeight) / height;
-                        height = maxHeight;
-                    }
-                    
-                    canvas.width = width;
-                    canvas.height = height;
-                    ctx.drawImage(img, 0, 0, width, height);
-                    
-                    canvas.toBlob(resolve, 'image/jpeg', quality);
-                };
-                
-                img.src = URL.createObjectURL(file);
-            });
-        }
+<!-- ======================== GRÁFICOS TRADINGVIEW =========================== -->
 
-        document.addEventListener('DOMContentLoaded', function() {
-            const fileInput = document.getElementById('fileInput');
-            const analyzeBtn = document.getElementById('analyzeBtn');
-            const uploadArea = document.getElementById('uploadArea');
-            const imagePreview = document.getElementById('imagePreview');
-            const result = document.getElementById('result');
-            const signalText = document.getElementById('signalText');
-            const errorMessage = document.getElementById('errorMessage');
-            const analysisTime = document.getElementById('analysisTime');
-            const entryTime = document.getElementById('entryTime');
-            const timeframeEl = document.getElementById('timeframe');
-            const reasoningText = document.getElementById('reasoningText');
-            const confidenceText = document.getElementById('confidenceText');
-            const qualityIndicator = document.getElementById('qualityIndicator');
-            const progressFill = document.getElementById('progressFill');
-            const metricsText = document.getElementById('metricsText');
-            const powerAnalysis = document.getElementById('powerAnalysis');
-            const powerMetrics = document.getElementById('powerMetrics');
-            const scenarioInfo = document.getElementById('scenarioInfo');
-            const performanceInfo = document.getElementById('performanceInfo');
-            const timeframeBtns = document.querySelectorAll('.timeframe-btn');
-            
-            // Inputs dos indicadores do usuário
-            const macdInput = document.getElementById('macdInput');
-            const rsiInput = document.getElementById('rsiInput');
-            const adxInput = document.getElementById('adxInput');
-            const priceInput = document.getElementById('priceInput');
+<div class="grid">
+    <div class="box"><div class="title">BTC/USDT</div><div id="tv-btc" style="height:300px;"></div></div>
+    <div class="box"><div class="title">ETH/USDT</div><div id="tv-eth" style="height:300px;"></div></div>
+    <div class="box"><div class="title">BNB/USDT</div><div id="tv-bnb" style="height:300px;"></div></div>
+    <div class="box"><div class="title">ADA/USDT</div><div id="tv-ada" style="height:300px;"></div></div>
+    <div class="box"><div class="title">XRP/USDT</div><div id="tv-xrp" style="height:300px;"></div></div>
+    <div class="box"><div class="title">SOL/USDT</div><div id="tv-sol" style="height:300px;"></div></div>
+</div>
 
-            let currentTimeframe = '1m';
-            let selectedFile = null;
+<script>
+function loadChart(container, symbol) {
+    new TradingView.widget({
+        "width": "100%",
+        "height": 300,
+        "symbol": symbol,
+        "interval": "1",
+        "timezone": "Etc/UTC",
+        "theme": "dark",
+        "style": "1",
+        "locale": "br",
+        "container_id": container
+    });
+}
 
-            // Seleção de timeframe
-            timeframeBtns.forEach(btn => {
-                btn.addEventListener('click', () => {
-                    timeframeBtns.forEach(b => b.classList.remove('active'));
-                    btn.classList.add('active');
-                    currentTimeframe = btn.dataset.timeframe;
-                    if (selectedFile) {
-                        analyzeBtn.textContent = `✅ PRONTO PARA ANÁLISE ${currentTimeframe.toUpperCase()}`;
-                    }
-                });
-            });
+loadChart("tv-btc", "BINANCE:BTCUSDT");
+loadChart("tv-eth", "BINANCE:ETHUSDT");
+loadChart("tv-bnb", "BINANCE:BNBUSDT");
+loadChart("tv-ada", "BINANCE:ADAUSDT");
+loadChart("tv-xrp", "BINANCE:XRPUSDT");
+loadChart("tv-sol", "BINANCE:SOLUSDT");
+</script>
 
-            // Upload de arquivo com debounce
-            const debouncedFileSelect = debounce(handleFileSelect, 300);
-            
-            uploadArea.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                uploadArea.style.borderColor = '#00ff88';
-            });
-            
-            uploadArea.addEventListener('dragleave', () => {
-                uploadArea.style.borderColor = '#7ce0ff';
-            });
-            
-            uploadArea.addEventListener('drop', (e) => {
-                e.preventDefault();
-                uploadArea.style.borderColor = '#7ce0ff';
-                if (e.dataTransfer.files.length) {
-                    fileInput.files = e.dataTransfer.files;
-                    debouncedFileSelect(e);
-                }
-            });
+<!-- ====================== PAINEL DE ANÁLISE =============================== -->
 
-            async function handleFileSelect(event) {
-                const files = event.target.files;
-                if (files && files.length > 0) {
-                    selectedFile = files[0];
-                    analyzeBtn.disabled = false;
-                    analyzeBtn.textContent = `✅ PRONTO PARA ANÁLISE ${currentTimeframe.toUpperCase()}`;
-                    
-                    // Mostrar prévia da imagem com compressão
-                    try {
-                        const compressedBlob = await compressImage(selectedFile);
-                        const reader = new FileReader();
-                        reader.onload = function(e) {
-                            imagePreview.src = e.target.result;
-                            imagePreview.style.display = 'block';
-                        };
-                        reader.readAsDataURL(compressedBlob);
-                    } catch (error) {
-                        // Fallback se a compressão falhar
-                        const reader = new FileReader();
-                        reader.onload = function(e) {
-                            imagePreview.src = e.target.result;
-                            imagePreview.style.display = 'block';
-                        };
-                        reader.readAsDataURL(selectedFile);
-                    }
-                } else {
-                    analyzeBtn.disabled = true;
-                    analyzeBtn.textContent = '🧠 SELECIONE UMA IMAGEM PRIMEIRO';
-                    imagePreview.style.display = 'none';
-                }
-            }
+<div class="box" style="margin-top:30px;">
+    <div class="title">⚙️ Configurações da IA</div>
 
-            fileInput.addEventListener('change', debouncedFileSelect);
+    <label>Ativo:</label>
+    <select id="symbol" style="width:100%; padding:10px;">
+        <option value="BTCUSDT">BTC/USDT</option>
+        <option value="ETHUSDT">ETH/USDT</option>
+        <option value="BNBUSDT">BNB/USDT</option>
+        <option value="ADAUSDT">ADA/USDT</option>
+        <option value="XRPUSDT">XRP/USDT</option>
+        <option value="SOLUSDT">SOL/USDT</option>
+    </select>
 
-            analyzeBtn.addEventListener('click', async () => {
-                if (!selectedFile) {
-                    alert('📸 Selecione uma imagem do gráfico primeiro!');
-                    return;
-                }
+    <label>Timeframe:</label>
+    <select id="timeframe" style="width:100%; padding:10px;">
+        <option value="1m">1 minuto</option>
+        <option value="5m">5 minutos</option>
+    </select>
 
-                analyzeBtn.disabled = true;
-                analyzeBtn.textContent = `🧠 ANALISANDO ${currentTimeframe.toUpperCase()}...`;
-                result.style.display = 'block';
-                errorMessage.style.display = 'none';
-                scenarioInfo.style.display = 'none';
-                performanceInfo.style.display = 'none';
-                
-                signalText.className = 'signal-text';
-                signalText.textContent = 'Analisando conflitos inteligentemente...';
-                qualityIndicator.textContent = '';
-                
-                const now = new Date();
-                analysisTime.textContent = now.toLocaleTimeString('pt-BR');
-                
-                // Calcula horário de entrada
-                let entryTimeValue;
-                if (currentTimeframe === '1m') {
-                    const nextMinute = new Date(now);
-                    nextMinute.setMinutes(nextMinute.getMinutes() + 1);
-                    nextMinute.setSeconds(0);
-                    entryTimeValue = nextMinute.toLocaleTimeString('pt-BR').slice(0, 5);
-                    timeframeEl.textContent = 'Próximo minuto';
-                } else {
-                    const minutesToAdd = 5 - (now.minute % 5);
-                    const next5min = new Date(now);
-                    next5min.setMinutes(next5min.getMinutes() + minutesToAdd);
-                    next5min.setSeconds(0);
-                    entryTimeValue = next5min.toLocaleTimeString('pt-BR').slice(0, 5);
-                    timeframeEl.textContent = `Próximo candle de 5min`;
-                }
-                
-                entryTime.textContent = entryTimeValue;
-                reasoningText.textContent = 'Processando análise inteligente de conflitos...';
-                confidenceText.textContent = '';
-                progressFill.style.width = '20%';
-                
-                metricsText.innerHTML = '<div class="loading">Iniciando análise inteligente...</div>';
+    <button onclick="analisar()" class="btn">🔍 Executar Análise da IA</button>
+</div>
 
-                try {
-                    const formData = new FormData();
-                    
-                    // Usa imagem comprimida se possível
-                    try {
-                        const compressedBlob = await compressImage(selectedFile);
-                        formData.append('image', compressedBlob, selectedFile.name);
-                    } catch (error) {
-                        formData.append('image', selectedFile);
-                    }
-                    
-                    formData.append('timeframe', currentTimeframe);
-                    
-                    // Adiciona indicadores do usuário ao formData
-                    const userIndicators = {};
-                    if (macdInput.value) userIndicators.macd = parseFloat(macdInput.value);
-                    if (rsiInput.value) userIndicators.rsi = parseFloat(rsiInput.value);
-                    if (adxInput.value) userIndicators.adx = parseFloat(adxInput.value);
-                    if (priceInput.value) userIndicators.price = parseFloat(priceInput.value);
-                    
-                    if (Object.keys(userIndicators).length > 0) {
-                        formData.append('user_indicators', JSON.stringify(userIndicators));
-                    }
-                    
-                    progressFill.style.width = '40%';
-                    
-                    const response = await fetch('/analyze', {
-                        method: 'POST',
-                        body: formData
-                    });
-                    
-                    progressFill.style.width = '80%';
-                    
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-                    
-                    const data = await response.json();
-                    
-                    progressFill.style.width = '100%';
-                    
-                    if (data.error) {
-                        throw new Error(data.error);
-                    }
-                    
-                    displayResults(data);
-                    performanceInfo.style.display = 'block';
-                    
-                } catch (error) {
-                    console.error('Erro:', error);
-                    errorMessage.style.display = 'block';
-                    errorMessage.textContent = `❌ Erro na análise: ${error.message}`;
-                    signalText.textContent = '❌ Análise Falhou';
-                    metricsText.innerHTML = '<div class="loading">Erro no processamento</div>';
-                } finally {
-                    analyzeBtn.disabled = false;
-                    analyzeBtn.textContent = `🔁 ANALISAR ${currentTimeframe.toUpperCase()} NOVAMENTE`;
-                }
-            });
+<div class="box" style="margin-top:20px;">
+    <div class="title">📊 Resultado da IA</div>
+    <pre id="resultadoIA">Clique para gerar análise…</pre>
+</div>
 
-            function displayResults(data) {
-                const direction = data.direction;
-                const confidence = (data.final_confidence * 100).toFixed(1);
-                const cached = data.cached || false;
-                const quality = data.analysis_grade || 'medium';
-                const scenario = data.intelligent_scenario || 'neutral_market';
-                const userIndicatorsProvided = data.user_indicators_provided || false;
-                
-                // Define classe e texto do sinal
-                signalText.className = `signal-text signal-${direction}`;
-                let directionText = direction === 'buy' ? '🎯 COMPRAR' : '🎯 VENDER';
-                let userBadge = userIndicatorsProvided ? '<span class="user-data-badge">DADOS DO USUÁRIO</span>' : '';
-                signalText.innerHTML = `${directionText} <span class="intelligent-badge">INTELIGENTE</span> ${userBadge} ${cached ? '<span class="cache-badge">CACHE</span>' : ''}`;
-                
-                // Atualiza informações
-                analysisTime.textContent = data.analysis_time || '--:--:--';
-                entryTime.textContent = data.entry_time || '--:--';
-                timeframeEl.textContent = data.timeframe || 'Próximo minuto';
-                
-                reasoningText.textContent = data.reasoning;
-                confidenceText.textContent = `Confiança Inteligente: ${confidence}%`;
-                
-                // Informações do cenário
-                const scenarioLabels = {
-                    'oversold_reversal': '🔄 REVERSÃO DE SOBREVENDA',
-                    'momentum_breakdown': '📉 QUEDA DE MOMENTUM', 
-                    'confirmed_downtrend': '🔴 TENDÊNCIA DE BAIXA CONFIRMADA',
-                    'divergence_conflict': '⚡ CONFLITO DE INDICADORES',
-                    'neutral_market': '⚖️ MERCADO NEUTRO'
-                };
-                
-                scenarioInfo.innerHTML = `
-                    <strong>Cenário Identificado:</strong> ${scenarioLabels[scenario] || scenarioLabels.neutral_market}
-                `;
-                scenarioInfo.style.display = 'block';
-                
-                // Indicador de qualidade
-                qualityIndicator.className = `quality-indicator quality-${quality}`;
-                if (quality === 'high') {
-                    qualityIndicator.textContent = '✅ ALTA QUALIDADE - Análise confiável';
-                } else {
-                    qualityIndicator.textContent = '⚠️ QUALIDADE MÉDIA - Análise válida';
-                }
-                
-                // Análise Inteligente
-                const metrics = data.metrics || {};
-                let powerHtml = '';
-                
-                const powerItems = [
-                    ['Score Final', metrics.analysis_score?.toFixed(3)],
-                    ['Poder do Usuário', (metrics.user_power * 100)?.toFixed(1) + '%'],
-                    ['Poder Tendência+Micro', (metrics.trend_micro_power * 100)?.toFixed(1) + '%'],
-                    ['Poder Price Action', (metrics.price_action_power * 100)?.toFixed(1) + '%'],
-                    ['Poder Momentum+Fluxo', (metrics.momentum_flow_power * 100)?.toFixed(1) + '%']
-                ];
-                
-                powerItems.forEach(([label, value]) => {
-                    powerHtml += `
-                        <div class="metric-item">
-                            <span>${label}:</span>
-                            <span class="metric-value">${value}</span>
-                        </div>
-                    `;
-                });
-                
-                powerMetrics.innerHTML = powerHtml;
-                
-                // Métricas detalhadas
-                let metricsHtml = '<div style="margin-bottom: 10px; text-align: center; font-weight: 600;">📊 ANÁLISE TÉCNICA COMPLETA</div>';
-                
-                const metricItems = [
-                    ['Força da Tendência', (metrics.trend_strength * 100)?.toFixed(1) + '%'],
-                    ['Momentum', metrics.momentum?.toFixed(3)],
-                    ['RSI', metrics.rsi?.toFixed(3)],
-                    ['MACD', metrics.macd?.toFixed(3)],
-                    ['Força do MACD', (metrics.macd_strength * 100)?.toFixed(1) + '%'],
-                    ['Qualidade do Sinal', (data.signal_quality * 100)?.toFixed(1) + '%']
-                ];
-                
-                // Adiciona métricas do usuário se disponíveis
-                if (data.user_metrics) {
-                    metricItems.push(
-                        ['MACD (User)', data.user_metrics.provided_macd?.toFixed(4)],
-                        ['RSI (User)', data.user_metrics.provided_rsi?.toFixed(1)],
-                        ['ADX (User)', data.user_metrics.provided_adx?.toFixed(1)],
-                        ['Preço (User)', data.user_metrics.provided_price?.toFixed(2)]
-                    );
-                }
-                
-                metricItems.forEach(([label, value]) => {
-                    metricsHtml += `
-                        <div class="metric-item">
-                            <span>${label}:</span>
-                            <span class="metric-value">${value}</span>
-                        </div>
-                    `;
-                });
-                
-                metricsText.innerHTML = metricsHtml;
-            }
-        });
-    </script>
+
+<script>
+async function analisar() {
+
+    const symbol = document.getElementById("symbol").value;
+    const timeframe = document.getElementById("timeframe").value;
+
+    document.getElementById("resultadoIA").innerText = "⏳ Analisando os últimos 200 candles...";
+
+    const response = await fetch("/analisar_ativo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol, timeframe })
+    });
+
+    const data = await response.json();
+    document.getElementById("resultadoIA").innerText = data.resultado;
+}
+</script>
+
 </body>
 </html>
-'''
+"""
 
-@app.route('/')
+
+# ==============================================================
+#  BACKEND — ROTA PARA ANÁLISE (200 CANDLES)
+# ==============================================================
+
+@app.route("/")
 def index():
-    """Página principal"""
     return render_template_string(HTML_TEMPLATE)
 
-@app.route('/analyze', methods=['POST'])
-def analyze_photo():
-    """Endpoint de análise de imagem - SUPER INTELIGENTE"""
-    try:
-        if 'image' not in request.files:
-            return jsonify({'error': 'Nenhuma imagem enviada'}), 400
-        
-        image_file = request.files['image']
-        if not image_file or image_file.filename == '':
-            return jsonify({'error': 'Arquivo inválido'}), 400
-        
-        timeframe = request.form.get('timeframe', '1m')
-        if timeframe not in ['1m', '5m']:
-            timeframe = '1m'
-        
-        # Processa indicadores do usuário
-        user_indicators = {}
-        user_indicators_str = request.form.get('user_indicators')
-        if user_indicators_str:
-            try:
-                user_indicators = json.loads(user_indicators_str)
-            except json.JSONDecodeError:
-                pass
-        
-        # Verificação básica do arquivo
-        image_file.seek(0, 2)
-        file_size = image_file.tell()
-        image_file.seek(0)
-        
-        if file_size > 20 * 1024 * 1024:
-            return jsonify({'error': 'Imagem muito grande (máximo 20MB)'}), 400
-        
-        image_bytes = image_file.read()
-        if len(image_bytes) == 0:
-            return jsonify({'error': 'Arquivo vazio'}), 400
-        
-        # Análise SUPER INTELIGENTE
-        analysis = app.analyzer.analyze(image_bytes, timeframe, user_indicators)
-        
-        return jsonify(analysis)
-        
-    except Exception as e:
-        app.analyzer.logger.error(f"Erro no endpoint /analyze: {str(e)}", exc_info=True)
-        return jsonify({
-            'error': f'Erro na análise: {str(e)}'
-        }), 500
 
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Health check para monitoramento"""
-    metrics = app.analyzer.metrics.get_metrics()
-    
+@app.route("/analisar_ativo", methods=["POST"])
+def analisar_ativo():
+    data = request.json
+    symbol = data["symbol"]
+    timeframe = data["timeframe"]
+
+    # Buscar últimos 200 candles da Binance
+    url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={timeframe}&limit=200"
+    candles_raw = requests.get(url).json()
+
+    candles = []
+    for c in candles_raw:
+        candles.append({
+            "open_time": c[0],
+            "open": float(c[1]),
+            "high": float(c[2]),
+            "low": float(c[3]),
+            "close": float(c[4]),
+            "volume": float(c[5]),
+            "close_time": c[6]
+        })
+
+    resultado = app.analyzer.analyze_raw_data(symbol, timeframe, candles)
+
     return jsonify({
-        'status': 'healthy', 
-        'service': 'IA Signal Pro - SUPER INTELIGENTE',
-        'timestamp': datetime.datetime.now().isoformat(),
-        'version': '11.0.0-otimizada-performance',
-        'metrics': metrics
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "resultado": resultado
     })
 
-@app.route('/cache/clear', methods=['POST'])
-def clear_cache():
-    """Limpa o cache de análises"""
-    try:
-        cache_dir = "analysis_cache"
-        if os.path.exists(cache_dir):
-            for file in os.listdir(cache_dir):
-                os.remove(os.path.join(cache_dir, file))
-            return jsonify({'ok': True, 'message': 'Cache limpo com sucesso!'})
-        return jsonify({'ok': True, 'message': 'Cache já está vazio!'})
-    except Exception as e:
-        app.analyzer.logger.error(f"Erro ao limpar cache: {str(e)}")
-        return jsonify({'ok': False, 'error': str(e)}), 500
 
-@app.route('/metrics', methods=['GET'])
-def get_metrics():
-    """Endpoint para métricas do sistema"""
-    try:
-        metrics = app.analyzer.metrics.get_metrics()
-        return jsonify(metrics)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+# ==============================================================
+#  START SERVER (RAILWAY)
+# ==============================================================
 
-# Handler de erro global
-@app.errorhandler(500)
-def internal_error(error):
-    app.analyzer.logger.error("Erro interno do servidor", exc_info=True)
-    return jsonify({'error': 'Erro interno do servidor'}), 500
-
-@app.errorhandler(404)
-def not_found(error):
-    return jsonify({'error': 'Endpoint não encontrado'}), 404
-
-@app.errorhandler(413)
-def too_large(error):
-    return jsonify({'error': 'Arquivo muito grande (máximo 20MB)'}), 413
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    debug = os.environ.get('DEBUG', 'False').lower() == 'true'
-    
-    print(f"🚀 IA Signal Pro - SUPER INTELIGENTE iniciando na porta {port}")
-    print(f"🧠⚡ SISTEMA: ANÁLISE INTELIGENTE DE CONFLITOS")
-    print(f"🎯 VERSÃO: PERFORMANCE MAXIMIZADA - CACHE INTELIGENTE")
-    print(f"📈 RECURSOS: Convolução Otimizada + Gerenciamento de Memória + Logs Avançados")
-    print(f"⚡ MÉTRICAS: Sistema completo de monitoramento")
-    
-    app.run(host='0.0.0.0', port=port, debug=debug)
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
