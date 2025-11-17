@@ -19,7 +19,7 @@ from openai import OpenAI
 #  CONFIGURAÇÃO OPENAI GPT-5.1
 # ==============================================================
 
-client = OpenAI(api_key="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")   # <-- COLOQUE SUA API KEY AQUI
+client = OpenAI(api_key="")   # <-- COLOQUE SUA API KEY AQUI
 
 # ==============================================================
 #  ANALISADOR SUPER INTELIGENTE COM GPT-5.1 - CÉREBRO CENTRAL
