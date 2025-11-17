@@ -14,7 +14,7 @@ from openai import OpenAI
 #  CONFIGURAÇÃO OPENAI GPT-5.1
 # ==============================================================
 
-client = OpenAI(api_key="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")   # <--- COLOQUE A SUA KEY AQUI
+client = OpenAI(api_key="SUA_API_KEY_AQUI")   # <-- COLOQUE SUA API KEY AQUI
 
 
 # ==============================================================
@@ -35,19 +35,20 @@ Analise os últimos 200 candles do ativo {symbol} em {timeframe}.
 Dados OHLCV:
 {json.dumps(candles, indent=2)}
 
-Forneça como resposta:
+Forneça como resposta, em português:
 
 1. Tendência (forte, moderada ou fraca)
-2. Suportes e resistências
-3. Padrões técnicos (triângulo, bandeira, M, W, pullback etc)
-4. Análise do volume e volatilidade
-5. Direção provável do próximo movimento
+2. Suportes e resistências principais
+3. Padrões técnicos identificados (triângulos, bandeiras, M, W, pullback etc.)
+4. Análise do volume e da volatilidade
+5. Direção provável do próximo movimento (alta ou baixa)
 6. Sinal final (BUY, SELL ou HOLD)
 7. Preço sugerido de entrada
 8. Stop Loss ideal
-9. Take Profit ideal
-10. Explicação detalhada e clara
+9. Um ou dois Take Profits ideais
+10. Risco x retorno aproximado
 11. Confiabilidade do sinal (0% a 100%)
+12. Explicação detalhada, mas objetiva, do raciocínio.
 """
 
         response = client.chat.completions.create(
@@ -55,7 +56,7 @@ Forneça como resposta:
             messages=[{"role": "user", "content": prompt}]
         )
 
-        return response.choices[0].message["content"]
+        return response.choices[0].message.content
 
 
 # ==============================================================
@@ -72,7 +73,7 @@ app = create_app()
 
 
 # ==============================================================
-#  HTML COMPLETO COM GRÁFICOS + PAINEL + ANÁLISE
+#  HTML COMPLETO COM UM GRÁFICO + PAINEL + RELÓGIO
 # ==============================================================
 
 HTML_TEMPLATE = """
@@ -85,133 +86,230 @@ HTML_TEMPLATE = """
 <script src="https://s3.tradingview.com/tv.js"></script>
 
 <style>
+    * { box-sizing: border-box; }
+
     body {
-        background: #0b1220;
-        color: #e9eef2;
-        font-family: Arial, sans-serif;
+        background: #020617;
+        color: #e5e7eb;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         padding: 20px;
     }
-    .grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 25px;
+
+    .topbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
     }
-    .box {
-        background: #111827;
-        padding: 15px;
-        border-radius: 12px;
-        border: 1px solid #00eaff55;
-    }
+
     .title {
-        font-size: 20px;
-        font-weight: bold;
-        margin-bottom: 10px;
-        color: #00eaff;
+        font-size: 24px;
+        font-weight: 800;
+        color: #38bdf8;
     }
+
+    .clock {
+        font-size: 18px;
+        font-weight: 600;
+        color: #a5b4fc;
+    }
+
+    .layout {
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 20px;
+    }
+
+    .box {
+        background: #020617;
+        border-radius: 14px;
+        border: 1px solid #1e293b;
+        padding: 15px;
+        box-shadow: 0 10px 25px rgba(15, 23, 42, 0.7);
+    }
+
+    .box-title {
+        font-size: 16px;
+        font-weight: 700;
+        color: #38bdf8;
+        margin-bottom: 10px;
+    }
+
+    .controls label {
+        font-size: 13px;
+        color: #9ca3af;
+        display: block;
+        margin-top: 10px;
+        margin-bottom: 4px;
+    }
+
+    .select {
+        width: 100%;
+        padding: 10px;
+        border-radius: 10px;
+        border: 1px solid #1f2937;
+        background: #020617;
+        color: #e5e7eb;
+        outline: none;
+    }
+
     .btn {
-        background: #00ffaa;
+        background: linear-gradient(90deg, #22c55e, #06b6d4);
         border: none;
         padding: 12px;
-        font-size: 16px;
-        margin-top: 10px;
+        font-size: 15px;
+        margin-top: 16px;
         cursor: pointer;
         border-radius: 10px;
         width: 100%;
-        font-weight: bold;
+        font-weight: 700;
+        color: #0b1120;
     }
+
+    .btn:hover {
+        opacity: 0.9;
+    }
+
     pre {
         white-space: pre-wrap;
-        background: #0e172a;
+        background: #020617;
         padding: 10px;
-        border-radius: 8px;
-        border: 1px solid #00eaff66;
+        border-radius: 10px;
+        border: 1px solid #1e293b;
+        max-height: 500px;
+        overflow-y: auto;
+        font-size: 13px;
+    }
+
+    #tv-chart {
+        height: 550px;
     }
 </style>
 </head>
 <body>
 
-<h1 style="text-align:center;">📈 IA SIGNAL PRO – Análise em Tempo Real 🧠⚡</h1>
+<div class="topbar">
+    <div class="title">📈 IA SIGNAL PRO – Análise em Tempo Real</div>
+    <div class="clock" id="clock">--:--:--</div>
+</div>
 
-<!-- ======================== GRÁFICOS TRADINGVIEW =========================== -->
+<div class="layout">
+    <!-- Lado ESQUERDO: gráfico único -->
+    <div class="box">
+        <div class="box-title" id="chart-title">BTC/USDT – 1m</div>
+        <div id="tv-chart"></div>
+    </div>
 
-<div class="grid">
-    <div class="box"><div class="title">BTC/USDT</div><div id="tv-btc" style="height:300px;"></div></div>
-    <div class="box"><div class="title">ETH/USDT</div><div id="tv-eth" style="height:300px;"></div></div>
-    <div class="box"><div class="title">BNB/USDT</div><div id="tv-bnb" style="height:300px;"></div></div>
-    <div class="box"><div class="title">ADA/USDT</div><div id="tv-ada" style="height:300px;"></div></div>
-    <div class="box"><div class="title">XRP/USDT</div><div id="tv-xrp" style="height:300px;"></div></div>
-    <div class="box"><div class="title">SOL/USDT</div><div id="tv-sol" style="height:300px;"></div></div>
+    <!-- Lado DIREITO: controles + IA -->
+    <div class="box">
+        <div class="box-title">⚙️ Configurações da IA</div>
+
+        <div class="controls">
+            <label for="symbol">Ativo</label>
+            <select id="symbol" class="select" onchange="updateChart()">
+                <option value="BTCUSDT">BTC/USDT</option>
+                <option value="ETHUSDT">ETH/USDT</option>
+                <option value="BNBUSDT">BNB/USDT</option>
+                <option value="ADAUSDT">ADA/USDT</option>
+                <option value="XRPUSDT">XRP/USDT</option>
+                <option value="SOLUSDT">SOL/USDT</option>
+            </select>
+
+            <label for="timeframe">Timeframe</label>
+            <select id="timeframe" class="select" onchange="updateChart()">
+                <option value="1m">1 minuto</option>
+                <option value="5m">5 minutos</option>
+            </select>
+
+            <button class="btn" onclick="analisar()">
+                🔍 Executar Análise da IA (200 candles)
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="box" style="margin-top:20px;">
+    <div class="box-title">📊 Resultado da IA</div>
+    <pre id="resultadoIA">Clique em "Executar Análise da IA" para gerar o relatório…</pre>
 </div>
 
 <script>
-function loadChart(container, symbol) {
+let currentWidget = null;
+
+// --------------------- RELÓGIO ----------------------
+function updateClock() {
+    const now = new Date();
+    const formatted = now.toLocaleTimeString('pt-BR', { hour12: false });
+    document.getElementById("clock").innerText = formatted;
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// -------------------- GRÁFICO TV --------------------
+function loadChart(symbol, interval) {
+    const containerId = "tv-chart";
+
+    // limpa container (pra não empilhar iframes)
+    document.getElementById(containerId).innerHTML = "";
+
+    const tvSymbol = "BINANCE:" + symbol;
+
     new TradingView.widget({
         "width": "100%",
-        "height": 300,
-        "symbol": symbol,
-        "interval": "1",
+        "height": 550,
+        "symbol": tvSymbol,
+        "interval": interval,
         "timezone": "Etc/UTC",
         "theme": "dark",
         "style": "1",
         "locale": "br",
-        "container_id": container
+        "container_id": containerId
     });
+
+    const titleEl = document.getElementById("chart-title");
+    const tfLabel = interval === "1" ? "1m" : interval + "m";
+    titleEl.innerText = symbol.replace("USDT", "/USDT") + " – " + tfLabel;
 }
 
-loadChart("tv-btc", "BINANCE:BTCUSDT");
-loadChart("tv-eth", "BINANCE:ETHUSDT");
-loadChart("tv-bnb", "BINANCE:BNBUSDT");
-loadChart("tv-ada", "BINANCE:ADAUSDT");
-loadChart("tv-xrp", "BINANCE:XRPUSDT");
-loadChart("tv-sol", "BINANCE:SOLUSDT");
-</script>
-
-<!-- ====================== PAINEL DE ANÁLISE =============================== -->
-
-<div class="box" style="margin-top:30px;">
-    <div class="title">⚙️ Configurações da IA</div>
-
-    <label>Ativo:</label>
-    <select id="symbol" style="width:100%; padding:10px;">
-        <option value="BTCUSDT">BTC/USDT</option>
-        <option value="ETHUSDT">ETH/USDT</option>
-        <option value="BNBUSDT">BNB/USDT</option>
-        <option value="ADAUSDT">ADA/USDT</option>
-        <option value="XRPUSDT">XRP/USDT</option>
-        <option value="SOLUSDT">SOL/USDT</option>
-    </select>
-
-    <label>Timeframe:</label>
-    <select id="timeframe" style="width:100%; padding:10px;">
-        <option value="1m">1 minuto</option>
-        <option value="5m">5 minutos</option>
-    </select>
-
-    <button onclick="analisar()" class="btn">🔍 Executar Análise da IA</button>
-</div>
-
-<div class="box" style="margin-top:20px;">
-    <div class="title">📊 Resultado da IA</div>
-    <pre id="resultadoIA">Clique para gerar análise…</pre>
-</div>
-
-
-<script>
-async function analisar() {
-
+function updateChart() {
     const symbol = document.getElementById("symbol").value;
     const timeframe = document.getElementById("timeframe").value;
 
-    document.getElementById("resultadoIA").innerText = "⏳ Analisando os últimos 200 candles...";
+    // TradingView interval precisa ser "1", "5", etc.
+    const interval = timeframe === "1m" ? "1" : "5";
+    loadChart(symbol, interval);
+}
 
-    const response = await fetch("/analisar_ativo", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol, timeframe })
-    });
+// inicializa com BTC 1m
+updateChart();
 
-    const data = await response.json();
-    document.getElementById("resultadoIA").innerText = data.resultado;
+// ------------------- CHAMAR BACKEND IA ------------------
+
+async function analisar() {
+    const symbol = document.getElementById("symbol").value;
+    const timeframe = document.getElementById("timeframe").value;
+
+    document.getElementById("resultadoIA").innerText =
+        "⏳ Buscando últimos 200 candles de " + symbol + " em " + timeframe + " e analisando com a IA…";
+
+    try {
+        const resp = await fetch("/analisar_ativo", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ symbol, timeframe })
+        });
+
+        const data = await resp.json();
+
+        if (data.error) {
+            document.getElementById("resultadoIA").innerText = "Erro: " + data.error;
+        } else {
+            document.getElementById("resultadoIA").innerText = data.resultado;
+        }
+    } catch (e) {
+        document.getElementById("resultadoIA").innerText =
+            "Erro ao chamar a IA: " + e;
+    }
 }
 </script>
 
@@ -231,33 +329,38 @@ def index():
 
 @app.route("/analisar_ativo", methods=["POST"])
 def analisar_ativo():
-    data = request.json
-    symbol = data["symbol"]
-    timeframe = data["timeframe"]
+    try:
+        data = request.json
+        symbol = data["symbol"]
+        timeframe = data["timeframe"]
 
-    # Buscar últimos 200 candles da Binance
-    url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={timeframe}&limit=200"
-    candles_raw = requests.get(url).json()
+        # Mapear timeframe para o formato da Binance
+        tf = timeframe  # já vem como "1m" ou "5m"
 
-    candles = []
-    for c in candles_raw:
-        candles.append({
-            "open_time": c[0],
-            "open": float(c[1]),
-            "high": float(c[2]),
-            "low": float(c[3]),
-            "close": float(c[4]),
-            "volume": float(c[5]),
-            "close_time": c[6]
+        url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={tf}&limit=200"
+        candles_raw = requests.get(url, timeout=10).json()
+
+        candles = []
+        for c in candles_raw:
+            candles.append({
+                "open_time": c[0],
+                "open": float(c[1]),
+                "high": float(c[2]),
+                "low": float(c[3]),
+                "close": float(c[4]),
+                "volume": float(c[5]),
+                "close_time": c[6]
+            })
+
+        resultado = app.analyzer.analyze_raw_data(symbol, timeframe, candles)
+
+        return jsonify({
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "resultado": resultado
         })
-
-    resultado = app.analyzer.analyze_raw_data(symbol, timeframe, candles)
-
-    return jsonify({
-        "symbol": symbol,
-        "timeframe": timeframe,
-        "resultado": resultado
-    })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ==============================================================
